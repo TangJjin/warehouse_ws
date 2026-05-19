@@ -1,0 +1,77 @@
+#pragma once
+
+#include <string>
+#include <memory>
+#include <thread>
+#include <atomic>
+
+#include "rclcpp/rclcpp.hpp"
+#include <mavros_msgs/msg/state.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <sensor_msgs/msg/battery_state.hpp>
+
+//自定义消息头文件
+#include "drone_msgs/msg/drone_status.hpp"
+#include "drone_msgs/srv/start_task.hpp"
+#include "drone_msgs/srv/start_offboard.hpp"
+#include "drone_msgs/msg/barcode_capture.hpp"
+
+class AirborneNode : public rclcpp::Node
+{
+public:
+    AirborneNode();
+
+private:
+    //负责创建发布器、服务和定时器
+    void setupInterfaces();
+
+    //定时器回调函数，用于模拟任务进度更新和状态发布
+    void onTimer();
+
+    //发布当前状态消息
+    void publishStatus();
+
+    //处理任务启动服务请求的回调函数
+    void handleStartTask(
+        const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
+        std::shared_ptr<drone_msgs::srv::StartTask::Response> response);
+
+    void handleStartOffboard(
+    const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
+    std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response);
+
+    std::string buildStatusText() const;
+
+    //处理条形码捕获消息的回调函数
+    void handleBarcodeCapture(
+        const drone_msgs::msg::BarcodeCapture::SharedPtr msg);
+
+    //处理shell命令操作
+    bool startOffboardCommand();
+    bool startTaskCommand();
+
+    rclcpp::Publisher<drone_msgs::msg::DroneStatus>::SharedPtr status_pub_;
+    rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_pub_;
+    rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_sub_;
+    rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr status_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr battery_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_sub_;
+    rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr start_task_srv_;
+    rclcpp::Service<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_srv_;
+    rclcpp::TimerBase::SharedPtr timer_;
+
+    bool task_running_{false};//任务是否正在运行
+    int task_progress_{0};//任务进度百分比
+    std::string current_task_name_;//当前任务名称字符串
+    std::string action_name_{""};//当前动作名称字符串
+
+    bool connected{false};//连接状态字符串
+    bool armed{false};//解锁状态布尔值
+    int8_t flight_mode{0};//飞行模式数值
+    float battery_voltage{0.0};//电压数值
+    float battery_percent{0.0};//电量百分比数值
+
+    bool offboard_started_{false};//防止任务重复启动
+    bool task_started_{false};
+};

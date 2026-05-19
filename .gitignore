@@ -1,0 +1,15 @@
+build/
+install/
+log/
+
+*.pyc
+__pycache__/
+
+.vscode/
+.idea/
+
+CMakeLists.txt.user
+*.pro.user
+
+*.swp
+*.swo
