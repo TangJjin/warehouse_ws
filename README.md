@@ -57,35 +57,48 @@
 - offboard 启动流程
 - 其他系统级启动编排任务
 
-3.2 drone_control
+
+## 3.1 `drone_control`
 
 drone_control 是控制程序主逻辑包。
 
-3.3 drone_localization
+
+
+## 3.2 `drone_localization`
 
 drone_localization 主要负责定位链路相关功能。
 
-3.4 drone_msgs
+
+
+## 3.3 `drone_msgs`
 
 drone_msgs 主要负责全系统公共消息定义。
 
 这是整个多包系统里的公共接口层。
 
-3.5 drone_perception
+
+
+## 3.4 `drone_perception`
 
 drone_perception 是感知识别包，主要负责“看到了什么、识别到了什么”。
 
-3.6 drone_qt
+
+
+## 3.5 `drone_qt`
 
 作用概述
 
 drone_qt 主要负责Qt 地面端界面程序。
 
-3.7 drone_qt_2
+
+
+## 3.6 `drone_qt_2`
 
 drone_qt_2 主要负责Qt 机载端程序。
 
-4. 当前的职责分层：
+---
+
+## 4. 当前职责分层
 
 启动层
 
