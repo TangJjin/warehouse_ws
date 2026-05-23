@@ -40,14 +40,14 @@ class StartupSupervisor:
             StartupStep(
                 name='livox_ros_driver2',
                 command=['ros2', 'launch', 'livox_ros_driver2', 'msg_MID360_launch.py'],
-                ready_topic='YOUR_LIVOX_TOPIC_HERE',
+                ready_topic='/livox/lidar',
                 ready_type='sensor_msgs/msg/PointCloud2',
                 timeout_sec=15,
             ),
             StartupStep(
                 name='fast_lio',
                 command=['ros2', 'launch', 'fast_lio', 'mapping.launch.py'],
-                ready_topic='YOUR_FASTLIO_ODOM_TOPIC_HERE',
+                ready_topic='/Odometry',
                 ready_type='nav_msgs/msg/Odometry',
                 timeout_sec=20,
             ),

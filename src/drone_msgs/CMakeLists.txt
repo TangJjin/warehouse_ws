@@ -16,6 +16,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WorldGroup.msg"
   "srv/StartTask.srv"
   "srv/StartOffboard.srv"
+  "srv/UploadMissionYaml.srv"
   DEPENDENCIES builtin_interfaces
 )
 

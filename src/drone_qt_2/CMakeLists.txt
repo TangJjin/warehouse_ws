@@ -12,6 +12,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Core)
 
 add_executable(airborne_node
   src/main.cpp
@@ -26,6 +27,10 @@ add_executable(barcode_test_sender
 target_include_directories(airborne_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(airborne_node
+  Qt5::Core
 )
 
 ament_target_dependencies(airborne_node

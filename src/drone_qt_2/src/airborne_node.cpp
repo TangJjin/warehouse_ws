@@ -3,6 +3,8 @@
 #include <chrono>
 #include <functional>
 #include <sstream>
+#include <fstream>
+#include <filesystem>
 
 //使用std::chrono_literals来方便地使用时间单位，如1s表示1秒
 using namespace std::chrono_literals;
@@ -88,6 +90,24 @@ void AirborneNode::setupInterfaces()
             local_position_pub_->publish(*msg);
         });
 
+    auto control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
+    ready_status_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
+        "/control/path_ready", 
+        control_path_ready_qos, 
+        [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg)//回调
+        {
+            const bool ready = msg->air_route_ready;
+
+            if (ready) {
+                return;
+            } else {
+                //如果收到ready信号为false，说明控制程序确认失败，可能是因为无人机未进入offboard模式或者其他原因导致无法执行任务，此时需要重置状态以允许重新上传路线和启动任务
+                offboard_started_ = false;
+                task_started_ = false;
+            }
+        });
+
     //创建一个服务，提供任务启动接口，服务类型为自定义服务
     start_task_srv_ = this->create_service<drone_msgs::srv::StartTask>(
         "/drone/start_task",
@@ -98,10 +118,28 @@ void AirborneNode::setupInterfaces()
             std::placeholders::_1,
             std::placeholders::_2));
 
+    //创建一个服务，提供路线重传接口，服务类型为自定义服务
+    stop_push_srv_ = this->create_service<drone_msgs::srv::StartTask>(
+        "/drone/stop_push",
+        //使用std::bind将成员函数绑定为服务回调函数
+        std::bind(
+            &AirborneNode::handleStopPush,
+            this,
+            std::placeholders::_1,
+            std::placeholders::_2));
+
     start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
         "/drone/start_offboard",
         std::bind(
             &AirborneNode::handleStartOffboard,
+            this,
+            std::placeholders::_1,
+            std::placeholders::_2));
+
+    upload_mission_yaml_srv_ = this->create_service<drone_msgs::srv::UploadMissionYaml>(
+        "/drone/upload_mission_yaml",
+        std::bind(
+            &AirborneNode::handleUploadMissionYaml,
             this,
             std::placeholders::_1,
             std::placeholders::_2));
@@ -155,22 +193,43 @@ void AirborneNode::handleStartOffboard(
 
     if (offboard_started_) {
         response->success = false;
-        response->message = "/drone/start_offboard服务未启动";
+        response->message = "offboard 已经启动，拒绝重复启动";
+        return;
+    }
+
+    if (!mission_uploaded_) {
+        response->success = false;
+        response->message = "mission YAML 尚未上传";
+        offboard_started_ = false;
+        return;
+    }
+
+    if (current_mission_path_.empty()) {
+        response->success = false;
+        response->message = "mission 路径为空";
+        offboard_started_ = false;
+        return;
+    }
+
+    if (!std::filesystem::exists(current_mission_path_)) {
+        response->success = false;
+        response->message = "mission 文件不存在";
+        offboard_started_ = false;
         return;
     }
 
     const bool ok = startOffboardCommand();
     if (!ok) {
         response->success = false;
-        response->message = "offboard启动失败";
+        response->message = "offboard 启动失败";
+        offboard_started_ = false;
         return;
     }
 
     current_task_name_ = request->request_source;
-
     offboard_started_ = true;
     response->success = true;
-    response->message = "offboard启动成功";
+    response->message = "offboard 启动成功，等待ready信号确认";
 }
 
 void AirborneNode::handleStartTask(
@@ -190,7 +249,7 @@ void AirborneNode::handleStartTask(
 
     if (task_started_) {
         response->success = false;
-        response->message = "/drone/start_task服务未启动";
+        response->message = "start 已经启动，拒绝重复启动";
         return;
     }
 
@@ -208,19 +267,172 @@ void AirborneNode::handleStartTask(
     response->message = "成功起飞";
 }
 
+void AirborneNode::handleStopPush(
+    //使用std::shared_ptr来接收请求和响应对象
+    const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
+    std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
+{
+    (void)request;
+
+    if (task_stoped_) {
+        response->success = false;
+        response->message = "当前没有启动offboard";
+        return;
+    }
+
+    std::string error_message;
+    const bool ok = stopTaskCommand(error_message);
+    if (!ok) {
+        response->success = false;
+        response->message = "offboard 停止失败";
+        task_stoped_ = false;
+        return;
+    }
+
+    current_task_name_ = request->task_name;
+
+    task_stoped_ = true;
+    offboard_started_ = false;
+    response->success = true;
+    response->message = "停止offboard成功";
+}
+
+bool AirborneNode::saveMissionYamlToFile(
+    const std::string &yaml_text,
+    std::string &saved_path,
+    std::string &error_message)
+{
+    //将接收到的yaml字符串保存到文件中，并返回保存路径和错误信息
+    const std::string dir_path = "/home/orangepi/drone_ws/install/drone_control/share/drone_control/config";
+    const std::string file_path = dir_path + "/ground_mission.yaml";
+
+    //使用std::filesystem创建目录，如果目录不存在的话
+    try {
+        std::filesystem::create_directories(dir_path);
+    } catch (const std::exception &e) {
+        error_message = std::string("创建 mission 目录失败: ") + e.what();
+        return false;
+    }
+
+    //使用std::ofstream打开文件进行写入，如果文件无法打开则返回错误信息
+    std::ofstream out(file_path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        error_message = "无法打开 mission 文件进行写入";
+        return false;
+    }
+
+    //将yaml文本写入文件，并检查写入是否成功，如果写入失败则返回错误信息
+    out << yaml_text;
+    out.close();
+
+    if (!out) {
+        error_message = "写入 mission 文件失败";
+        return false;
+    }
+
+    //保存路径并返回成功标志
+    saved_path = file_path;
+    return true;
+}
+
+void AirborneNode::handleUploadMissionYaml(
+    const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
+    std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response)
+{
+    if (!request) {
+        response->success = false;
+        response->message = "请求为空";
+        response->saved_path = "";
+        return;
+    }
+
+    if (request->mission_yaml.empty()) {
+        response->success = false;
+        response->message = "mission_yaml 为空";
+        response->saved_path = "";
+        return;
+    }
+
+    //将接收到的yaml字符串保存到文件中，并获取保存路径和错误信息
+    std::string saved_path;
+    std::string error_message;
+    const bool ok = saveMissionYamlToFile(request->mission_yaml, saved_path, error_message);
+
+    if (!ok) {
+        response->success = false;
+        response->message = error_message;
+        response->saved_path = "";
+        mission_uploaded_ = false;
+        current_mission_path_.clear();
+        return;
+    }
+
+    mission_uploaded_ = true;
+    current_mission_path_ = saved_path;
+
+    response->success = true;
+    response->message = "mission YAML 保存成功";
+    response->saved_path = saved_path;
+}
+
 bool AirborneNode::startOffboardCommand()
 {
-    const std::string command =
-        "bash -lc 'source /opt/ros/humble/setup.bash && "
-        "source ~/drone_ws/install/setup.bash && "
-        "ros2 launch drone_bringup run_offboard.launch.py enable_offboard_control:=true'";
+    if (current_mission_path_.empty()) {
+        return false;
+    }
 
-    std::thread([this, command]() {
-        RCLCPP_INFO(this->get_logger(), "starting offboard command...");
-        const int ret = std::system(command.c_str());
-        RCLCPP_INFO(this->get_logger(), "offboard command exited with code=%d", ret);
-        offboard_started_ = false;
-    }).detach();
+    if (offboard_process_ && offboard_process_->state() != QProcess::NotRunning) {
+        RCLCPP_WARN(this->get_logger(), "offboard process is already running");
+        return false;
+    }
+
+    if (!offboard_process_) {
+        offboard_process_ = new QProcess();
+
+        QObject::connect(offboard_process_, &QProcess::readyReadStandardOutput, [this]() {
+            const QByteArray text = offboard_process_->readAllStandardOutput();
+            if (!text.isEmpty()) {
+                RCLCPP_INFO(this->get_logger(), "[offboard stdout]\n%s", text.constData());
+            }
+        });
+
+        QObject::connect(offboard_process_, &QProcess::readyReadStandardError, [this]() {
+            const QByteArray text = offboard_process_->readAllStandardError();
+            if (!text.isEmpty()) {
+                RCLCPP_ERROR(this->get_logger(), "[offboard stderr]\n%s", text.constData());
+            }
+        });
+
+        QObject::connect(
+            offboard_process_,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            [this](int exit_code, QProcess::ExitStatus exit_status) {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "offboard process finished, exit_code=%d, exit_status=%d",
+                    exit_code,
+                    static_cast<int>(exit_status));
+                offboard_started_ = false;
+            });
+    }
+
+    const QString command = QString(
+        "source /opt/ros/humble/setup.bash && "
+        "source ~/drone_ws/install/setup.bash && "
+        "ros2 launch drone_bringup run_offboard.launch.py "
+        "enable_offboard_control:=true "
+        "mission_yaml_path:=%1")
+        .arg(QString::fromStdString(current_mission_path_));
+
+    RCLCPP_INFO(this->get_logger(), "starting offboard process with QProcess...");
+    offboard_process_->start("bash", QStringList() << "-lc" << command);
+
+    task_stoped_ = false;
+
+    if (!offboard_process_->waitForStarted(3000)) {
+        RCLCPP_ERROR(this->get_logger(), "failed to start offboard process");
+        return false;
+    }
 
     return true;
 }
@@ -238,6 +450,34 @@ bool AirborneNode::startTaskCommand()
         RCLCPP_INFO(this->get_logger(), "takeoff program command exited with code=%d", ret);
         task_started_ = false;
     }).detach();
+
+    return true;
+}
+
+bool AirborneNode::stopTaskCommand(std::string &error_message)
+{
+    if (!offboard_process_) {
+        error_message = "offboard 进程对象不存在";
+        return false;
+    }
+
+    if (offboard_process_->state() == QProcess::NotRunning) {
+        offboard_started_ = false;
+        error_message = "offboard 当前未运行";
+        return false;
+    }
+
+    offboard_process_->terminate();
+    if (!offboard_process_->waitForFinished(5000)) {
+        offboard_process_->kill();
+        if (!offboard_process_->waitForFinished(3000)) {
+            error_message = "offboard 进程无法停止";
+            return false;
+        }
+    }
+
+    offboard_started_ = false;
+    error_message.clear();
 
     return true;
 }

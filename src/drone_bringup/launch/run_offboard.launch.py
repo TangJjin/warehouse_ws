@@ -15,7 +15,7 @@ def generate_launch_description():
     takeoff_altitude = LaunchConfiguration("takeoff_altitude")
 
     default_config = PathJoinSubstitution(
-        [FindPackageShare("drone_control"), "config", "sample.yaml"]
+        [FindPackageShare("drone_control"), "config" ,"ground_mission.yaml"]
     )
 
     return LaunchDescription(
