@@ -12,6 +12,7 @@
 #include <QByteArray>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include "drone_qt/position_view_widget.hpp"
+#include <geometry_msgs/msg/vector3.hpp>
 
 //自定义消息头文件
 #include "drone_msgs/msg/drone_status.hpp"
@@ -23,6 +24,7 @@
 #include "drone_msgs/msg/world_point.hpp"
 #include "drone_msgs/srv/start_task.hpp"
 #include "drone_msgs/srv/start_offboard.hpp"
+#include "drone_msgs/srv/upload_mission_yaml.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
 
 class RosManager : public QObject
@@ -40,6 +42,9 @@ class RosManager : public QObject
         //定义一个公共方法，用于发布预规划路线消息，参数为一个包含坐标点的QVector
         //void publishPath(const QVector<QPoint> &path_points);
         void publishPath(const QVector<WorldCoord> &path_points);
+
+//定义一个公共方法，用于上传任务yaml字符串
+        void uploadMissionYaml(const QString &mission_yaml);
 
     signals:
         //定义一个信号，用于状态更新事件，包含连接状态、电量百分比、飞行模式和解锁状态等信息
@@ -62,6 +67,8 @@ class RosManager : public QObject
 
         //定义一个信号，用于命令执行结果事件，包含执行结果的成功与否以及相关消息
         void commandResult(bool success, const QString &message);
+        void stopcommandResult(bool success, const QString &message);
+
 
         //定义一个信号，用于条形码捕获事件，包含捕获到的条形码数据
         void barcodeCaptured(
@@ -72,6 +79,7 @@ class RosManager : public QObject
 
         //定义一个信号，用于位置更新事件，包含无人机的二维位置坐标与高度
         void positionUpdated(double x, double y, double z);
+        void deltaUpdated(double dx, double dy, double dyaw);
 
         //定义一个信号，用于告知是否上传了路线
         void pushFlagChanged(bool value);
@@ -81,6 +89,9 @@ class RosManager : public QObject
 
         //机载端执行第二段程序后，把结果通知 UI
         void takeoffProgramCommandResult(bool success, const QString &message);
+
+        //机载端执行任务上传后，把结果通知 UI
+        void missionUploadFinished(bool success, const QString &message, const QString &saved_path);
 
     public slots:
         //定义一个槽函数，用于启动任务
@@ -106,8 +117,11 @@ class RosManager : public QObject
         rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr ready_status_sub_;
         rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_sub_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;
+        rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
+        rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_client_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;
 

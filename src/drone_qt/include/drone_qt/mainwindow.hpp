@@ -48,6 +48,8 @@ class MainWindow : public QMainWindow
             int action_num,
             const QString &action_name);
 
+void updateDelta(double dx,double dy,double dyaw);
+
         //定义一个结构体，用于存储条形码捕获记录，包括条形码数据、图像数据、图像格式和时间文本等信息
         struct BarcodeRecord {
             QString barcode;
@@ -129,4 +131,5 @@ class MainWindow : public QMainWindow
 
         bool task_running_{false};
         float progress_{0.0};//任务进度
+        bool delta_result_{false};//是否打印compare数据
 };

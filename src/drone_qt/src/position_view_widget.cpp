@@ -548,10 +548,10 @@ QVector<WorldCoord> PositionViewWidget::plannedWorldPoints() const
     QVector<WorldCoord> result;
     result.reserve(display_path_.size());
 
-    const double cell_size_x = 0.5;   // 每个格子在 x 方向对应 0.5m，仅示例
-    const double cell_size_y = 0.5;   // 每个格子在 y 方向对应 0.5m，仅示例
-    const double origin_x = 0.0;      // 栅格原点在真实坐标中的 x，仅示例
-    const double origin_y = 0.0;      // 栅格原点在真实坐标中的 y，仅示例
+    const double cell_size_x = 0.5;   // 每个格子在 x 方向对应 0.5m
+    const double cell_size_y = 0.5;   // 每个格子在 y 方向对应 0.5m
+    const double origin_x = 0.0;      // 栅格原点在真实坐标中的 x
+    const double origin_y = 0.0;      // 栅格原点在真实坐标中的 y
 
     for (const auto &cell : display_path_) {
         WorldCoord point;
@@ -672,7 +672,7 @@ void PositionViewWidget::paintEvent(QPaintEvent *event)
             35,
             grid.height() / rows_);
 
-        painter.drawText(rect, Qt::AlignCenter, QString("B%1").arg(8 - (row + 1)));
+        painter.drawText(rect, Qt::AlignCenter, QString("B%1").arg((rows_ + 1) - (row + 1)));
     }
 
     for (int col = 0; col < cols_; ++col) {

@@ -2,6 +2,7 @@
 #include "drone_qt/ros_manager.hpp"
 #include "drone_qt/image_preview_dialog.hpp"
 #include "drone_qt/position_view_widget.hpp"
+#include "drone_qt/mission_yaml_builder.hpp"
 
 #include <QLabel>
 #include <QPushButton>
@@ -81,7 +82,7 @@ void MainWindow::setupUi()
     battery_label_ = new QLabel("N/A", up_panel);
     mode_label_ = new QLabel("MODE_UNKNOWN", up_panel);
     armed_label_ = new QLabel("Lock", up_panel);
-    result_label_ = new QLabel("等待执行...", up_panel);
+    //result_label_ = new QLabel("等待执行...", up_panel);
     status_label_ = new QLabel("空闲", up_panel);
     action_label_ = new QLabel("无", up_panel);
     progress_label_ = new QLabel("0/0", up_panel);
@@ -128,7 +129,7 @@ void MainWindow::setupUi()
     /*================= 按钮区控件 =================*/
     //创建右上侧控制元素
     start_button_ = new QPushButton("起飞", right_panel);
-    stop_button_ = new QPushButton("暂停", right_panel);
+    stop_button_ = new QPushButton("停止", right_panel);
     push_button_ = new QPushButton("上传", right_panel);
     refresh_button_ = new QPushButton("刷新", right_panel);
     true_button_ = new QPushButton("确定", right_panel);
@@ -257,12 +258,34 @@ void MainWindow::setupConnections()
             waiting_push_result_ = true;
             //从界面获取当前坐标
             const QVector<WorldCoord> path_points = position_view_->plannedWorldPoints();
-            //发布坐标
-            ros_manager_->publishPath(path_points);
+            if (path_points.isEmpty()) {
+                run_log_view_->appendPlainText("路径为空，不能上传 mission YAML");
+                waiting_push_result_ = false;
+                return;
+            }
+            
+            //构建mission yaml字符串，初始化参数
+            MissionYamlBuilder::Options options;
+            options.takeoff_altitude = 1.2;//起飞高度
+            options.move_altitude = 1.2;//移动高度
+            options.yaw = 0.0;//偏航角
+            options.tolerance = 0.12;//误差容忍
+            options.takeoff_hover_duration = 5.0;//起飞悬停时长
+            options.landing_hover_duration = 5.0;//降落悬停时长
+            options.move_hover_duration = 5.0;//移动悬停时长
+            options.add_hover_between_takeoff = true;//是否在起飞后添加悬停
+            options.add_hover_between_landing = false;//是否在降落前添加悬停
+            options.add_hover_between_moves = true;//是否在移动之间添加悬停
+            options.use_camera_aim = false;//是否开启相机
+            options.auto_start_mission = false;//是否自动启动人物
+            options.compress_straight_segments = false;//是否压缩直线段
 
-            path_ready_ = false;
+            //构建mission yaml字符串
+            const QString mission_yaml = MissionYamlBuilder::buildMissionYaml(path_points, options);
+            run_log_view_->appendPlainText("正在上传 mission YAML 到机载端...");
             start_button_->setEnabled(false);
-            run_log_view_->appendPlainText("路线已发送，等待控制程序确认...");
+            //发布坐标
+            ros_manager_->uploadMissionYaml(mission_yaml);
         });
 
     //链接是否上传
@@ -294,16 +317,57 @@ void MainWindow::setupConnections()
             },
             Qt::QueuedConnection);
 
+//查看停止服务返回的内容
+    connect(ros_manager_, &RosManager::stopcommandResult,
+            this,
+            [this](bool success, const QString &message)
+            {
+                if(success){
+                    path_ready_ = false;
+                    waiting_push_result_ = false;
+                    start_button_->setEnabled(false);
+                    delta_result_ = false;
+                    //push_button_->setEnabled(true);
+                }
+                run_log_view_->appendPlainText(QString("%1").arg(message));
+            },
+            Qt::QueuedConnection);
+
     //查看offboard启动服务返回的内容
     connect(ros_manager_, &RosManager::offboardCommandResult,
         this,
         [this](bool success, const QString &message)
         {
+if(success){
+                //push_button_->setEnabled(false);
+                delta_result_ = true;
+            }
             run_log_view_->appendPlainText(success
-                ? QString("offboard 启动成功")
-                : QString("offboard 启动失败: %1").arg(message));
+                ? QString("offboard 启动成功，等待ready信号确认")
+                : QString("%1").arg(message));
         },
         Qt::QueuedConnection);
+
+    //查看任务yaml上传服务返回的内容
+    connect(ros_manager_, &RosManager::missionUploadFinished,
+    this,
+    [this](bool success, const QString &message, const QString &saved_path)
+    {
+        if (success) {
+            start_button_->setEnabled(true);
+            run_log_view_->appendPlainText(
+                QString("mission YAML 上传成功，机载保存路径: %1").arg(saved_path));
+                //上传成功后直接请求启动offboard
+                ros_manager_->requestStartOffboard();
+                run_log_view_->appendPlainText(QString("路线已上传给控制程序"));
+        } else {
+            start_button_->setEnabled(false);
+            run_log_view_->appendPlainText(
+                QString("mission YAML 上传失败: %1").arg(message));
+                waiting_push_result_ = false;
+        }
+    },
+    Qt::QueuedConnection);
 
     //链接是否选择显示路线
     connect(display_button_, &QPushButton::clicked,
@@ -423,6 +487,14 @@ void MainWindow::setupConnections()
             }
         },
         Qt::QueuedConnection);
+
+    connect(ros_manager_, &RosManager::deltaUpdated,
+        this,
+        [this](double dx, double dy, double dyaw)
+        {
+            updateDelta(dx, dy, dyaw);
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::updateCommandResult(bool success, const QString &message)
@@ -503,6 +575,23 @@ void MainWindow::action_updateStatus(
         progress_label_->setText("0/0");
         progress_percent_label_->setText("0%");
     }
+}
+
+void MainWindow::updateDelta(double dx, double dy, double dyaw)
+{
+    if (!run_log_view_) {
+        return;
+    }
+
+    if(!delta_result_){
+        return;
+    }
+
+    run_log_view_->appendPlainText(
+        QString("dx = %1   dy = %2   dyaw = %3")
+            .arg(dx, 0, 'f', 3)
+            .arg(dy, 0, 'f', 3)
+            .arg(dyaw, 0, 'f', 3));
 }
 
 void MainWindow::appendBarcodeRecord(
@@ -591,16 +680,6 @@ void MainWindow::showBarcodeImage(QListWidgetItem *item)
 void MainWindow::updatePathReadyState(bool ready)
 {
     path_ready_ = ready;
-    start_button_->setEnabled(true);
-
-    if (ready) {
-        run_log_view_->appendPlainText("路线已确认，正在请求启动 offboard...");
-        if (ros_manager_) {
-            ros_manager_->requestStartOffboard();
-        }
-    } else {
-        run_log_view_->appendPlainText("路线未确认，请重新上传");
-    }
 }
 
 void MainWindow::handleStartButtonClicked()

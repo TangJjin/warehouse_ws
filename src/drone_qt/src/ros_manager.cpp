@@ -149,13 +149,40 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    delta_sub_ = node_->create_subscription<geometry_msgs::msg::Vector3>(
+        "/pose_yaw_compare/delta",
+        delta_qos,
+        [this](const geometry_msgs::msg::Vector3::SharedPtr msg)
+        {
+            const double dx = msg->x;
+            const double dy = msg->y;
+            const double dyaw = msg->z;
+
+            //使用Qt的信号槽机制在线程安全的方式下发位置更新信号，包含无人机的二维位置坐标和高度等信息
+            QMetaObject::invokeMethod(
+                this,
+                [this, dx, dy, dyaw]() {
+                    emit deltaUpdated(dx, dy, dyaw);
+                },
+                Qt::QueuedConnection);
+        });
+
     //创建一个服务客户端，用于调用任务启动服务
     start_task_client_ = node_->create_client<drone_msgs::srv::StartTask>(
         "/drone/start_task");
 
+    //创建一个服务客户端，用于调用路线重传服务
+    stop_push_client_ = node_->create_client<drone_msgs::srv::StartTask>(
+        "/drone/stop_push");
+
     //创建一个服务客户端，用于调用offboard启动服务
     start_offboard_client_ = node_->create_client<drone_msgs::srv::StartOffboard>(
     "/drone/start_offboard");
+
+    //创建一个服务客户端，用于调用任务yaml上传服务
+    upload_mission_yaml_client_ = node_->create_client<drone_msgs::srv::UploadMissionYaml>(
+    "/drone/upload_mission_yaml");
 }
 
 void RosManager::start()
@@ -203,7 +230,7 @@ void RosManager::startTask()
 
 void RosManager::stopTask()
 {
-    if(!start_task_client_->service_is_ready())
+    if(!stop_push_client_->service_is_ready())
     {
         //emit commandResult(false, "service /drone/start_task is not ready");
         return;
@@ -214,13 +241,13 @@ void RosManager::stopTask()
     request->task_name = "stop_task";//停止任务
 
     //异步调用服务，并在收到响应时发出命令结果信号
-    start_task_client_->async_send_request(
+    stop_push_client_->async_send_request(
         request,
         [this](rclcpp::Client<drone_msgs::srv::StartTask>::SharedFuture future)
         {
             //获取服务响应，并发出命令结果信号，包含成功标志和响应消息
             const auto response = future.get();
-            emit commandResult(
+            emit stopcommandResult(
                 response->success,
                 QString::fromStdString(response->message));
         });
@@ -244,6 +271,34 @@ void RosManager::requestStartOffboard()
             emit offboardCommandResult(
                 response->success,
                 QString::fromStdString(response->message));
+        });
+}
+
+void RosManager::uploadMissionYaml(const QString &mission_yaml)
+{
+    if (!upload_mission_yaml_client_ || !upload_mission_yaml_client_->service_is_ready()) {
+        emit missionUploadFinished(false, "服务 /drone/upload_mission_yaml 未就绪", "");
+        return;
+    }
+
+    auto request = std::make_shared<drone_msgs::srv::UploadMissionYaml::Request>();
+    //将传入的QString类型的mission_yaml转换为std::string类型，并赋值给服务请求对象的mission_yaml字段
+    request->mission_yaml = mission_yaml.toStdString();
+
+    upload_mission_yaml_client_->async_send_request(
+        request,
+        [this](rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedFuture future)
+        {
+            const auto response = future.get();
+            QMetaObject::invokeMethod(
+                this,
+                [this, response]() {
+                    emit missionUploadFinished(
+                        response->success,
+                        QString::fromStdString(response->message),
+                        QString::fromStdString(response->saved_path));
+                },
+                Qt::QueuedConnection);
         });
 }
 
