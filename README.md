@@ -14,6 +14,7 @@
 - `drone_bringup`
 - `drone_control`
 - `drone_localization`
+- `drone_mission`
 - `drone_msgs`
 - `drone_perception`
 - `drone_qt`
@@ -34,6 +35,7 @@
 - `drone_perception`
 
 ### 2.4 通信接口与界面
+- `drone_mission`
 - `drone_msgs`
 - `drone_qt`
 - `drone_qt_2`
@@ -69,8 +71,11 @@ drone_control 是控制程序主逻辑包。
 drone_localization 主要负责定位链路相关功能。
 
 
+## 3.3 `drone_mission`
+drone_mission 主要负责保存地面站发送的路线数据。
 
-## 3.3 `drone_msgs`
+
+## 3.4 `drone_msgs`
 
 drone_msgs 主要负责全系统公共消息定义。
 
@@ -78,13 +83,13 @@ drone_msgs 主要负责全系统公共消息定义。
 
 
 
-## 3.4 `drone_perception`
+## 3.5 `drone_perception`
 
 drone_perception 是感知识别包，主要负责“看到了什么、识别到了什么”。
 
 
 
-## 3.5 `drone_qt`
+## 3.6 `drone_qt`
 
 作用概述
 
@@ -92,7 +97,7 @@ drone_qt 主要负责Qt 地面端界面程序。
 
 
 
-## 3.6 `drone_qt_2`
+## 3.7 `drone_qt_2`
 
 drone_qt_2 主要负责Qt 机载端程序。
 
@@ -127,3 +132,4 @@ drone_qt_2 主要负责Qt 机载端程序。
 机载端中转层
 
 - drone_qt_2
+- drone_mission
