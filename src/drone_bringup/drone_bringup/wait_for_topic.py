@@ -7,6 +7,7 @@ import importlib
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 
 def import_message_type(type_string: str):
@@ -22,7 +23,7 @@ def import_message_type(type_string: str):
 
 
 class TopicWaiter(Node):
-    def __init__(self, topic_name: str, msg_type, timeout_sec: float):
+    def __init__(self, topic_name: str, msg_type, timeout_sec: float, qos_reliability: str):
         super().__init__('topic_waiter')
         self.topic_name = topic_name
         self.msg_type = msg_type
@@ -30,11 +31,24 @@ class TopicWaiter(Node):
         self.received = False
         self.start_time = time.time()
 
+        reliability_map = {
+            'reliable': QoSReliabilityPolicy.RELIABLE,
+            'best_effort': QoSReliabilityPolicy.BEST_EFFORT,
+        }
+        if qos_reliability not in reliability_map:
+            raise ValueError(f'Invalid qos reliability: {qos_reliability}')
+
+        qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10,
+            reliability=reliability_map[qos_reliability],
+        )
+
         self.subscription = self.create_subscription(
             self.msg_type,
             self.topic_name,
             self.callback,
-            10
+            qos
         )
 
     def callback(self, msg):
@@ -50,6 +64,12 @@ def main():
     parser.add_argument('--topic', required=True, help='topic name')
     parser.add_argument('--type', required=True, help='message type, e.g. std_msgs/msg/String')
     parser.add_argument('--timeout', type=float, default=15.0, help='timeout in seconds')
+    parser.add_argument(
+        '--qos-reliability',
+        choices=['reliable', 'best_effort'],
+        default='reliable',
+        help='subscription QoS reliability'
+    )
     args = parser.parse_args()
 
     try:
@@ -59,7 +79,7 @@ def main():
         sys.exit(2)
 
     rclpy.init()
-    node = TopicWaiter(args.topic, msg_type, args.timeout)
+    node = TopicWaiter(args.topic, msg_type, args.timeout, args.qos_reliability)
 
     try:
         while rclpy.ok():

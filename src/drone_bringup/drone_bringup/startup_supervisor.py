@@ -16,6 +16,7 @@ class StartupStep:
     ready_topic: str
     ready_type: str
     timeout_sec: int
+    ready_qos_reliability: str = 'reliable'
 
 
 class StartupSupervisor:
@@ -36,13 +37,15 @@ class StartupSupervisor:
                 ready_topic='/mavros/state',
                 ready_type='mavros_msgs/msg/State',
                 timeout_sec=15,
+                ready_qos_reliability='best_effort',
             ),
             StartupStep(
                 name='livox_ros_driver2',
                 command=['ros2', 'launch', 'livox_ros_driver2', 'msg_MID360_launch.py'],
                 ready_topic='/livox/lidar',
-                ready_type='sensor_msgs/msg/PointCloud2',
+                ready_type='livox_ros_driver2/msg/CustomMsg',
                 timeout_sec=15,
+                ready_qos_reliability='reliable',
             ),
             StartupStep(
                 name='fast_lio',
@@ -50,6 +53,7 @@ class StartupSupervisor:
                 ready_topic='/Odometry',
                 ready_type='nav_msgs/msg/Odometry',
                 timeout_sec=20,
+                ready_qos_reliability='reliable',
             ),
             StartupStep(
                 name='fastlio_to_mavros_node',
@@ -57,6 +61,15 @@ class StartupSupervisor:
                 ready_topic='/mavros/local_position/pose',
                 ready_type='geometry_msgs/msg/PoseStamped',
                 timeout_sec=15,
+                ready_qos_reliability='best_effort',
+            ),
+            StartupStep(
+                name='compare_yaw',
+                command=['ros2', 'run', 'node_py', 'compare_yaw'],
+                ready_topic='/Odometry',
+                ready_type='nav_msgs/msg/Odometry',
+                timeout_sec=15,
+                ready_qos_reliability='reliable',
             ),
             StartupStep(
                 name='airborne_node',
@@ -64,6 +77,7 @@ class StartupSupervisor:
                 ready_topic='/drone/status',
                 ready_type='drone_msgs/msg/DroneStatus',
                 timeout_sec=15,
+                ready_qos_reliability='best_effort',
             ),
         ]
 
@@ -91,7 +105,8 @@ class StartupSupervisor:
             self.wait_script,
             '--topic', step.ready_topic,
             '--type', step.ready_type,
-            '--timeout', str(step.timeout_sec)
+            '--timeout', str(step.timeout_sec),
+            '--qos-reliability', step.ready_qos_reliability,
         ])
 
         return result.returncode == 0
