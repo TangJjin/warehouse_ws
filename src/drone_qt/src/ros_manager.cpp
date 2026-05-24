@@ -155,17 +155,10 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
         delta_qos,
         [this](const geometry_msgs::msg::Vector3::SharedPtr msg)
         {
-            const double dx = msg->x;
-            const double dy = msg->y;
-            const double dyaw = msg->z;
-
-            //使用Qt的信号槽机制在线程安全的方式下发位置更新信号，包含无人机的二维位置坐标和高度等信息
-            QMetaObject::invokeMethod(
-                this,
-                [this, dx, dy, dyaw]() {
-                    emit deltaUpdated(dx, dy, dyaw);
-                },
-                Qt::QueuedConnection);
+            std::lock_guard<std::mutex> lock(delta_mutex_);
+            latest_dx_ = msg->x;
+            latest_dy_ = msg->y;
+            latest_dyaw_ = msg->z;
         });
 
     //创建一个服务客户端，用于调用任务启动服务
@@ -183,6 +176,27 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个服务客户端，用于调用任务yaml上传服务
     upload_mission_yaml_client_ = node_->create_client<drone_msgs::srv::UploadMissionYaml>(
     "/drone/upload_mission_yaml");
+
+    using namespace std::chrono_literals;
+    timer_ = node_->create_wall_timer(
+        2s,
+        [this]()
+        {
+            double dx, dy, dyaw;
+            {
+                std::lock_guard<std::mutex> lock(delta_mutex_);
+                dx = latest_dx_;
+                dy = latest_dy_;
+                dyaw = latest_dyaw_;
+            }
+
+            QMetaObject::invokeMethod(
+                this,
+                [this, dx, dy, dyaw]() {
+                    emit deltaUpdated(dx, dy, dyaw);
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 void RosManager::start()

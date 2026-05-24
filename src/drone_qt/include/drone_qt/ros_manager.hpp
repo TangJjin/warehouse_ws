@@ -124,6 +124,7 @@ class RosManager : public QObject
         rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_client_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;
+        rclcpp::TimerBase::SharedPtr timer_;
 
         std::string current_flight_mode{"UNKNOWN"};//当前飞行模式字符串
         std::string current_action_mode{"NO ACTION"};//当前动作字符串
@@ -133,4 +134,9 @@ class RosManager : public QObject
         float battery_voltage{0.0};//电压数值
         float battery_percent{0.0};//电量百分比数值
         bool push_flag{false};//是否上传
+
+        double latest_dx_ = 0.0;
+        double latest_dy_ = 0.0;
+        double latest_dyaw_ = 0.0;
+        std::mutex delta_mutex_;
 };

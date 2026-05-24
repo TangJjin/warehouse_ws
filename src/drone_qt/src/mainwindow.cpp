@@ -338,9 +338,8 @@ void MainWindow::setupConnections()
         this,
         [this](bool success, const QString &message)
         {
-if(success){
+            if(success){
                 //push_button_->setEnabled(false);
-                delta_result_ = true;
             }
             run_log_view_->appendPlainText(success
                 ? QString("offboard 启动成功，等待ready信号确认")
@@ -588,7 +587,7 @@ void MainWindow::updateDelta(double dx, double dy, double dyaw)
     }
 
     run_log_view_->appendPlainText(
-        QString("dx = %1   dy = %2   dyaw = %3")
+        QString("dx = %1      dy = %2      dyaw = %3")
             .arg(dx, 0, 'f', 3)
             .arg(dy, 0, 'f', 3)
             .arg(dyaw, 0, 'f', 3));
@@ -699,6 +698,7 @@ void MainWindow::handleStartButtonClicked()
     }
 
     waiting_task_result_ = true;
+    delta_result_ = true;
     run_log_view_->appendPlainText("正在请求 action_task_run...");
     ros_manager_->startTask();
 }
