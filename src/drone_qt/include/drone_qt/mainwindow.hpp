@@ -105,7 +105,6 @@ void updateDelta(double dx,double dy,double dyaw);
         QLabel *dy_value_label_{nullptr};//dy数值标签
         QLabel *dyaw_value_label_{nullptr};//dyaw数值标签
 
-
         QPushButton *start_button_{nullptr};//开始按钮
         QPushButton *stop_button_{nullptr};//停止按钮
         QPushButton *true_button_{nullptr};//选择按钮
