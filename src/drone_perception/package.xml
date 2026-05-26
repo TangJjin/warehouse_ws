@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>drone_perception</name>
-  <version>0.0.1</version>
-  <description>TCP bridge for K230 JPEG snapshots and ROS 2 topic publishing.</description>
+  <version>0.0.2</version>
+  <description>Drone perception: TCP bridge for K230 camera, YOLO detection with D435i depth.</description>
   <maintainer email="gjl@example.com">gjl</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,10 @@
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>drone_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_geometry</depend>
+  <depend>message_filters</depend>
+  <depend>sensor_msgs</depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>

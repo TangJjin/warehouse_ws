@@ -137,5 +137,5 @@ void updateDelta(double dx,double dy,double dyaw);
 
         bool task_running_{false};
         float progress_{0.0};//任务进度
-        bool delta_result_{false};//是否打印compare数据
+        bool delta_result_{true};//是否打印compare数据
 };

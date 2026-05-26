@@ -1,0 +1,45 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include <opencv2/core/mat.hpp>
+
+#include "rknn_api.h"
+
+#include "drone_perception/detection.hpp"
+#include "drone_perception/yolo_postprocessor.hpp"
+
+class RknnYoloDetector
+{
+public:
+    explicit RknnYoloDetector(const std::string &model_path);
+    ~RknnYoloDetector();
+
+    std::vector<Detection> infer(const cv::Mat &bgr_image);
+
+private:
+    struct LetterboxResult
+    {
+        cv::Mat image;
+        float scale = 1.0F;
+        int pad_x = 0;
+        int pad_y = 0;
+    };
+
+    LetterboxResult makeLetterbox(const cv::Mat &bgr_image) const;
+
+    void loadModel(const std::string &model_path);
+
+    static std::vector<unsigned char> readFile(const std::string &path);
+
+    // 这些参数和当前 QR YOLO RKNN 模型绑定：
+    // 输入 640x640，输出 1x6x8400，类别数 2。换模型时要同步修改。
+    int input_width_ = 640;
+    int input_height_ = 640;
+    int candidate_count_ = 8400;
+    YoloPostprocessor postprocessor_{2, 0.60F, 0.45F};
+
+    rknn_context context_ = 0;
+    std::vector<unsigned char> model_data_;
+};
