@@ -278,7 +278,7 @@ void MainWindow::setupConnections()
             options.add_hover_between_moves = true;//是否在移动之间添加悬停
             options.use_camera_aim = false;//是否开启相机
             options.auto_start_mission = false;//是否自动启动人物
-            options.compress_straight_segments = false;//是否压缩直线段
+            options.compress_straight_segments = true;//是否压缩直线段
 
             //构建mission yaml字符串
             const QString mission_yaml = MissionYamlBuilder::buildMissionYaml(path_points, options);
