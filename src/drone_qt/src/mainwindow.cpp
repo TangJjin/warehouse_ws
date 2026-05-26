@@ -82,11 +82,35 @@ void MainWindow::setupUi()
     battery_label_ = new QLabel("N/A", up_panel);
     mode_label_ = new QLabel("MODE_UNKNOWN", up_panel);
     armed_label_ = new QLabel("Lock", up_panel);
-    //result_label_ = new QLabel("等待执行...", up_panel);
     status_label_ = new QLabel("空闲", up_panel);
     action_label_ = new QLabel("无", up_panel);
     progress_label_ = new QLabel("0/0", up_panel);
     progress_percent_label_ = new QLabel("0%", up_panel);
+    dx_indicator_label_ = new QLabel(up_panel);
+    dy_indicator_label_ = new QLabel(up_panel);
+    dyaw_indicator_label_ = new QLabel(up_panel);
+    dx_value_label_ = new QLabel("dx:", up_panel);
+    dy_value_label_ = new QLabel("dy:", up_panel);
+    dyaw_value_label_ = new QLabel("dyaw:", up_panel);
+
+    dx_indicator_label_->setFixedSize(16, 16);
+    dx_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dy_indicator_label_->setFixedSize(16, 16);
+    dy_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dyaw_indicator_label_->setFixedSize(16, 16);
+    dyaw_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
 
     //up_layout->addStretch();//添加一个伸缩项，靠右显示
     //up_layout->addWidget(new QLabel("连接状态：", up_panel));
@@ -102,9 +126,17 @@ void MainWindow::setupUi()
     up_layout->addWidget(armed_label_);
     up_layout->addStretch();//添加一个伸缩项，靠左显示
 
-    //upd_layout->addStretch();//添加一个伸缩项，靠右显示
-    //up_layout->addWidget(new QLabel("按钮响应状态：", up_panel));
-    //up_layout->addWidget(result_label_);
+    up_layout->addWidget(dx_value_label_);
+    up_layout->addWidget(dx_indicator_label_);
+    up_layout->addSpacing(20);
+    up_layout->addWidget(dy_value_label_);
+    up_layout->addWidget(dy_indicator_label_);
+    up_layout->addSpacing(20);
+    up_layout->addWidget(dyaw_value_label_);
+    up_layout->addWidget(dyaw_indicator_label_);
+    up_layout->addSpacing(20);
+
+    up_layout->addStretch();//添加一个伸缩项
     up_layout->addSpacing(20);//添加一个水平间距，分隔连接状态和电量状态
     up_layout->addWidget(new QLabel("当前执行任务：", up_panel));
     up_layout->addWidget(status_label_);
@@ -326,7 +358,7 @@ void MainWindow::setupConnections()
                     path_ready_ = false;
                     waiting_push_result_ = false;
                     start_button_->setEnabled(false);
-                    delta_result_ = false;
+                    delta_result_ = true;
                     //push_button_->setEnabled(true);
                 }
                 run_log_view_->appendPlainText(QString("%1").arg(message));
@@ -586,11 +618,41 @@ void MainWindow::updateDelta(double dx, double dy, double dyaw)
         return;
     }
 
-    run_log_view_->appendPlainText(
-        QString("dx = %1      dy = %2      dyaw = %3")
-            .arg(dx, 0, 'f', 3)
-            .arg(dy, 0, 'f', 3)
-            .arg(dyaw, 0, 'f', 3));
+    // run_log_view_->appendPlainText(
+    //     QString("dx = %1      dy = %2      dyaw = %3")
+    //         .arg(dx, 0, 'f', 3)
+    //         .arg(dy, 0, 'f', 3)
+    //         .arg(dyaw, 0, 'f', 3));
+
+    const double abs_dx = std::abs(dx);
+    const double abs_dy = std::abs(dy);
+    const double abs_dyaw = std::abs(dyaw);
+
+    auto setIndicatorColor = [](QLabel *label, const QString &color) {
+        if (!label) {
+            return;
+        }
+
+        label->setStyleSheet(QString(
+            "background-color: %1;"
+            "border-radius: 6px;"
+            "border: 1px solid #666;"
+        ).arg(color));
+    };
+
+    auto updateIndicator = [&](QLabel *label, double value, double green_limit, double yellow_limit) {
+        if (value <= green_limit) {
+            setIndicatorColor(label, "#00c853");
+        } else if (value <= yellow_limit) {
+            setIndicatorColor(label, "#ffd600");
+        } else {
+            setIndicatorColor(label, "#d50000");
+        }
+    };
+
+    updateIndicator(dx_indicator_label_, abs_dx, 0.3, 1.0);
+    updateIndicator(dy_indicator_label_, abs_dy, 0.3, 1.0);
+    updateIndicator(dyaw_indicator_label_, abs_dyaw, 15.0, 30.0);
 }
 
 void MainWindow::appendBarcodeRecord(
