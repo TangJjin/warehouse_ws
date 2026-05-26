@@ -98,6 +98,13 @@ void updateDelta(double dx,double dy,double dyaw);
         QLabel *action_label_{nullptr};//动作标签
         QLabel *progress_label_{nullptr};//进度标签
         QLabel *progress_percent_label_{nullptr};//百分比进度标签
+        QLabel *dx_indicator_label_{nullptr};//dx指示灯标签
+        QLabel *dy_indicator_label_{nullptr};//dy指示灯标签
+        QLabel *dyaw_indicator_label_{nullptr};//dyaw指示灯标签
+        QLabel *dx_value_label_{nullptr};//dx数值标签
+        QLabel *dy_value_label_{nullptr};//dy数值标签
+        QLabel *dyaw_value_label_{nullptr};//dyaw数值标签
+
 
         QPushButton *start_button_{nullptr};//开始按钮
         QPushButton *stop_button_{nullptr};//停止按钮
@@ -131,5 +138,5 @@ void updateDelta(double dx,double dy,double dyaw);
 
         bool task_running_{false};
         float progress_{0.0};//任务进度
-        bool delta_result_{false};//是否打印compare数据
+        bool delta_result_{true};//是否打印compare数据
 };

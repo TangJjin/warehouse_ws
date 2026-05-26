@@ -179,7 +179,7 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
 
     using namespace std::chrono_literals;
     timer_ = node_->create_wall_timer(
-        2s,
+        0.5s,
         [this]()
         {
             double dx, dy, dyaw;
