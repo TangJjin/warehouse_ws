@@ -82,11 +82,32 @@ void MainWindow::setupUi()
     battery_label_ = new QLabel("N/A", up_panel);
     mode_label_ = new QLabel("MODE_UNKNOWN", up_panel);
     armed_label_ = new QLabel("Lock", up_panel);
-    //result_label_ = new QLabel("等待执行...", up_panel);
     status_label_ = new QLabel("空闲", up_panel);
     action_label_ = new QLabel("无", up_panel);
     progress_label_ = new QLabel("0/0", up_panel);
     progress_percent_label_ = new QLabel("0%", up_panel);
+    dx_indicator_label_ = new QLabel(up_panel);
+    dy_indicator_label_ = new QLabel(up_panel);
+    dyaw_indicator_label_ = new QLabel(up_panel);
+
+    dx_indicator_label_->setFixedSize(12, 12);
+    dx_indicator_label_->setStyleSheet(
+        "background-color: #00c853;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dy_indicator_label_->setFixedSize(12, 12);
+    dy_indicator_label_->setStyleSheet(
+        "background-color: #00c853;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dyaw_indicator_label_->setFixedSize(12, 12);
+    dyaw_indicator_label_->setStyleSheet(
+        "background-color: #00c853;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
 
     //up_layout->addStretch();//添加一个伸缩项，靠右显示
     //up_layout->addWidget(new QLabel("连接状态：", up_panel));
@@ -102,9 +123,14 @@ void MainWindow::setupUi()
     up_layout->addWidget(armed_label_);
     up_layout->addStretch();//添加一个伸缩项，靠左显示
 
-    //upd_layout->addStretch();//添加一个伸缩项，靠右显示
-    //up_layout->addWidget(new QLabel("按钮响应状态：", up_panel));
-    //up_layout->addWidget(result_label_);
+    up_layout->addWidget(dx_indicator_label_);
+    up_layout->addSpacing(20);
+    up_layout->addWidget(dy_indicator_label_);
+    up_layout->addSpacing(20);
+    up_layout->addWidget(dyaw_indicator_label_);
+    up_layout->addSpacing(20);
+
+    //upd_layout->addStretch();//添加一个伸缩项
     up_layout->addSpacing(20);//添加一个水平间距，分隔连接状态和电量状态
     up_layout->addWidget(new QLabel("当前执行任务：", up_panel));
     up_layout->addWidget(status_label_);

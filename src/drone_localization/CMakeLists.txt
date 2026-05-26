@@ -14,8 +14,10 @@ find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(mavros_msgs REQUIRED)
 
 add_executable(fastlio_to_mavros_node src/fastlio_to_mavros.cpp)
+add_executable(compare_yaw_node src/compare_yaw_node.cpp)
 
 ament_target_dependencies(fastlio_to_mavros_node
   rclcpp
@@ -26,8 +28,15 @@ ament_target_dependencies(fastlio_to_mavros_node
   tf2_geometry_msgs
 )
 
+ament_target_dependencies(compare_yaw_node
+  rclcpp
+  geometry_msgs
+  mavros_msgs
+)
+
 install(TARGETS
 fastlio_to_mavros_node
+compare_yaw_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

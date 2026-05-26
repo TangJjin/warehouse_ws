@@ -65,9 +65,9 @@ class StartupSupervisor:
             ),
             StartupStep(
                 name='compare_yaw',
-                command=['ros2', 'run', 'node_py', 'compare_yaw'],
-                ready_topic='/Odometry',
-                ready_type='nav_msgs/msg/Odometry',
+                command=['ros2', 'run', 'drone_localization', 'compare_yaw_node'],
+                ready_topic='/pose_yaw_compare/delta',
+                ready_type='geometry_msgs/msg/Vector3',
                 timeout_sec=15,
                 ready_qos_reliability='reliable',
             ),

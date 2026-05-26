@@ -303,7 +303,7 @@ bool AirborneNode::saveMissionYamlToFile(
     std::string &error_message)
 {
     //将接收到的yaml字符串保存到文件中，并返回保存路径和错误信息
-    const std::string dir_path = "/home/orangepi/drone_ws/install/drone_mission/share/drone_mission/config";
+    const std::string dir_path = "/home/orangepi/drone_ws/src/drone_mission/config";
     const std::string file_path = dir_path + "/ground_mission.yaml";
 
     //使用std::filesystem创建目录，如果目录不存在的话
@@ -420,11 +420,11 @@ bool AirborneNode::startOffboardCommand()
         "source /opt/ros/humble/setup.bash && "
         "source ~/drone_ws/install/setup.bash && "
         "ros2 launch drone_bringup run_offboard.launch.py "
-        "enable_offboard_control:=true "
-        "mission_yaml_path:=%1")
+        "mission_config_path:=%1 "
+        "enable_offboard_control:=true ")
         .arg(QString::fromStdString(current_mission_path_));
 
-    RCLCPP_INFO(this->get_logger(), "starting offboard process with QProcess...");
+    RCLCPP_INFO(this->get_logger(), "starting offboard process with command: %s", command.toStdString().c_str());
     offboard_process_->start("bash", QStringList() << "-lc" << command);
 
     task_stoped_ = false;
