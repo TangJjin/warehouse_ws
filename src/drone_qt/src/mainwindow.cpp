@@ -625,6 +625,7 @@ void MainWindow::updateStatus(
         start_button_->setEnabled(false);
         if (ros_manager_) {
             ros_manager_->stopTask();
+            run_log_view_->appendPlainText(QString("以关闭offboard,可重新上传路线"));
         }
     }
 }
