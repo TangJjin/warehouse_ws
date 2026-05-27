@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QMainWindow>
+#include "drone_qt/position_view_widget.hpp"
+#include <QVector>
 
 class QLabel;
 class QPushButton;
@@ -142,4 +144,8 @@ void updateDelta(double dx,double dy,double dyaw,bool valid);
         float progress_{0.0};//任务进度
         bool delta_result_{true};//是否打印compare数据
         bool push_flag_{false};//是否上传路线
+
+        bool unlock_flag_{false};//是否是从开锁到解锁的状态
+        bool auto_stop_flag_{false};//判断是否自动执行过stop
+        int disarm_stable_count_{0};    // 连续收到 armed == false 的次数
 };

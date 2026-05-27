@@ -109,7 +109,7 @@ void RosManager::setupRosInterfaces()
             points.reserve(static_cast<int>(msg->points.size()));//预先分配空间以提高效率
 
             for (const auto &point : msg->points) {
-                points.push_back(WorldCoord(point.x, point.y));
+                points.push_back(WorldCoord{point.x, point.y});
             }
 
             QMetaObject::invokeMethod(

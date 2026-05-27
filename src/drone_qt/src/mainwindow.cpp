@@ -86,7 +86,7 @@ void MainWindow::setupUi()
     battery_label_ = new QLabel("N/A", up_panel);
     mode_label_ = new QLabel("MODE_UNKNOWN", up_panel);
     armed_label_ = new QLabel("Lock", up_panel);
-    status_label_ = new QLabel("空闲", up_panel);
+    //status_label_ = new QLabel("空闲", up_panel);
     action_label_ = new QLabel("无", up_panel);
     progress_label_ = new QLabel("0/0", up_panel);
     progress_percent_label_ = new QLabel("0%", up_panel);
@@ -600,6 +600,33 @@ void MainWindow::updateStatus(
     } else {
         status_label_->setText("空闲");
     }
+
+    if (armed == true) {
+        if (unlock_flag_ == false) {
+            unlock_flag_ = true;       // 标记：本轮已经开锁过
+            auto_stop_flag_ = false;    // 新一轮允许自动 stop
+        }
+
+        disarm_stable_count_ = 0;       // 只要又变回开锁，就清零去抖计数
+    }
+
+    if(unlock_flag_ == true && armed == false){
+        disarm_stable_count_++;//只有在曾经开锁过的状态才加
+    }
+    else if(unlock_flag_ == false && armed == false){
+        disarm_stable_count_ = 0;       // 一直没开锁过，不做自动 stop
+    }
+
+    //判断是否为从开锁到关索的状态并且判断是否是第一次运行
+    if(unlock_flag_ == true && auto_stop_flag_ == false && disarm_stable_count_ >= 3){
+        auto_stop_flag_ = true;
+        unlock_flag_ = false;
+        waiting_push_result_ = false;//重置等待上传结果的标志，允许下一次上传
+        start_button_->setEnabled(false);
+        if (ros_manager_) {
+            ros_manager_->stopTask();
+        }
+    }
 }
 
 void MainWindow::action_updateStatus(
@@ -619,10 +646,6 @@ void MainWindow::action_updateStatus(
         action_label_->setText("无");
         progress_label_->setText("0/0");
         progress_percent_label_->setText("0%");
-    }
-    //动作完成了
-    if(action_step == action_num){
-        waiting_push_result_ = false;//重置等待上传结果的标志，允许下一次上传
     }
 }
 
@@ -772,7 +795,7 @@ void MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
 {
     QString text = QString("收到返回路径，共 %1 个点").arg(points.size());
 
-    for (std::size_t i = 0; i < points.size(); ++i) {
+    for (int i = 0; i < points.size(); ++i) {
         const auto &point = points[i];
         text += QString(" -> (%1,%2)")
                     .arg(point.x, 0, 'f', 1)
@@ -806,8 +829,9 @@ void MainWindow::handleStartButtonClicked()
 
     waiting_task_result_ = true;
     delta_result_ = true;
-    run_log_view_->appendPlainText("正在请求 action_task_run...");
+    run_log_view_->appendPlainText("开始任务");
     ros_manager_->startTask();
+    start_button_->setEnabled(false);
 }
 
 void MainWindow::setupSerialPort()
