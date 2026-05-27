@@ -23,11 +23,55 @@ std::vector<Detection> YoloPostprocessor::parseOutput(
     int pad_x,
     int pad_y) const
 {
+    if (output_data == nullptr || candidate_count <= 0)
+    {
+        return {};
+    }
+
+    return parseChannelData(
+        output_data,
+        output_data + 4 * candidate_count,
+        candidate_count,
+        original_size,
+        scale,
+        pad_x,
+        pad_y);
+}
+
+std::vector<Detection> YoloPostprocessor::parseSplitOutput(
+    const float *bbox_data,
+    const float *class_data,
+    int candidate_count,
+    const cv::Size &original_size,
+    float scale,
+    int pad_x,
+    int pad_y) const
+{
+    return parseChannelData(
+        bbox_data,
+        class_data,
+        candidate_count,
+        original_size,
+        scale,
+        pad_x,
+        pad_y);
+}
+
+std::vector<Detection> YoloPostprocessor::parseChannelData(
+    const float *bbox_data,
+    const float *class_data,
+    int candidate_count,
+    const cv::Size &original_size,
+    float scale,
+    int pad_x,
+    int pad_y) const
+{
     std::vector<cv::Rect> boxes;
     std::vector<float> scores;
     std::vector<int> class_ids;
 
-    if (output_data == nullptr || candidate_count <= 0 || scale <= 0.0F ||
+    if (bbox_data == nullptr || class_data == nullptr ||
+        candidate_count <= 0 || scale <= 0.0F ||
         original_size.width <= 0 || original_size.height <= 0)
     {
         return {};
@@ -45,17 +89,17 @@ std::vector<Detection> YoloPostprocessor::parseOutput(
 
     for (int i = 0; i < candidate_count; ++i)
     {
-        const float x_center = output_data[0 * candidate_count + i];
-        const float y_center = output_data[1 * candidate_count + i];
-        const float width = output_data[2 * candidate_count + i];
-        const float height = output_data[3 * candidate_count + i];
+        const float x_center = bbox_data[0 * candidate_count + i];
+        const float y_center = bbox_data[1 * candidate_count + i];
+        const float width = bbox_data[2 * candidate_count + i];
+        const float height = bbox_data[3 * candidate_count + i];
 
         float best_score = 0.0F;
         int best_class = -1;
 
         for (int class_id = 0; class_id < class_count_; ++class_id)
         {
-            const float score = output_data[(4 + class_id) * candidate_count + i];
+            const float score = class_data[class_id * candidate_count + i];
             if (score > best_score)
             {
                 best_score = score;
