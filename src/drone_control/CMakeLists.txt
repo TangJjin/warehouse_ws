@@ -57,6 +57,21 @@ ament_target_dependencies(tf_bridge_node
   drone_msgs
 )
 
+add_executable(route_comm_node src/route_comm_node.cpp)
+
+target_include_directories(route_comm_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(route_comm_node
+  rclcpp
+  std_msgs
+  drone_msgs
+)
+
+target_link_libraries(route_comm_node yaml-cpp)
+
 install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}
@@ -65,6 +80,7 @@ install(DIRECTORY
 install(TARGETS
   mission_controller_node
   tf_bridge_node
+  route_comm_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

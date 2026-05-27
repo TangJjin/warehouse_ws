@@ -72,6 +72,12 @@ class Vec3dPID {
     Eigen::Vector3d last_error_;
 };
 
+struct TaskRuntimeStatus {
+  bool task_running;
+  std::string action_name;
+  int32_t action_step;
+};
+
 class ActionExecutor {
     public:
     ActionExecutor(const rclcpp::Node::SharedPtr &node,
@@ -119,6 +125,7 @@ class ActionExecutor {
                         while (!action_queue_.empty()) {
                             action_queue_.pop();
                         }
+                        action_id_ = 0;
                         current_action_.reset();
                         resetActionRuntimeState();
                     }
@@ -152,6 +159,19 @@ class ActionExecutor {
                         dummy_pose.pose.position.z = altitude;
                         dummy_pose.pose.orientation.w = 1.0;
                         sendPositionSetpoint(dummy_pose);
+                    }
+
+                    bool isIdle() const
+                    {
+                        return !current_action_ && action_queue_.empty();
+                    }
+
+                    TaskRuntimeStatus getTaskRuntimeStatus() const {
+                        TaskRuntimeStatus status;
+                        status.task_running = static_cast<bool>(current_action_);
+                        status.action_step = current_action_ ? action_id_ : 0;
+                        status.action_name = current_action_ ? actionTypeToString(current_action_->getType()) : "idle";
+                        return status;
                     }
 
                     void controlLoop() {
@@ -579,6 +599,23 @@ class ActionExecutor {
         camera_aim_diff_ = *msg;
         last_camera_aim_time_ = node_->now();
     }
+
+    std::string actionTypeToString(ActionType type) const {
+    switch (type) {
+        case ActionType::MOVE_TO_POSITION:
+            return "move";
+        case ActionType::HOVER:
+            return "hover";
+        case ActionType::CAMERA_AIM:
+            return "camera_aim";
+        case ActionType::LAND:
+            return "land";
+        case ActionType::TAKEOFF:
+            return "takeoff";
+        default:
+            return "unknown";
+    }
+}
 
     rclcpp::Node::SharedPtr node_;
     tf2_ros::Buffer &tf_buffer_;
