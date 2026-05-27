@@ -4,8 +4,10 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <opencv2/imgproc.hpp>
 
@@ -38,20 +40,34 @@ void printTensorAttr(const char *prefix, const rknn_tensor_attr &attr)
 struct RknnOutputGuard
 {
     rknn_context context;
-    rknn_output *output;
+    uint32_t output_count;
+    rknn_output *outputs;
     bool active = true;
 
     ~RknnOutputGuard()
     {
-        if(active && output != nullptr)
+        if(active && outputs != nullptr && output_count > 0)
         {
-            rknn_outputs_release(context, 1, output);
+            rknn_outputs_release(context, output_count, outputs);
         }
     }
     RknnOutputGuard(const RknnOutputGuard &) = delete;
     RknnOutputGuard &operator=(const RknnOutputGuard&) = delete;
 
 };
+
+std::string outputModeName(uint32_t output_count)
+{
+    if (output_count == 1)
+    {
+        return "single-output YOLO [1,6,8400]";
+    }
+    if (output_count == 2)
+    {
+        return "split-output YOLO [1,4,8400] + [1,2,8400]";
+    }
+    return "unsupported";
+}
 
 
 }  // namespace
@@ -170,6 +186,17 @@ void RknnYoloDetector::loadModel(const std::string &model_path)
     std::cout << "[RKNN] input num: " << io_num.n_input
               << ", output num: " << io_num.n_output << std::endl;
 
+    if (io_num.n_output != 1 && io_num.n_output != 2)
+    {
+        std::ostringstream message;
+        message << "unsupported RKNN output count: " << io_num.n_output
+                << ", expected 1 for FP16 single-output model or 2 for INT8 split-output model";
+        throw std::runtime_error(message.str());
+    }
+
+    output_count_ = io_num.n_output;
+    std::cout << "[RKNN] output mode: " << outputModeName(output_count_) << std::endl;
+
     for (uint32_t i = 0; i < io_num.n_input; ++i)
     {
         rknn_tensor_attr attr;
@@ -208,6 +235,42 @@ void RknnYoloDetector::loadModel(const std::string &model_path)
         }
 
         printTensorAttr("output", attr);
+
+        if (output_count_ == 2)
+        {
+            const uint32_t bbox_elems = static_cast<uint32_t>(4 * candidate_count_);
+            const uint32_t class_elems = static_cast<uint32_t>(2 * candidate_count_);
+            if (attr.n_elems == bbox_elems)
+            {
+                bbox_output_index_ = i;
+                bbox_output_found_ = true;
+            }
+            else if (attr.n_elems == class_elems)
+            {
+                class_output_index_ = i;
+                class_output_found_ = true;
+            }
+        }
+    }
+
+    if (output_count_ == 2)
+    {
+        if (!bbox_output_found_ || !class_output_found_ ||
+            bbox_output_index_ == class_output_index_)
+        {
+            std::ostringstream message;
+            message << "failed to identify split RKNN outputs, bbox_index="
+                    << bbox_output_index_
+                    << ", class_index=" << class_output_index_
+                    << ", expected output element counts "
+                    << 4 * candidate_count_ << " and "
+                    << 2 * candidate_count_;
+            throw std::runtime_error(message.str());
+        }
+
+        std::cout << "[RKNN] split output role: bbox=output["
+                  << bbox_output_index_ << "], class=output["
+                  << class_output_index_ << "]" << std::endl;
     }
 }
 
@@ -241,31 +304,54 @@ std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
         throw std::runtime_error("rknn_run failed, ret=" + std::to_string(ret));
     }
 
-    rknn_output output;
-    std::memset(&output, 0, sizeof(output));
+    if (output_count_ != 1 && output_count_ != 2)
+    {
+        throw std::runtime_error("RKNN output mode is not initialized");
+    }
 
-    output.index = 0;
-    // 第一版先让 Runtime 把输出反量化成 float，方便复用 YOLO 后处理。
-    output.want_float = 1;
+    std::vector<rknn_output> outputs(output_count_);
+    for (uint32_t i = 0; i < output_count_; ++i)
+    {
+        std::memset(&outputs[i], 0, sizeof(outputs[i]));
+        outputs[i].index = i;
+        // 让 Runtime 把输出反量化成 float，FP16/INT8 后处理共用 float 路径。
+        outputs[i].want_float = 1;
+    }
 
-    ret = rknn_outputs_get(context_, 1, &output, nullptr);
+    ret = rknn_outputs_get(context_, output_count_, outputs.data(), nullptr);
 
     if (ret != RKNN_SUCC)
     {
         throw std::runtime_error("rknn_outputs_get failed, ret=" + std::to_string(ret));
     }
 
-    RknnOutputGuard output_guard{context_, &output};
+    RknnOutputGuard output_guard{context_, output_count_, outputs.data()};
 
-    const float *output_data = static_cast<const float *>(output.buf);
-
-    std::vector<Detection> detections = postprocessor_.parseOutput(
-        output_data,
-        candidate_count_,
-        bgr_image.size(),
-        letterbox.scale,
-        letterbox.pad_x,
-        letterbox.pad_y);
+    std::vector<Detection> detections;
+    if (output_count_ == 1)
+    {
+        const float *output_data = static_cast<const float *>(outputs[0].buf);
+        detections = postprocessor_.parseOutput(
+            output_data,
+            candidate_count_,
+            bgr_image.size(),
+            letterbox.scale,
+            letterbox.pad_x,
+            letterbox.pad_y);
+    }
+    else
+    {
+        const float *bbox_data = static_cast<const float *>(outputs[bbox_output_index_].buf);
+        const float *class_data = static_cast<const float *>(outputs[class_output_index_].buf);
+        detections = postprocessor_.parseSplitOutput(
+            bbox_data,
+            class_data,
+            candidate_count_,
+            bgr_image.size(),
+            letterbox.scale,
+            letterbox.pad_x,
+            letterbox.pad_y);
+    }
 
     
     return detections;
