@@ -70,5 +70,16 @@ def generate_launch_description():
                     "takeoff_altitude": takeoff_altitude,
                 }],
             ),
+            Node(
+                package="drone_control",
+                executable="route_comm_node",
+                name="route_comm_node",
+                output="screen",
+                parameters=[{
+                    "mission_config_path": mission_config,
+                    "enable_offboard_control": enable_offboard_control,
+                    "use_camera_aim": use_camera_aim,
+                }],
+            ),
         ]
     )

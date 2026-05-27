@@ -22,6 +22,7 @@
 #include "drone_control/action_executor.hpp"
 #include "drone_control/drone_action.hpp"
 
+#include "drone_msgs/msg/task_status.hpp"
 
 namespace offboard_run {
 
@@ -55,6 +56,10 @@ class MissionController {
         std::bind(&MissionController::stopMissionCb, this,
                   std::placeholders::_1));
 
+    task_status_pub_ = node_->create_publisher<drone_msgs::msg::TaskStatus>(
+      "/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
+    );
+
     arming_client_ = node_->create_client<mavros_msgs::srv::CommandBool>(
         "/mavros/cmd/arming");
     set_mode_client_ =
@@ -67,6 +72,8 @@ class MissionController {
     }
 
     mission_start_requested_ = auto_start_mission_;
+
+    publishTaskStatus(false, "idle", 0, static_cast<uint8_t>(mission_actions_.size()));
 
     RCLCPP_INFO(node_->get_logger(),
                 "任务控制器已就绪。自动启动：%s，相机瞄准：%s，起飞高度：%.2f m",
@@ -97,6 +104,21 @@ class MissionController {
     }
 
     action_executor_->controlLoop();
+
+    const auto runtime = action_executor_->getTaskRuntimeStatus();
+    const auto total_actions = static_cast<uint8_t>(mission_actions_.size());
+
+    if (runtime.task_running) {
+      publishTaskStatus(true,
+                        runtime.action_name,
+                        runtime.action_step,
+                        total_actions);
+    }
+
+    if (mission_running_ && action_executor_->isIdle()) {
+      mission_running_ = false;
+      publishTaskStatus(false, "finished", static_cast<int32_t>(mission_actions_.size()), total_actions);
+    }
   }
 
  private:
@@ -358,8 +380,13 @@ class MissionController {
     for (const auto &action : mission_actions_) {
       action_executor_->addAction(action);
     }
+
     mission_running_ = true;
     mission_start_requested_ = false;
+
+    publishTaskStatus(false, "queued", 0,
+                        static_cast<uint8_t>(mission_actions_.size()));
+
     RCLCPP_INFO(node_->get_logger(), "任务已启动，动作数量：%zu。",
                 mission_actions_.size());
     return true;
@@ -369,6 +396,8 @@ class MissionController {
     RCLCPP_INFO(node_->get_logger(), "正在停止任务。");
     action_executor_->emergencyStop();
     mission_running_ = false;
+      publishTaskStatus(false, "stopped", 0,
+                        static_cast<uint8_t>(mission_actions_.size()));
   }
 
   bool callSetMode(const std::string &mode) {
@@ -415,6 +444,9 @@ class MissionController {
   void startMissionCb(const std_msgs::msg::Empty::SharedPtr) {
     mission_start_requested_ = true;
     waiting_start_request_logged_ = false;
+    if (!mission_running_) {
+      publishTaskStatus(false, "waiting_start", 0, static_cast<uint8_t>(mission_actions_.size()));
+    }
     RCLCPP_INFO(node_->get_logger(),
                 "收到启动任务指令，开始初始化 OFFBOARD、解锁并准备执行任务。");
   }
@@ -422,6 +454,36 @@ class MissionController {
   void stopMissionCb(const std_msgs::msg::Empty::SharedPtr) {
     RCLCPP_INFO(node_->get_logger(), "收到停止任务指令。");
     stopMission();
+  }
+
+  void publishTaskStatus(bool task_running, const std::string &action_name,
+                         int32_t action_step, uint8_t action_num)
+  {
+    if (!task_status_pub_) {
+      RCLCPP_WARN(node_->get_logger(), "task_status_pub_ 尚未初始化。");
+      return;
+    }
+
+    if (has_last_task_status_ && 
+        last_task_running_ == task_running &&
+        last_action_name_ == action_name &&
+        last_action_step_ == action_step &&
+        last_action_num_ == action_num) {
+          return;
+        }
+
+    drone_msgs::msg::TaskStatus msg;
+    msg.task_running = task_running;
+    msg.action_name = action_name;
+    msg.action_step = action_step;
+    msg.action_num = action_num;
+    task_status_pub_->publish(msg);
+
+    has_last_task_status_ = true;
+    last_task_running_ = task_running;
+    last_action_name_ = action_name;
+    last_action_step_ = action_step;
+    last_action_num_ = action_num;
   }
 
   rclcpp::Node::SharedPtr node_;
@@ -440,6 +502,8 @@ class MissionController {
   mavros_msgs::msg::State current_state_;
   std::string mission_config_path_;
 
+  rclcpp::Publisher<drone_msgs::msg::TaskStatus>::SharedPtr task_status_pub_;
+
   bool tf_ready_ = false;
   bool tf_ready_logged_ = false;
   bool initialized_ = false;
@@ -451,6 +515,12 @@ class MissionController {
   bool waiting_start_request_logged_ = false;
   double takeoff_altitude_ = 1.2;
   rclcpp::Time last_init_attempt_;
+
+  bool has_last_task_status_ = false;
+  bool last_task_running_ = false;
+  std::string last_action_name_;
+  int32_t last_action_step_ = -1;
+  uint8_t last_action_num_ = 0;
 };
 
 }  // namespace offboard_run
