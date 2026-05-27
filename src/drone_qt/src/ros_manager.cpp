@@ -98,6 +98,29 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+    auto return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
+    return_world_group_sub_ = node_->create_subscription<drone_msgs::msg::WorldGroup>(
+        "/return/drone/world_group", 
+        return_world_group_qos, 
+        [this](const drone_msgs::msg::WorldGroup::SharedPtr msg)//回调
+        {
+            QVector<WorldCoord> points;
+            points.reserve(static_cast<int>(msg->points.size()));//预先分配空间以提高效率
+
+            for (const auto &point : msg->points) {
+                points.push_back(WorldCoord(point.x, point.y));
+            }
+
+            QMetaObject::invokeMethod(
+                this,
+                [this, points]() {
+                    //参数为一个包含坐标点的QVector
+                    emit returnWorldGroupUpdated(points);
+                },
+                Qt::QueuedConnection);
+        });
+
     auto barcode_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅条形码捕获话题，消息类型为自定义消息
     barcode_sub_ = node_->create_subscription<drone_msgs::msg::BarcodeCapture>(
@@ -159,6 +182,8 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
             latest_dx_ = msg->x;
             latest_dy_ = msg->y;
             latest_dyaw_ = msg->z;
+            last_delta_msg_time_ = std::chrono::steady_clock::now();//记录最后一次接收到delta消息的时间点
+            has_delta_msg_ = true;//设置标志，表示已经接收到过delta消息
         });
 
     //创建一个服务客户端，用于调用任务启动服务
@@ -183,17 +208,24 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
         [this]()
         {
             double dx, dy, dyaw;
+            bool delta_valid = false;
             {
-                std::lock_guard<std::mutex> lock(delta_mutex_);
+                std::lock_guard<std::mutex> lock(delta_mutex_);//在访问共享数据时加锁，确保线程安全
                 dx = latest_dx_;
                 dy = latest_dy_;
                 dyaw = latest_dyaw_;
+
+                if (has_delta_msg_) {
+                    const auto now = std::chrono::steady_clock::now();
+                    //如果当前时间与最后一次接收到delta消息的时间点之间的间隔不超过1秒钟，则认为delta数据有效，否则认为无效
+                    delta_valid = (now - last_delta_msg_time_) <= std::chrono::seconds(1);
+                }
             }
 
             QMetaObject::invokeMethod(
                 this,
-                [this, dx, dy, dyaw]() {
-                    emit deltaUpdated(dx, dy, dyaw);
+                [this, dx, dy, dyaw, delta_valid]() {
+                    emit deltaUpdated(dx, dy, dyaw, delta_valid);
                 },
                 Qt::QueuedConnection);
         });

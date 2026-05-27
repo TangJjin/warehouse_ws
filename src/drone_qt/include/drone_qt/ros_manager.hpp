@@ -65,6 +65,9 @@ class RosManager : public QObject
         //控制程序返回的路线传输成功的信号
         void pathReadyChanged(bool ready);
 
+        //定义一个信号，用于返回预规划路线的坐标点列表，参数为一个包含坐标点的QVector
+        void returnWorldGroupUpdated(const QVector<WorldCoord> &points);
+
         //定义一个信号，用于命令执行结果事件，包含执行结果的成功与否以及相关消息
         void commandResult(bool success, const QString &message);
         void stopcommandResult(bool success, const QString &message);
@@ -79,7 +82,7 @@ class RosManager : public QObject
 
         //定义一个信号，用于位置更新事件，包含无人机的二维位置坐标与高度
         void positionUpdated(double x, double y, double z);
-        void deltaUpdated(double dx, double dy, double dyaw);
+        void deltaUpdated(double dx, double dy, double dyaw, bool valid);
 
         //定义一个信号，用于告知是否上传了路线
         void pushFlagChanged(bool value);
@@ -115,6 +118,7 @@ class RosManager : public QObject
         rclcpp::Subscription<drone_msgs::msg::DroneStatus>::SharedPtr status_sub_;
         rclcpp::Subscription<drone_msgs::msg::TaskStatus>::SharedPtr task_status_sub_;
         rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr ready_status_sub_;
+        rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_sub_;
         rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_sub_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
@@ -139,4 +143,6 @@ class RosManager : public QObject
         double latest_dy_ = 0.0;
         double latest_dyaw_ = 0.0;
         std::mutex delta_mutex_;
+        std::chrono::steady_clock::time_point last_delta_msg_time_;
+        bool has_delta_msg_{false};
 };

@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QWidget>
 #include <QVector>
+#include <QMetaType>
 
 class QPaintEvent;
 class QPainter;
@@ -14,6 +15,9 @@ struct WorldCoord
     double x;
     double y;
 };
+
+Q_DECLARE_METATYPE(WorldCoord)
+Q_DECLARE_METATYPE(QVector<WorldCoord>)
 
 class PositionViewWidget : public QWidget
 {
@@ -123,7 +127,7 @@ private:
     double x_{0.0};
     double y_{0.0};
     double z_{0.0};
-    double scale_{170.0};
+    double scale_{100.0};
 
     //网格的行数和列数，以及当前选中的行列索引
     int rows_{7};
