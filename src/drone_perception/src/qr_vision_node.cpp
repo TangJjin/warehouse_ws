@@ -76,7 +76,8 @@ void QrVisionNode::declareParameters()
   // --ros-args -p model_path:=$HOME/qr_ws/src/qr_vision_cpp/qr_yolo11n_rk3588_i8.rknn
   model_path_ = this->declare_parameter<std::string>(
       "model_path",
-      "/home/orangepi/drone_ws/src/drone_perception/qr_yolo11n_rk3588_i8.rknn");
+      "/home/orangepi/drone_ws/src/drone_perception/qr_rk3588_FP16.rknn");
+
 
   if (log_throttle_ms_ <= 0)
   {
