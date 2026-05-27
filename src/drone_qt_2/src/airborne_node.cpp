@@ -176,6 +176,30 @@ void AirborneNode::publishStatus()
     status_msg.battery_voltage = battery_voltage;
     status_msg.battery_percent = battery_percent;
     status_pub_->publish(status_msg);
+
+    if (armed == true) {
+        if (unlock_flag_ == false) {
+            unlock_flag_ = true;       // 标记：本轮已经开锁过
+            task_stoped_ = true;
+            auto_stop_flag_ = false;
+        }
+
+        disarm_stable_count_ = 0;       // 只要又变回开锁，就清零去抖计数
+    }
+
+    if(unlock_flag_ == true && armed == false){
+        disarm_stable_count_++;//只有在曾经开锁过的状态才加
+    }
+    else if(unlock_flag_ == false && armed == false){
+        disarm_stable_count_ = 0;       // 一直没开锁过，不做自动 stop
+    }
+
+    //判断是否为从开锁到关索的状态并且判断是否是第一次运行
+    if(unlock_flag_ == true && auto_stop_flag_ == false && disarm_stable_count_ >= 5){
+        auto_stop_flag_ = true;
+        unlock_flag_ = false;
+        task_stoped_ = false;
+    }
 }
 
 void AirborneNode::handleBarcodeCapture(
@@ -450,6 +474,8 @@ bool AirborneNode::startTaskCommand()
         RCLCPP_INFO(this->get_logger(), "takeoff program command exited with code=%d", ret);
         task_started_ = false;
     }).detach();
+
+    task_stoped_ = true;
 
     return true;
 }
