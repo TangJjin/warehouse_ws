@@ -21,11 +21,15 @@
 #include <QSerialPortInfo>
 #include <QByteArray>
 #include <QPlainTextEdit>
+#include <QMetaType>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ros_manager_(new RosManager(this))
 {
+    qRegisterMetaType<WorldCoord>("WorldCoord");
+    qRegisterMetaType<QVector<WorldCoord>>("QVector<WorldCoord>");
+
     setupUi();
     setupConnections();
     setupSerialPort();
@@ -138,9 +142,9 @@ void MainWindow::setupUi()
 
     up_layout->addStretch();//添加一个伸缩项
     up_layout->addSpacing(20);//添加一个水平间距，分隔连接状态和电量状态
-    up_layout->addWidget(new QLabel("当前执行任务：", up_panel));
-    up_layout->addWidget(status_label_);
-    up_layout->addSpacing(20);
+    // up_layout->addWidget(new QLabel("当前执行任务：", up_panel));
+    // up_layout->addWidget(status_label_);
+    // up_layout->addSpacing(20);
     up_layout->addWidget(new QLabel("action：", up_panel));
     up_layout->addWidget(action_label_);
     up_layout->addSpacing(20);
@@ -339,6 +343,15 @@ void MainWindow::setupConnections()
         },
         Qt::QueuedConnection);
 
+    //链接返回预规划路线坐标点的信号
+    connect(ros_manager_, &RosManager::returnWorldGroupUpdated,
+        this,
+        [this](const QVector<WorldCoord> &points)
+        {
+            updateWorldGroupState(points);
+        },
+        Qt::QueuedConnection);
+
     //查看起飞启动服务返回的内容
     connect(ros_manager_, &RosManager::commandResult,
             this,
@@ -386,6 +399,7 @@ void MainWindow::setupConnections()
     {
         if (success) {
             start_button_->setEnabled(true);
+            push_flag_ = false;//上传成功后重置上传标志,打印一次就好，后续不再打印，直到下一次点击上传按钮
             run_log_view_->appendPlainText(
                 QString("mission YAML 上传成功，机载保存路径: %1").arg(saved_path));
                 //上传成功后直接请求启动offboard
@@ -521,9 +535,9 @@ void MainWindow::setupConnections()
 
     connect(ros_manager_, &RosManager::deltaUpdated,
         this,
-        [this](double dx, double dy, double dyaw)
+        [this](double dx, double dy, double dyaw, bool valid)
         {
-            updateDelta(dx, dy, dyaw);
+            updateDelta(dx, dy, dyaw, valid);
         },
         Qt::QueuedConnection);
 }
@@ -606,9 +620,13 @@ void MainWindow::action_updateStatus(
         progress_label_->setText("0/0");
         progress_percent_label_->setText("0%");
     }
+    //动作完成了
+    if(action_step == action_num){
+        waiting_push_result_ = false;//重置等待上传结果的标志，允许下一次上传
+    }
 }
 
-void MainWindow::updateDelta(double dx, double dy, double dyaw)
+void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
 {
     if (!run_log_view_) {
         return;
@@ -639,6 +657,13 @@ void MainWindow::updateDelta(double dx, double dy, double dyaw)
             "border: 1px solid #666;"
         ).arg(color));
     };
+
+    if (!valid) {
+        setIndicatorColor(dx_indicator_label_, "#9e9e9e");
+        setIndicatorColor(dy_indicator_label_, "#9e9e9e");
+        setIndicatorColor(dyaw_indicator_label_, "#9e9e9e");
+        return;
+    }
 
     auto updateIndicator = [&](QLabel *label, double value, double green_limit, double yellow_limit) {
         if (value <= green_limit) {
@@ -741,6 +766,26 @@ void MainWindow::showBarcodeImage(QListWidgetItem *item)
 void MainWindow::updatePathReadyState(bool ready)
 {
     path_ready_ = ready;
+}
+
+void MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
+{
+    QString text = QString("收到返回路径，共 %1 个点").arg(points.size());
+
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const auto &point = points[i];
+        text += QString(" -> (%1,%2)")
+                    .arg(point.x, 0, 'f', 1)
+                    .arg(point.y, 0, 'f', 1);
+    }
+
+    //只打印一次
+    if(push_flag_){
+        return;
+    }
+
+    run_log_view_->appendPlainText(text);
+    push_flag_ = true;
 }
 
 void MainWindow::handleStartButtonClicked()

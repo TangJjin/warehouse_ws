@@ -48,7 +48,7 @@ class MainWindow : public QMainWindow
             int action_num,
             const QString &action_name);
 
-void updateDelta(double dx,double dy,double dyaw);
+void updateDelta(double dx,double dy,double dyaw,bool valid);
 
         //定义一个结构体，用于存储条形码捕获记录，包括条形码数据、图像数据、图像格式和时间文本等信息
         struct BarcodeRecord {
@@ -72,6 +72,9 @@ void updateDelta(double dx,double dy,double dyaw);
 
         //负责确认控制程序会传的状态
         void updatePathReadyState(bool ready);   
+
+        //负责确认控制程序会传的路线
+        void updateWorldGroupState(const QVector<WorldCoord> &points);   
 
         //负责起飞前判断
         void handleStartButtonClicked();
@@ -138,4 +141,5 @@ void updateDelta(double dx,double dy,double dyaw);
         bool task_running_{false};
         float progress_{0.0};//任务进度
         bool delta_result_{true};//是否打印compare数据
+        bool push_flag_{false};//是否上传路线
 };

@@ -624,9 +624,11 @@ void PositionViewWidget::paintEvent(QPaintEvent *event)
     }
 
     //计算控件中心点的坐标，并以此为基准绘制坐标轴和无人机位置
-    const int center_x = (width() / 2) + 200; //将中心点向右偏移200像素，使无人机位置更靠近右侧
-    const int center_y = (height() / 2) + 150;//将中心点向下偏移150像素，使无人机位置更靠近下侧
-    const QPoint center(center_x, center_y);
+    // const int center_x = (width() / 2) + 200; //将中心点向右偏移200像素，使无人机位置更靠近右侧
+    // const int center_y = (height() / 2) + 150;//将中心点向下偏移150像素，使无人机位置更靠近下侧
+    // const QPoint center(center_x, center_y);
+    const QPointF origin = cellCenter(rows_ - 1, cols_ - 1);// 右下角格子中心作为坐标原点
+
 
     //绘制坐标轴，使用蓝色的细线表示水平和垂直的坐标轴
     // painter.setPen(QPen(Qt::black, 4));
@@ -634,13 +636,13 @@ void PositionViewWidget::paintEvent(QPaintEvent *event)
     // painter.drawLine((center_x + 25), 25, (center_x + 25), 375);
 
     //把真实坐标转换成像素坐标
-    const int px = center.x() + static_cast<int>(x_ * scale_);
-    const int py = center.y() - static_cast<int>(y_ * scale_);
+    const int px = static_cast<int>((origin.x() - y_ * scale_));
+    const int py = static_cast<int>((origin.y() - x_ * scale_));
 
     ////绘制无人机起点
     painter.setPen(Qt::NoPen);
     painter.setBrush(Qt::red);
-    painter.drawEllipse(QPoint(center.x(), center.y()), 25, 25);
+    painter.drawEllipse(origin, 25, 25);
 
     //绘制无人机位置，使用红色的实心圆表示无人机在二维平面上的位置
     painter.setPen(Qt::NoPen);
