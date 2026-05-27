@@ -385,6 +385,7 @@ void MainWindow::setupConnections()
         {
             if(success){
                 //push_button_->setEnabled(false);
+                waiting_task_result_ = false;
             }
             run_log_view_->appendPlainText(success
                 ? QString("offboard 启动成功，等待ready信号确认")
@@ -560,7 +561,7 @@ void MainWindow::updateStatus(
     bool armed,
     const QString &task_name)
 {
-    if (!connection_label_ || !battery_label_ || !mode_label_ || !armed_label_ || !status_label_ || !action_label_) {
+    if (!connection_label_ || !battery_label_ || !mode_label_ || !armed_label_ || !action_label_) {
         return;
     }
 
@@ -595,11 +596,11 @@ void MainWindow::updateStatus(
     armed_label_->setText(armed ? "Unlock" : "Lock");
     //const QString action_text = action_name.trimmed().isEmpty() ? "无" : action_name.trimmed();
     //action_label_->setText(action_text);
-    if (task_running_) {
-        status_label_->setText(QString("%1").arg(task_name));
-    } else {
-        status_label_->setText("空闲");
-    }
+    // if (task_running_) {
+    //     status_label_->setText(QString("%1").arg(task_name));
+    // } else {
+    //     status_label_->setText("空闲");
+    // }
 
     if (armed == true) {
         if (unlock_flag_ == false) {
@@ -618,14 +619,14 @@ void MainWindow::updateStatus(
     }
 
     //判断是否为从开锁到关索的状态并且判断是否是第一次运行
-    if(unlock_flag_ == true && auto_stop_flag_ == false && disarm_stable_count_ >= 3){
+    if(unlock_flag_ == true && auto_stop_flag_ == false && disarm_stable_count_ >= 15){
         auto_stop_flag_ = true;
         unlock_flag_ = false;
         waiting_push_result_ = false;//重置等待上传结果的标志，允许下一次上传
         start_button_->setEnabled(false);
         if (ros_manager_) {
             ros_manager_->stopTask();
-            run_log_view_->appendPlainText(QString("以关闭offboard,可重新上传路线"));
+            run_log_view_->appendPlainText(QString("请求offboard"));
         }
     }
 }
