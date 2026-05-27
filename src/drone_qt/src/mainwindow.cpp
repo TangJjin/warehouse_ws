@@ -620,10 +620,6 @@ void MainWindow::action_updateStatus(
         progress_label_->setText("0/0");
         progress_percent_label_->setText("0%");
     }
-    //动作完成了
-    if(action_step == action_num){
-        waiting_push_result_ = false;//重置等待上传结果的标志，允许下一次上传
-    }
 }
 
 void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
@@ -772,7 +768,7 @@ void MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
 {
     QString text = QString("收到返回路径，共 %1 个点").arg(points.size());
 
-    for (std::size_t i = 0; i < points.size(); ++i) {
+    for (int i = 0; i < points.size(); ++i) {
         const auto &point = points[i];
         text += QString(" -> (%1,%2)")
                     .arg(point.x, 0, 'f', 1)
