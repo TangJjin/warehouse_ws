@@ -5,6 +5,8 @@
 #include <sstream>
 #include <fstream>
 #include <filesystem>
+#include <csignal>
+#include <unistd.h>
 
 //使用std::chrono_literals来方便地使用时间单位，如1s表示1秒
 using namespace std::chrono_literals;
@@ -20,7 +22,9 @@ AirborneNode::AirborneNode()
 AirborneNode::~AirborneNode()
 {
     std::string error_message;
-    if (!stopOffboardProcess(error_message) && !error_message.empty()) {
+    if (!stopOffboardProcess(error_message) &&
+        !error_message.empty() &&
+        error_message != "offboard 当前未运行") {
         RCLCPP_WARN(this->get_logger(), "cleanup offboard process on shutdown: %s", error_message.c_str());
     }
 }
@@ -419,7 +423,7 @@ bool AirborneNode::startOffboardCommand()
     }
 
     if (!offboard_process_) {
-        offboard_process_ = new QProcess(this);
+        offboard_process_ = new QProcess();
 
         QObject::connect(offboard_process_, &QProcess::readyReadStandardOutput, [this]() {
             const QByteArray text = offboard_process_->readAllStandardOutput();
@@ -466,6 +470,25 @@ bool AirborneNode::startOffboardCommand()
         return false;
     }
 
+    const qint64 pid = offboard_process_->processId();
+    if (pid <= 0) {
+        RCLCPP_ERROR(this->get_logger(), "failed to get offboard process pid");
+        return false;
+    }
+
+    if (::setpgid(static_cast<pid_t>(pid), static_cast<pid_t>(pid)) != 0) {
+        RCLCPP_WARN(this->get_logger(), "failed to create process group for offboard pid=%lld", static_cast<long long>(pid));
+    }
+
+    const pid_t pgid = ::getpgid(static_cast<pid_t>(pid));
+    if (pgid < 0) {
+        RCLCPP_WARN(this->get_logger(), "failed to read offboard process group id for pid=%lld", static_cast<long long>(pid));
+        offboard_pgid_ = -1;
+    } else {
+        offboard_pgid_ = static_cast<qint64>(pgid);
+        RCLCPP_INFO(this->get_logger(), "offboard process pid=%lld pgid=%lld", static_cast<long long>(pid), static_cast<long long>(offboard_pgid_));
+    }
+
     return true;
 }
 
@@ -502,20 +525,58 @@ bool AirborneNode::stopOffboardProcess(std::string &error_message)
 
     if (offboard_process_->state() == QProcess::NotRunning) {
         offboard_started_ = false;
+        offboard_pgid_ = -1;
         error_message = "offboard 当前未运行";
         return false;
     }
 
-    offboard_process_->terminate();
+    const qint64 pid = offboard_process_->processId();
+    pid_t pgid = -1;
+    if (offboard_pgid_ > 0) {
+        pgid = static_cast<pid_t>(offboard_pgid_);
+    } else if (pid > 0) {
+        pgid = ::getpgid(static_cast<pid_t>(pid));
+    }
+
+    if (pgid > 0) {
+        RCLCPP_INFO(this->get_logger(), "stopping offboard process group pgid=%lld with SIGINT", static_cast<long long>(pgid));
+        if (::kill(-pgid, SIGINT) != 0) {
+            RCLCPP_WARN(this->get_logger(), "failed to send SIGINT to offboard process group pgid=%lld", static_cast<long long>(pgid));
+        }
+    } else {
+        RCLCPP_WARN(this->get_logger(), "offboard process group unavailable, fallback to QProcess terminate");
+        offboard_process_->terminate();
+    }
+
     if (!offboard_process_->waitForFinished(5000)) {
-        offboard_process_->kill();
+        if (pgid > 0) {
+            RCLCPP_WARN(this->get_logger(), "offboard process group pgid=%lld did not exit after SIGINT, sending SIGTERM", static_cast<long long>(pgid));
+            if (::kill(-pgid, SIGTERM) != 0) {
+                RCLCPP_WARN(this->get_logger(), "failed to send SIGTERM to offboard process group pgid=%lld", static_cast<long long>(pgid));
+            }
+        } else {
+            offboard_process_->terminate();
+        }
+
         if (!offboard_process_->waitForFinished(3000)) {
-            error_message = "offboard 进程无法停止";
-            return false;
+            if (pgid > 0) {
+                RCLCPP_ERROR(this->get_logger(), "offboard process group pgid=%lld still alive, sending SIGKILL", static_cast<long long>(pgid));
+                if (::kill(-pgid, SIGKILL) != 0) {
+                    RCLCPP_WARN(this->get_logger(), "failed to send SIGKILL to offboard process group pgid=%lld", static_cast<long long>(pgid));
+                }
+            } else {
+                offboard_process_->kill();
+            }
+
+            if (!offboard_process_->waitForFinished(3000)) {
+                error_message = "offboard 进程无法停止";
+                return false;
+            }
         }
     }
 
     offboard_started_ = false;
+    offboard_pgid_ = -1;
     error_message.clear();
 
     return true;
