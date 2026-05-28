@@ -97,6 +97,7 @@ private:
     bool task_stoped_{false};
 
     QProcess *offboard_process_{nullptr};
+    qint64 offboard_pgid_{-1};
 
     std::string current_mission_path_;//当前任务yaml保存路径字符串
     bool mission_uploaded_{false};//是否已上传任务yaml的标志
