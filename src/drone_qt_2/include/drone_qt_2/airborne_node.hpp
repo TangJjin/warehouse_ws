@@ -23,6 +23,7 @@ class AirborneNode : public rclcpp::Node
 {
 public:
     AirborneNode();
+    ~AirborneNode() override;
 
 private:
     //负责创建发布器、服务和定时器
@@ -61,6 +62,7 @@ private:
     bool startOffboardCommand();
     bool startTaskCommand();
     bool stopTaskCommand(std::string &error_message);
+    bool stopOffboardProcess(std::string &error_message);
 
     //保存yaml字符串到文件，并返回保存路径和错误信息
     bool saveMissionYamlToFile(const std::string &yaml_text, std::string &saved_path, std::string &error_message);
