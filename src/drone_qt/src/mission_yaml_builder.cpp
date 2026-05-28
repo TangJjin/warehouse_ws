@@ -72,7 +72,7 @@ QString MissionYamlBuilder::buildMissionYaml(const QVector<WorldCoord> &points, 
     out << "  takeoff_altitude: " << options.takeoff_altitude << "\n";
     out << "  actions:\n";
     out << "    - type: \"takeoff\"\n";
-    out << "      altitude: " << options.takeoff_altitude << "\n\n";
+    out << "      altitude: " << options.start_altitude << "\n\n";
 
     if (options.add_hover_between_takeoff) {
         out << "    - type: \"hover\"\n";
