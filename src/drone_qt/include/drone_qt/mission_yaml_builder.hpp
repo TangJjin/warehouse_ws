@@ -11,6 +11,7 @@ public:
     {
         double takeoff_altitude{1.2};//起飞高度
         double move_altitude{1.2};//移动高度
+        double start_altitude{0.0};//解锁高度
         double yaw{0.0};//偏航角
         double tolerance{0.12};//误差容忍
         double takeoff_hover_duration{5.0};//起飞悬停时长

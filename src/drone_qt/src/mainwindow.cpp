@@ -304,16 +304,17 @@ void MainWindow::setupConnections()
             MissionYamlBuilder::Options options;
             options.takeoff_altitude = 1.2;//起飞高度
             options.move_altitude = 1.2;//移动高度
+            options.start_altitude = 0.0;//解锁高度
             options.yaw = 0.0;//偏航角
             options.tolerance = 0.12;//误差容忍
-            options.takeoff_hover_duration = 5.0;//起飞悬停时长
-            options.landing_hover_duration = 5.0;//降落悬停时长
-            options.move_hover_duration = 5.0;//移动悬停时长
+            options.takeoff_hover_duration = 4.0;//起飞悬停时长
+            options.landing_hover_duration = 4.0;//降落悬停时长
+            options.move_hover_duration = 2.0;//移动悬停时长
             options.add_hover_between_takeoff = true;//是否在起飞后添加悬停
-            options.add_hover_between_landing = false;//是否在降落前添加悬停
+            options.add_hover_between_landing = true;//是否在降落前添加悬停
             options.add_hover_between_moves = true;//是否在移动之间添加悬停
             options.use_camera_aim = false;//是否开启相机
-            options.auto_start_mission = false;//是否自动启动人物
+            options.auto_start_mission = false;//是否自动启动任务
             options.compress_straight_segments = true;//是否压缩直线段
 
             //构建mission yaml字符串
