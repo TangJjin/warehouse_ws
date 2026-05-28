@@ -17,6 +17,14 @@ AirborneNode::AirborneNode()
     RCLCPP_INFO(this->get_logger(), "airborne node started");
 }
 
+AirborneNode::~AirborneNode()
+{
+    std::string error_message;
+    if (!stopOffboardProcess(error_message) && !error_message.empty()) {
+        RCLCPP_WARN(this->get_logger(), "cleanup offboard process on shutdown: %s", error_message.c_str());
+    }
+}
+
 void AirborneNode::setupInterfaces()
 {
     auto status_pub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
@@ -387,7 +395,7 @@ bool AirborneNode::startOffboardCommand()
     }
 
     if (!offboard_process_) {
-        offboard_process_ = new QProcess();
+        offboard_process_ = new QProcess(this);
 
         QObject::connect(offboard_process_, &QProcess::readyReadStandardOutput, [this]() {
             const QByteArray text = offboard_process_->readAllStandardOutput();
@@ -419,7 +427,7 @@ bool AirborneNode::startOffboardCommand()
     const QString command = QString(
         "source /opt/ros/humble/setup.bash && "
         "source ~/drone_ws/install/setup.bash && "
-        "ros2 launch drone_bringup run_offboard.launch.py "
+        "exec ros2 launch drone_bringup run_offboard.launch.py "
         "mission_config_path:=%1 "
         "enable_offboard_control:=true ")
         .arg(QString::fromStdString(current_mission_path_));
@@ -455,6 +463,11 @@ bool AirborneNode::startTaskCommand()
 }
 
 bool AirborneNode::stopTaskCommand(std::string &error_message)
+{
+    return stopOffboardProcess(error_message);
+}
+
+bool AirborneNode::stopOffboardProcess(std::string &error_message)
 {
     if (!offboard_process_) {
         error_message = "offboard 进程对象不存在";
