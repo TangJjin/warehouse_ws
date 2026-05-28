@@ -35,6 +35,9 @@ private:
     //发布当前状态消息
     void publishStatus();
 
+    //杀死残留的offboard节点，防止重复启动失败
+    bool killResidualOffboardNodes(std::string &error_message);
+
     //处理任务启动服务请求的回调函数
     void handleStartTask(
         const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,

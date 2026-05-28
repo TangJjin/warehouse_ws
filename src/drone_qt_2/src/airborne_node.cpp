@@ -488,9 +488,47 @@ bool AirborneNode::startTaskCommand()
     return true;
 }
 
+bool AirborneNode::killResidualOffboardNodes(std::string &error_message)
+{
+    const std::string soft_cmd =
+        "bash -lc 'pkill -INT -f \"mission_controller_node|tf_bridge_node|route_comm_node\"'";
+    const int soft_ret = std::system(soft_cmd.c_str());
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    const std::string hard_cmd =
+        "bash -lc 'pkill -KILL -f \"mission_controller_node|tf_bridge_node|route_comm_node\"'";
+    const int hard_ret = std::system(hard_cmd.c_str());
+
+    if (soft_ret != 0 && hard_ret != 0) {
+        error_message = "残留 offboard 节点清理失败";
+        return false;
+    }
+
+    error_message.clear();
+    return true;
+}
+
 bool AirborneNode::stopTaskCommand(std::string &error_message)
 {
-    return stopOffboardProcess(error_message);
+    std::string stop_error;
+    const bool stop_ok = stopOffboardProcess(stop_error);
+
+    std::string cleanup_error;
+    const bool cleanup_ok = killResidualOffboardNodes(cleanup_error);
+
+    offboard_started_ = false;
+
+    if (stop_ok || cleanup_ok) {
+        error_message.clear();
+        return true;
+    }
+
+    error_message = stop_error;
+    if (!cleanup_error.empty()) {
+        error_message += "; " + cleanup_error;
+    }
+    return false;
 }
 
 bool AirborneNode::stopOffboardProcess(std::string &error_message)
