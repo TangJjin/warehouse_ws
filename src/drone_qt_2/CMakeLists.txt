@@ -17,7 +17,9 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
 add_executable(airborne_node
   src/main.cpp
   src/airborne_node.cpp
+  src/mission_yaml_builder.cpp
   include/drone_qt_2/airborne_node.hpp
+  include/drone_qt_2/mission_yaml_builder.hpp
 )
 
 add_executable(barcode_test_sender

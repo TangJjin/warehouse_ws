@@ -206,10 +206,18 @@ void AirborneNode::setupInterfaces()
             std::placeholders::_1,
             std::placeholders::_2));
 
-    upload_mission_yaml_srv_ = this->create_service<drone_msgs::srv::UploadMissionYaml>(
-        "/drone/upload_mission_yaml",
+    // upload_mission_yaml_srv_ = this->create_service<drone_msgs::srv::UploadMissionYaml>(
+    //     "/drone/upload_mission_yaml",
+    //     std::bind(
+    //         &AirborneNode::handleUploadMissionYaml,
+    //         this,
+    //         std::placeholders::_1,
+    //         std::placeholders::_2));
+
+    upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
+        "/drone/upload_mission_summary",
         std::bind(
-            &AirborneNode::handleUploadMissionYaml,
+            &AirborneNode::handleUploadMissionSummary,
             this,
             std::placeholders::_1,
             std::placeholders::_2));
@@ -409,33 +417,87 @@ bool AirborneNode::saveMissionYamlToFile(
     return true;
 }
 
-void AirborneNode::handleUploadMissionYaml(
-    const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
-    std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response)
+// void AirborneNode::handleUploadMissionYaml(
+//     const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
+//     std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response)
+// {
+//     if (!request) {
+//         response->success = false;
+//         response->message = "请求为空";
+//         response->saved_path = "";
+//         return;
+//     }
+
+//     if (request->mission_yaml.empty()) {
+//         response->success = false;
+//         response->message = "mission_yaml 为空";
+//         response->saved_path = "";
+//         return;
+//     }
+
+//     //将接收到的yaml字符串保存到文件中，并获取保存路径和错误信息
+//     std::string saved_path;
+//     std::string error_message;
+//     const bool ok = saveMissionYamlToFile(request->mission_yaml, saved_path, error_message);
+
+//     if (!ok) {
+//         response->success = false;
+//         response->message = error_message;
+//         response->saved_path = "";
+//         mission_uploaded_ = false;
+//         current_mission_path_.clear();
+//         return;
+//     }
+
+//     mission_uploaded_ = true;
+//     current_mission_path_ = saved_path;
+
+//     response->success = true;
+//     response->message = "mission YAML 保存成功";
+//     response->saved_path = saved_path;
+// }
+
+void AirborneNode::handleUploadMissionSummary(
+    const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
+    std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response)
 {
     if (!request) {
         response->success = false;
         response->message = "请求为空";
         response->saved_path = "";
+        response->action_count = 0;
         return;
     }
 
-    if (request->mission_yaml.empty()) {
+    if (request->points.empty()) {
         response->success = false;
-        response->message = "mission_yaml 为空";
+        response->message = "路线点为空";
         response->saved_path = "";
+        response->action_count = 0;
         return;
     }
 
-    //将接收到的yaml字符串保存到文件中，并获取保存路径和错误信息
+    std::vector<AirborneWorldCoord> path_points;
+    path_points.reserve(request->points.size());
+    for (const auto &point : request->points) {
+        path_points.push_back(AirborneWorldCoord{point.x, point.y});
+    }
+
+    //从mission summary中提取选项参数，并使用路径点和选项参数生成mission yaml文本，同时统计mission action的数量
+    const auto options = AirborneMissionYamlBuilder::fromMissionSummary(request->summary);
+    const QString mission_yaml = AirborneMissionYamlBuilder::buildMissionYaml(path_points, options);
+    const uint32_t action_count = AirborneMissionYamlBuilder::countMissionActions(path_points, options);
+
     std::string saved_path;
     std::string error_message;
-    const bool ok = saveMissionYamlToFile(request->mission_yaml, saved_path, error_message);
+    //将生成的mission yaml文本保存到文件中，并获取保存路径和错误信息
+    const bool ok = saveMissionYamlToFile(mission_yaml.toStdString(), saved_path, error_message);
 
     if (!ok) {
         response->success = false;
         response->message = error_message;
         response->saved_path = "";
+        response->action_count = 0;
         mission_uploaded_ = false;
         current_mission_path_.clear();
         return;
@@ -445,8 +507,9 @@ void AirborneNode::handleUploadMissionYaml(
     current_mission_path_ = saved_path;
 
     response->success = true;
-    response->message = "mission YAML 保存成功";
+    response->message = "mission 摘要上传成功，机载端已生成 YAML";
     response->saved_path = saved_path;
+    response->action_count = action_count;
 }
 
 bool AirborneNode::startOffboardCommand()
