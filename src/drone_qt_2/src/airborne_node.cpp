@@ -42,6 +42,31 @@ void AirborneNode::setupInterfaces()
     local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/drone/local_position", position_pub_qos);
 
+    auto drone_control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    return_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
+        "/drone/task/status", drone_control_status_qos);
+
+    auto drone_control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    return_path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
+        "/drone/control/path_ready", drone_control_path_ready_qos);
+
+    auto drone_return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
+        "/drone/return/world_group", drone_return_world_group_qos);
+
+    auto group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个发布者，发布预规划路线消息，消息类型为自定义消息
+    path_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
+        "/drone/world_group", group_qos);
+
+    auto drone_return_delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    //创建一个发布者，发布无人机dxdyaw比较结果，消息类型为geometry_msgs::msg::Vector3
+    return_delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
+        "/drone/pose_yaw_compare/delta", drone_return_delta_qos);
+
     //创建一个订阅者，订阅视觉系统发布的条形码捕获话题，消息类型为自定义消息
     auto barcode_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     vision_barcode_sub_ = this->create_subscription<drone_msgs::msg::BarcodeCapture>(
@@ -74,7 +99,6 @@ void AirborneNode::setupInterfaces()
         });
 
     auto capture_qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
-
     //创建一个订阅者，订阅无人机电量，消息类型为sensor_msgs::BatteryState
     battery_sub_ = this->create_subscription<sensor_msgs::msg::BatteryState>(
         "/mavros/battery", capture_qos,
@@ -98,14 +122,24 @@ void AirborneNode::setupInterfaces()
             local_position_pub_->publish(*msg);
         });
 
+    auto control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅控制程序状态话题，消息类型为自定义消息
+    task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
+        "/task/status", 
+        control_status_qos, 
+        [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
+            return_status_pub_->publish(*msg);
+        });
+
     auto control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
     ready_status_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
         "/control/path_ready", 
         control_path_ready_qos, 
-        [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg)//回调
-        {
+        [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg) {
             const bool ready = msg->air_route_ready;
+
+            return_path_ready_pub_->publish(*msg);
 
             if (ready) {
                 return;
@@ -115,6 +149,34 @@ void AirborneNode::setupInterfaces()
                 task_started_ = false;
             }
         });
+
+    auto return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
+    return_world_group_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
+        "/return/drone/world_group", 
+        return_world_group_qos, 
+        [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
+            return_world_group_pub_->publish(*msg);
+        });
+
+    auto path_sub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅控制程序发布的预规划路线消息，消息类型为自定义消息
+    path_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
+        "/drone/airborne/world_group",
+        path_sub_qos,
+        [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
+            path_pub_->publish(*msg);
+        });
+
+    auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    //创建一个订阅者，订阅无人机dxdyaw比较结果，消息类型为geometry_msgs::msg::Vector3
+    return_delta_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+        "/pose_yaw_compare/delta",
+        delta_qos,
+        [this](const geometry_msgs::msg::Vector3::SharedPtr msg) {
+            return_delta_pub_->publish(*msg);
+        });
+
 
     //创建一个服务，提供任务启动接口，服务类型为自定义服务
     start_task_srv_ = this->create_service<drone_msgs::srv::StartTask>(
@@ -159,18 +221,6 @@ void AirborneNode::setupInterfaces()
 
 void AirborneNode::onTimer()
 {
-    // if (task_running_) {
-    //     task_progress_ += 20;
-
-    //     if (task_progress_ >= 100) {
-    //         task_progress_ = 100;
-    //         task_running_ = false;
-    //         current_task_name_.clear();
-    //         action_name_.clear();
-    //         RCLCPP_INFO(this->get_logger(), "task finished");
-    //     }
-    // }
-
     publishStatus();
 }
 
@@ -270,14 +320,6 @@ void AirborneNode::handleStartTask(
     std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
 {
     (void)request;
-
-    //如果已经有任务在运行，则拒绝新的任务请求，并在日志中记录警告信息
-    if (task_running_) {
-        response->success = false;
-        response->message = "有任务正在运行：" + current_task_name_;
-        //RCLCPP_WARN(this->get_logger(), "reject start_task: task already running");
-        return;
-    }
 
     if (task_started_) {
         response->success = false;
