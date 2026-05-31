@@ -26,6 +26,8 @@
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/upload_mission_yaml.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
+#include "drone_msgs/msg/mission_summary.hpp"
+#include "drone_msgs/srv/upload_mission_summary.hpp"
 
 class RosManager : public QObject
 {
@@ -43,8 +45,12 @@ class RosManager : public QObject
         //void publishPath(const QVector<QPoint> &path_points);
         void publishPath(const QVector<WorldCoord> &path_points);
 
-//定义一个公共方法，用于上传任务yaml字符串
-        void uploadMissionYaml(const QString &mission_yaml);
+        //定义一个公共方法，用于上传任务yaml字符串
+        // void uploadMissionYaml(const QString &mission_yaml);
+
+        //定义一个公共方法，用于上传任务总结，包括路径点列表和任务总结信息
+        void uploadMissionSummary(const QVector<WorldCoord> &path_points,
+                          const drone_msgs::msg::MissionSummary &summary);
 
     signals:
         //定义一个信号，用于状态更新事件，包含连接状态、电量百分比、飞行模式和解锁状态等信息
@@ -125,7 +131,8 @@ class RosManager : public QObject
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
-        rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_client_;
+        // rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_client_;
+        rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_client_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;
         rclcpp::TimerBase::SharedPtr timer_;

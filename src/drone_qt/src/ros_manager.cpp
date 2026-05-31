@@ -199,8 +199,12 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     "/drone/start_offboard");
 
     //创建一个服务客户端，用于调用任务yaml上传服务
-    upload_mission_yaml_client_ = node_->create_client<drone_msgs::srv::UploadMissionYaml>(
-    "/drone/upload_mission_yaml");
+    // upload_mission_yaml_client_ = node_->create_client<drone_msgs::srv::UploadMissionYaml>(
+    // "/drone/upload_mission_yaml");
+
+    //创建一个服务客户端，用于调用任务路线与参数上传服务
+    upload_mission_summary_client_ = node_->create_client<drone_msgs::srv::UploadMissionSummary>(
+    "/drone/upload_mission_summary");
 
     using namespace std::chrono_literals;
     timer_ = node_->create_wall_timer(
@@ -320,20 +324,64 @@ void RosManager::requestStartOffboard()
         });
 }
 
-void RosManager::uploadMissionYaml(const QString &mission_yaml)
+// void RosManager::uploadMissionYaml(const QString &mission_yaml)
+// {
+//     if (!upload_mission_yaml_client_ || !upload_mission_yaml_client_->service_is_ready()) {
+//         emit missionUploadFinished(false, "服务 /drone/upload_mission_yaml 未就绪", "");
+//         return;
+//     }
+
+//     auto request = std::make_shared<drone_msgs::srv::UploadMissionYaml::Request>();
+//     //将传入的QString类型的mission_yaml转换为std::string类型，并赋值给服务请求对象的mission_yaml字段
+//     request->mission_yaml = mission_yaml.toStdString();
+
+//     upload_mission_yaml_client_->async_send_request(
+//         request,
+//         [this](rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedFuture future)
+//         {
+//             const auto response = future.get();
+//             QMetaObject::invokeMethod(
+//                 this,
+//                 [this, response]() {
+//                     emit missionUploadFinished(
+//                         response->success,
+//                         QString::fromStdString(response->message),
+//                         QString::fromStdString(response->saved_path));
+//                 },
+//                 Qt::QueuedConnection);
+//         });
+// }
+
+void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
+                                      const drone_msgs::msg::MissionSummary &summary)
 {
-    if (!upload_mission_yaml_client_ || !upload_mission_yaml_client_->service_is_ready()) {
-        emit missionUploadFinished(false, "服务 /drone/upload_mission_yaml 未就绪", "");
+    if (!upload_mission_summary_client_ || !upload_mission_summary_client_->service_is_ready()) {
+        emit missionUploadFinished(false, "服务 /drone/upload_mission_summary 未就绪", "");
         return;
     }
 
-    auto request = std::make_shared<drone_msgs::srv::UploadMissionYaml::Request>();
-    //将传入的QString类型的mission_yaml转换为std::string类型，并赋值给服务请求对象的mission_yaml字段
-    request->mission_yaml = mission_yaml.toStdString();
+    if (path_points.isEmpty()) {
+        emit missionUploadFinished(false, "路径为空，不能上传 mission summary", "");
+        return;
+    }
 
-    upload_mission_yaml_client_->async_send_request(
+    //
+    auto request = std::make_shared<drone_msgs::srv::UploadMissionSummary::Request>();
+    //将传入的MissionSummary对象赋值给服务请求对象的summary字段
+    request->summary = summary;
+
+    
+    for (const auto &point : path_points) {
+        drone_msgs::msg::WorldPoint world_point;
+        world_point.x = point.x;
+        world_point.y = point.y;
+        //将每个坐标点添加到服务请求对象的points字段中，准备上传给机载端
+        request->points.push_back(world_point);
+    }
+
+    upload_mission_summary_client_->async_send_request(
         request,
-        [this](rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedFuture future)
+        [this](rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedFuture future)
         {
             const auto response = future.get();
             QMetaObject::invokeMethod(

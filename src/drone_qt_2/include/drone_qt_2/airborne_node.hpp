@@ -11,6 +11,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include "drone_qt_2/mission_yaml_builder.hpp"
 
 //自定义消息头文件
 #include "drone_msgs/msg/drone_status.hpp"
@@ -20,6 +21,7 @@
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_msgs/msg/ready_status.hpp"
 #include "drone_msgs/msg/world_group.hpp"
+#include "drone_msgs/srv/upload_mission_summary.hpp"
 
 class AirborneNode : public rclcpp::Node
 {
@@ -53,9 +55,13 @@ private:
         const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
         std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response);
 
-    void handleUploadMissionYaml(
-        const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
-        std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response);
+    // void handleUploadMissionYaml(
+    //     const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
+    //     std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response);
+
+    void handleUploadMissionSummary(
+        const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
+        std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response);
 
     std::string buildStatusText() const;
 
@@ -92,7 +98,8 @@ private:
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr start_task_srv_;
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr stop_push_srv_;
     rclcpp::Service<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_srv_;
-    rclcpp::Service<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_srv_;
+    // rclcpp::Service<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_srv_;
+    rclcpp::Service<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_srv_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     bool task_running_{false};//任务是否正在运行
