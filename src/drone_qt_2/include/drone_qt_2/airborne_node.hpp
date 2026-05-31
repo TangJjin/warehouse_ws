@@ -10,6 +10,7 @@
 #include <mavros_msgs/msg/state.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
+#include <geometry_msgs/msg/vector3.hpp>
 
 //自定义消息头文件
 #include "drone_msgs/msg/drone_status.hpp"
@@ -18,6 +19,7 @@
 #include "drone_msgs/srv/upload_mission_yaml.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_msgs/msg/ready_status.hpp"
+#include "drone_msgs/msg/world_group.hpp"
 
 class AirborneNode : public rclcpp::Node
 {
@@ -73,11 +75,20 @@ private:
     rclcpp::Publisher<drone_msgs::msg::DroneStatus>::SharedPtr status_pub_;
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_pub_;
+    rclcpp::Publisher<drone_msgs::msg::TaskStatus>::SharedPtr return_status_pub_;
+    rclcpp::Publisher<drone_msgs::msg::ReadyStatus>::SharedPtr return_path_ready_pub_;
+    rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr return_delta_pub_;
+    rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr path_pub_;
     rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_sub_;
     rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr status_sub_;
     rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr battery_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_sub_;
+    rclcpp::Subscription<drone_msgs::msg::TaskStatus>::SharedPtr task_status_sub_;
     rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr ready_status_sub_;
+    rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_sub_;
+    rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr path_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr return_delta_sub_;
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr start_task_srv_;
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr stop_push_srv_;
     rclcpp::Service<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_srv_;
