@@ -20,11 +20,10 @@ constexpr uint8_t kTypePathReady = 0x93;//消息类型：路径就绪
 }
 
 AirborneLinkBridge::AirborneLinkBridge()
-    : QObject(),
-      rclcpp::Node("airborne_link_bridge")
+    : rclcpp::Node("airborne_link_bridge")
 {
     setupRosInterfaces();
-    setupSerial();
+    //setupSerial();
 }
 
 void AirborneLinkBridge::setupRosInterfaces()
@@ -45,21 +44,21 @@ void AirborneLinkBridge::setupRosInterfaces()
         "/drone/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const drone_msgs::msg::DroneStatus::SharedPtr msg) {
-            publishDroneStatus(msg);
+            //publishDroneStatus(msg);
         });
 
     task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
         "/drone/task/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
-            publishTaskStatus(msg);
+            //publishTaskStatus(msg);
         });
 
     path_ready_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg) {
-            publishPathReady(msg);
+            //publishPathReady(msg);
         });
 }
 
@@ -67,10 +66,10 @@ void AirborneLinkBridge::onSerialReadyRead()
 {
     rx_buffer_.append(serial_.readAll());
     //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
-    Packet packet;
-    while (tryParseOnePacket(packet)) {
-        handlePacket(packet);
-    }
+    // Packet packet;
+    // while (tryParseOnePacket(packet)) {
+    //     handlePacket(packet);
+    // }
 }
 
 void AirborneLinkBridge::handlePacket(const Packet &packet)
@@ -80,26 +79,26 @@ void AirborneLinkBridge::handlePacket(const Packet &packet)
         return;
     }
 
-    sendAck(packet.seq);
+    //sendAck(packet.seq);
 
     //根据协议帧的类型调用不同的处理函数，处理函数会根据载荷内容执行相应的逻辑，并可能发送响应帧回去
-    switch (packet.type) {
-    case kTypeUploadMissionSummaryReq:
-        handleUploadMissionSummaryRequest(packet.seq, packet.payload);
-        break;
-    case kTypeStartOffboardReq:
-        handleStartOffboardRequest(packet.seq, packet.payload);
-        break;
-    case kTypeStartTaskReq:
-        handleStartTaskRequest(packet.seq, packet.payload);
-        break;
-    case kTypeStopPushReq:
-        handleStopPushRequest(packet.seq, packet.payload);
-        break;
-    default:
-        RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
-        break;
-    }
+    // switch (packet.type) {
+    // case kTypeUploadMissionSummaryReq:
+    //     handleUploadMissionSummaryRequest(packet.seq, packet.payload);
+    //     break;
+    // case kTypeStartOffboardReq:
+    //     handleStartOffboardRequest(packet.seq, packet.payload);
+    //     break;
+    // case kTypeStartTaskReq:
+    //     handleStartTaskRequest(packet.seq, packet.payload);
+    //     break;
+    // case kTypeStopPushReq:
+    //     handleStopPushRequest(packet.seq, packet.payload);
+    //     break;
+    // default:
+    //     RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
+    //     break;
+    // }
 }
 
 void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArray &payload)
@@ -120,6 +119,6 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
             const auto response = future.get();
             QByteArray payload;
             // 第一版文档里省略具体字节打包细节
-            sendResponse(kTypeStartOffboardResp, seq, payload);
+            //sendResponse(kTypeStartOffboardResp, seq, payload);
         });
 }

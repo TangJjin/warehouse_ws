@@ -5,6 +5,10 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -12,7 +16,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
-find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core SerialPort)
 
 add_executable(airborne_node
   src/main.cpp
@@ -23,6 +27,7 @@ add_executable(airborne_node
 )
 
 add_executable(airborne_link_bridge
+  src/airborne_link_bridge_main.cpp  
   src/airborne_link_bridge.cpp
   include/drone_qt_2/airborne_link_bridge.hpp
 )
@@ -47,6 +52,7 @@ target_link_libraries(airborne_node
 
 target_link_libraries(airborne_link_bridge
   Qt5::Core
+  Qt5::SerialPort
 )
 
 ament_target_dependencies(airborne_node

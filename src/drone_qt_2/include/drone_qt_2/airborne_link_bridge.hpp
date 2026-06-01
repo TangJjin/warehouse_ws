@@ -16,10 +16,9 @@
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
 
-class AirborneLinkBridge : public QObject, public rclcpp::Node
+class AirborneLinkBridge : public rclcpp::Node
 {
-    Q_OBJECT
-
+    
 public:
     AirborneLinkBridge();
     ~AirborneLinkBridge() override = default;
