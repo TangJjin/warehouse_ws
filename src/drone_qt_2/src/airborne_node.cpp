@@ -43,24 +43,19 @@ void AirborneNode::setupInterfaces()
         "/drone/local_position", position_pub_qos);
 
     auto drone_control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    //创建一个发布者，发布无人机控制状态话题，消息类型为自定义消息
     return_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
         "/drone/task/status", drone_control_status_qos);
 
     auto drone_control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    //创建一个发布者，发布无人机控制路径就绪话题，消息类型为自定义消息
     return_path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready", drone_control_path_ready_qos);
 
     auto drone_return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    //创建一个发布者，发布无人机回传路线话题，消息类型为自定义消息
     return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
         "/drone/return/world_group", drone_return_world_group_qos);
-
-    auto group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个发布者，发布预规划路线消息，消息类型为自定义消息
-    path_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
-        "/drone/world_group", group_qos);
 
     auto drone_return_delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个发布者，发布无人机dxdyaw比较结果，消息类型为geometry_msgs::msg::Vector3
@@ -151,21 +146,12 @@ void AirborneNode::setupInterfaces()
         });
 
     auto return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
+    //创建一个订阅者，订阅控制程序的路线消息，消息类型为自定义消息
     return_world_group_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
         "/return/drone/world_group", 
         return_world_group_qos, 
         [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
             return_world_group_pub_->publish(*msg);
-        });
-
-    auto path_sub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个订阅者，订阅控制程序发布的预规划路线消息，消息类型为自定义消息
-    path_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
-        "/drone/airborne/world_group",
-        path_sub_qos,
-        [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
-            path_pub_->publish(*msg);
         });
 
     auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
@@ -205,14 +191,6 @@ void AirborneNode::setupInterfaces()
             this,
             std::placeholders::_1,
             std::placeholders::_2));
-
-    // upload_mission_yaml_srv_ = this->create_service<drone_msgs::srv::UploadMissionYaml>(
-    //     "/drone/upload_mission_yaml",
-    //     std::bind(
-    //         &AirborneNode::handleUploadMissionYaml,
-    //         this,
-    //         std::placeholders::_1,
-    //         std::placeholders::_2));
 
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
         "/drone/upload_mission_summary",
@@ -416,46 +394,6 @@ bool AirborneNode::saveMissionYamlToFile(
     saved_path = file_path;
     return true;
 }
-
-// void AirborneNode::handleUploadMissionYaml(
-//     const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
-//     std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response)
-// {
-//     if (!request) {
-//         response->success = false;
-//         response->message = "请求为空";
-//         response->saved_path = "";
-//         return;
-//     }
-
-//     if (request->mission_yaml.empty()) {
-//         response->success = false;
-//         response->message = "mission_yaml 为空";
-//         response->saved_path = "";
-//         return;
-//     }
-
-//     //将接收到的yaml字符串保存到文件中，并获取保存路径和错误信息
-//     std::string saved_path;
-//     std::string error_message;
-//     const bool ok = saveMissionYamlToFile(request->mission_yaml, saved_path, error_message);
-
-//     if (!ok) {
-//         response->success = false;
-//         response->message = error_message;
-//         response->saved_path = "";
-//         mission_uploaded_ = false;
-//         current_mission_path_.clear();
-//         return;
-//     }
-
-//     mission_uploaded_ = true;
-//     current_mission_path_ = saved_path;
-
-//     response->success = true;
-//     response->message = "mission YAML 保存成功";
-//     response->saved_path = saved_path;
-// }
 
 void AirborneNode::handleUploadMissionSummary(
     const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
@@ -663,14 +601,3 @@ bool AirborneNode::stopOffboardProcess(std::string &error_message)
 
     return true;
 }
-
-
-
-// std::string AirborneNode::buildStatusText() const
-// {
-//     //包含当前状态、任务运行状态和进度信息
-//     std::ostringstream oss;
-//     oss << "task_running=" << (task_running_ ? "true" : "false")
-//         << ";progress=" << task_progress_;
-//     return oss.str();
-// }

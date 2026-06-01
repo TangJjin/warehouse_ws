@@ -278,53 +278,6 @@ void MainWindow::setupConnections()
     connect(stop_button_, &QPushButton::clicked,
             ros_manager_, &RosManager::stopTask);
 
-    //连接按钮点击信号到ROS管理器的发布路径
-    // connect(push_button_, &QPushButton::clicked,
-    //     this,
-    //     [this]()
-    //     {
-    //         if (!position_view_ || !ros_manager_) {
-    //             return;
-    //         }
-
-    //         if(waiting_push_result_){
-    //             return;
-    //         }
-
-    //         waiting_push_result_ = true;
-    //         //从界面获取当前坐标
-    //         const QVector<WorldCoord> path_points = position_view_->plannedWorldPoints();
-    //         if (path_points.isEmpty()) {
-    //             run_log_view_->appendPlainText("路径为空，不能上传 mission YAML");
-    //             waiting_push_result_ = false;
-    //             return;
-    //         }
-            
-    //         //构建mission yaml字符串，初始化参数
-    //         MissionYamlBuilder::Options options;
-    //         options.takeoff_altitude = 1.2;//起飞高度
-    //         options.move_altitude = 1.2;//移动高度
-    //         options.start_altitude = 0.0;//解锁高度
-    //         options.yaw = 0.0;//偏航角
-    //         options.tolerance = 0.12;//误差容忍
-    //         options.takeoff_hover_duration = 4.0;//起飞悬停时长
-    //         options.landing_hover_duration = 4.0;//降落悬停时长
-    //         options.move_hover_duration = 2.0;//移动悬停时长
-    //         options.add_hover_between_takeoff = true;//是否在起飞后添加悬停
-    //         options.add_hover_between_landing = true;//是否在降落前添加悬停
-    //         options.add_hover_between_moves = true;//是否在移动之间添加悬停
-    //         options.use_camera_aim = false;//是否开启相机
-    //         options.auto_start_mission = false;//是否自动启动任务
-    //         options.compress_straight_segments = true;//是否压缩直线段
-
-    //         //构建mission yaml字符串
-    //         const QString mission_yaml = MissionYamlBuilder::buildMissionYaml(path_points, options);
-    //         run_log_view_->appendPlainText("正在上传 mission YAML 到机载端...");
-    //         start_button_->setEnabled(false);
-    //         //发布坐标
-    //         ros_manager_->uploadMissionYaml(mission_yaml);
-    //     });
-
     //连接按钮点击信号到ROS管理器的发布路径与参数摘要
     connect(push_button_, &QPushButton::clicked,
     this,
@@ -437,28 +390,6 @@ void MainWindow::setupConnections()
                 : QString("%1").arg(message));
         },
         Qt::QueuedConnection);
-
-    //查看任务yaml上传服务返回的内容
-    // connect(ros_manager_, &RosManager::missionUploadFinished,
-    // this,
-    // [this](bool success, const QString &message, const QString &saved_path)
-    // {
-    //     if (success) {
-    //         start_button_->setEnabled(true);
-    //         push_flag_ = false;//上传成功后重置上传标志,打印一次就好，后续不再打印，直到下一次点击上传按钮
-    //         run_log_view_->appendPlainText(
-    //             QString("mission YAML 上传成功，机载保存路径: %1").arg(saved_path));
-    //             //上传成功后直接请求启动offboard
-    //             ros_manager_->requestStartOffboard();
-    //             run_log_view_->appendPlainText(QString("路线已上传给控制程序"));
-    //     } else {
-    //         start_button_->setEnabled(false);
-    //         run_log_view_->appendPlainText(
-    //             QString("mission YAML 上传失败: %1").arg(message));
-    //             waiting_push_result_ = false;
-    //     }
-    // },
-    // Qt::QueuedConnection);
 
     //查看任务yaml上传服务返回的内容
     connect(ros_manager_, &RosManager::missionUploadFinished,

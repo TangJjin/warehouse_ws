@@ -41,13 +41,6 @@ class RosManager : public QObject
         //定义一个公共方法，用于启动ROS spinning线程
         void start();
 
-        //定义一个公共方法，用于发布预规划路线消息，参数为一个包含坐标点的QVector
-        //void publishPath(const QVector<QPoint> &path_points);
-        void publishPath(const QVector<WorldCoord> &path_points);
-
-        //定义一个公共方法，用于上传任务yaml字符串
-        // void uploadMissionYaml(const QString &mission_yaml);
-
         //定义一个公共方法，用于上传任务总结，包括路径点列表和任务总结信息
         void uploadMissionSummary(const QVector<WorldCoord> &path_points,
                           const drone_msgs::msg::MissionSummary &summary);
@@ -120,7 +113,6 @@ class RosManager : public QObject
         //一个ROS节点指针，两个状态订阅者，一个服务客户端，一个ROS执行器，以及一个线程用于ROS spinning
         bool started_{false};
         std::shared_ptr<rclcpp::Node> node_;
-        rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr path_pub_;
         rclcpp::Subscription<drone_msgs::msg::DroneStatus>::SharedPtr status_sub_;
         rclcpp::Subscription<drone_msgs::msg::TaskStatus>::SharedPtr task_status_sub_;
         rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr ready_status_sub_;
@@ -131,7 +123,6 @@ class RosManager : public QObject
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
-        // rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_client_;
         rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_client_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;

@@ -21,14 +21,6 @@ RosManager::~RosManager()
 
 void RosManager::setupRosInterfaces()
 {
-    //保证投递
-    auto group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个发布者，发布预规划路线消息，消息类型为自定义消息
-    path_pub_ = node_->create_publisher<drone_msgs::msg::WorldGroup>(
-        "/drone/airborne/world_group",
-        group_qos
-    );
-
     auto status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机状态话题，消息类型为自定义消息
     status_sub_ = node_->create_subscription<drone_msgs::msg::DroneStatus>(
@@ -99,7 +91,7 @@ void RosManager::setupRosInterfaces()
         });
 
     auto return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
+    //创建一个订阅者，订阅控制程序的路线消息，消息类型为自定义消息
     return_world_group_sub_ = node_->create_subscription<drone_msgs::msg::WorldGroup>(
         "/drone/return/world_group", 
         return_world_group_qos, 
@@ -197,10 +189,6 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个服务客户端，用于调用offboard启动服务
     start_offboard_client_ = node_->create_client<drone_msgs::srv::StartOffboard>(
     "/drone/start_offboard");
-
-    //创建一个服务客户端，用于调用任务yaml上传服务
-    // upload_mission_yaml_client_ = node_->create_client<drone_msgs::srv::UploadMissionYaml>(
-    // "/drone/upload_mission_yaml");
 
     //创建一个服务客户端，用于调用任务路线与参数上传服务
     upload_mission_summary_client_ = node_->create_client<drone_msgs::srv::UploadMissionSummary>(
@@ -324,34 +312,6 @@ void RosManager::requestStartOffboard()
         });
 }
 
-// void RosManager::uploadMissionYaml(const QString &mission_yaml)
-// {
-//     if (!upload_mission_yaml_client_ || !upload_mission_yaml_client_->service_is_ready()) {
-//         emit missionUploadFinished(false, "服务 /drone/upload_mission_yaml 未就绪", "");
-//         return;
-//     }
-
-//     auto request = std::make_shared<drone_msgs::srv::UploadMissionYaml::Request>();
-//     //将传入的QString类型的mission_yaml转换为std::string类型，并赋值给服务请求对象的mission_yaml字段
-//     request->mission_yaml = mission_yaml.toStdString();
-
-//     upload_mission_yaml_client_->async_send_request(
-//         request,
-//         [this](rclcpp::Client<drone_msgs::srv::UploadMissionYaml>::SharedFuture future)
-//         {
-//             const auto response = future.get();
-//             QMetaObject::invokeMethod(
-//                 this,
-//                 [this, response]() {
-//                     emit missionUploadFinished(
-//                         response->success,
-//                         QString::fromStdString(response->message),
-//                         QString::fromStdString(response->saved_path));
-//                 },
-//                 Qt::QueuedConnection);
-//         });
-// }
-
 void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
                                       const drone_msgs::msg::MissionSummary &summary)
 {
@@ -394,46 +354,4 @@ void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
                 },
                 Qt::QueuedConnection);
         });
-}
-
-// void RosManager::publishPath(const QVector<QPoint> &path_points)
-// {
-//     if (!path_pub_) {
-//         return;
-//     }
-
-//     //构建一个GridPath消息，并将路径点列表中的坐标点转换为消息中的行列格式，然后发布消息
-//     drone_msgs::msg::GridGroup msg;
-
-//     //遍历路径点列表，将每个坐标点的x和y值分别添加到消息的行和列字段中
-//     for (const auto &point : path_points) {
-//         drone_msgs::msg::GridPoint grid_point;
-//         grid_point.rows = point.x();
-//         grid_point.cols = point.y();
-//         msg.points.push_back(grid_point);
-//     }
-
-//     path_pub_->publish(msg);
-// }
-
-void RosManager::publishPath(const QVector<WorldCoord> &World_points)
-{
-    if (!path_pub_) {
-        return;
-    }
-
-    //构建一个GridPath消息，并将路径点列表中的坐标点转换为消息中的行列格式，然后发布消息
-    drone_msgs::msg::WorldGroup msg;
-
-    //遍历路径点列表，将每个坐标点的x和y值分别添加到消息的行和列字段中
-    for (const auto &point : World_points) {
-        drone_msgs::msg::WorldPoint World_point;
-        World_point.x = point.x;
-        World_point.y = point.y;
-        msg.points.push_back(World_point);
-    }
-
-    path_pub_->publish(msg);
-    push_flag = true;
-    emit pushFlagChanged(push_flag);
 }
