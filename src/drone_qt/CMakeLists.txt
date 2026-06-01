@@ -27,12 +27,17 @@ add_executable(ground_station
   src/ros_manager.cpp
   src/image_preview_dialog.cpp
   src/position_view_widget.cpp
-src/mission_yaml_builder.cpp
+  src/mission_yaml_builder.cpp
   include/drone_qt/mainwindow.hpp
   include/drone_qt/ros_manager.hpp
   include/drone_qt/image_preview_dialog.hpp
   include/drone_qt/position_view_widget.hpp
-include/drone_qt/mission_yaml_builder.hpp
+  include/drone_qt/mission_yaml_builder.hpp
+)
+
+add_executable(ground_link_bridge
+  src/ground_link_bridge.cpp
+  include/drone_qt/ground_link_bridge.hpp
 )
 
 target_include_directories(ground_station PUBLIC
@@ -40,8 +45,17 @@ target_include_directories(ground_station PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(ground_link_bridge PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 target_link_libraries(ground_station
   Qt5::Widgets
+  Qt5::SerialPort
+)
+
+target_link_libraries(ground_link_bridge
   Qt5::SerialPort
 )
 
@@ -53,8 +67,16 @@ ament_target_dependencies(ground_station
   mavros_msgs
 )
 
+ament_target_dependencies(ground_link_bridge
+  rclcpp
+  std_msgs
+  std_srvs
+  drone_msgs
+)
+
 install(TARGETS
   ground_station
+  ground_link_bridge
   DESTINATION lib/${PROJECT_NAME}
 )
 

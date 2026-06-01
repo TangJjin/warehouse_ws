@@ -22,6 +22,11 @@ add_executable(airborne_node
   include/drone_qt_2/mission_yaml_builder.hpp
 )
 
+add_executable(airborne_link_bridge
+  src/airborne_link_bridge.cpp
+  include/drone_qt_2/airborne_link_bridge.hpp
+)
+
 add_executable(barcode_test_sender
   src/barcode_text_sender.cpp
 )
@@ -31,7 +36,16 @@ target_include_directories(airborne_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(airborne_link_bridge PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 target_link_libraries(airborne_node
+  Qt5::Core
+)
+
+target_link_libraries(airborne_link_bridge
   Qt5::Core
 )
 
@@ -43,6 +57,13 @@ ament_target_dependencies(airborne_node
   mavros_msgs
 )
 
+ament_target_dependencies(airborne_link_bridge
+  rclcpp
+  std_msgs
+  std_srvs
+  drone_msgs
+)
+
 ament_target_dependencies(barcode_test_sender
   rclcpp
   drone_msgs
@@ -50,6 +71,7 @@ ament_target_dependencies(barcode_test_sender
 
 install(TARGETS
   airborne_node
+  airborne_link_bridge
   barcode_test_sender
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -20,6 +20,7 @@
 #include "drone_msgs/srv/upload_mission_yaml.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_msgs/msg/ready_status.hpp"
+#include "drone_msgs/msg/task_status.hpp"
 #include "drone_msgs/msg/world_group.hpp"
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 
@@ -55,10 +56,6 @@ private:
         const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
         std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response);
 
-    // void handleUploadMissionYaml(
-    //     const std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Request> request,
-    //     std::shared_ptr<drone_msgs::srv::UploadMissionYaml::Response> response);
-
     void handleUploadMissionSummary(
         const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
         std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response);
@@ -93,12 +90,10 @@ private:
     rclcpp::Subscription<drone_msgs::msg::TaskStatus>::SharedPtr task_status_sub_;
     rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr ready_status_sub_;
     rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_sub_;
-    rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr path_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr return_delta_sub_;
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr start_task_srv_;
     rclcpp::Service<drone_msgs::srv::StartTask>::SharedPtr stop_push_srv_;
     rclcpp::Service<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_srv_;
-    // rclcpp::Service<drone_msgs::srv::UploadMissionYaml>::SharedPtr upload_mission_yaml_srv_;
     rclcpp::Service<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_srv_;
     rclcpp::TimerBase::SharedPtr timer_;
 
