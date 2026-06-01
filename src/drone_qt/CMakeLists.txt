@@ -19,6 +19,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Widgets SerialPort)
 
 add_executable(ground_station
@@ -27,15 +28,14 @@ add_executable(ground_station
   src/ros_manager.cpp
   src/image_preview_dialog.cpp
   src/position_view_widget.cpp
-  src/mission_yaml_builder.cpp
   include/drone_qt/mainwindow.hpp
   include/drone_qt/ros_manager.hpp
   include/drone_qt/image_preview_dialog.hpp
   include/drone_qt/position_view_widget.hpp
-  include/drone_qt/mission_yaml_builder.hpp
 )
 
 add_executable(ground_link_bridge
+  src/ground_link_bridge_main.cpp
   src/ground_link_bridge.cpp
   include/drone_qt/ground_link_bridge.hpp
 )
@@ -65,6 +65,7 @@ ament_target_dependencies(ground_station
   std_srvs
   drone_msgs
   mavros_msgs
+  geometry_msgs
 )
 
 ament_target_dependencies(ground_link_bridge
@@ -72,6 +73,7 @@ ament_target_dependencies(ground_link_bridge
   std_msgs
   std_srvs
   drone_msgs
+  geometry_msgs
 )
 
 install(TARGETS

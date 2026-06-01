@@ -2,7 +2,6 @@
 #include "drone_qt/ros_manager.hpp"
 #include "drone_qt/image_preview_dialog.hpp"
 #include "drone_qt/position_view_widget.hpp"
-#include "drone_qt/mission_yaml_builder.hpp"
 
 #include <QLabel>
 #include <QPushButton>

@@ -66,8 +66,8 @@ void GroundLinkBridge::setupRosInterfaces()
                 return;
             }
 
-            const QByteArray payload = encodeUploadMissionSummaryRequest(*request, next_msg_id_++);
-            sendPacket(kTypeUploadMissionSummaryReq, kFlagNeedAck, payload, true);
+            //const QByteArray payload = encodeUploadMissionSummaryRequest(*request, next_msg_id_++);
+            //sendPacket(kTypeUploadMissionSummaryReq, kFlagNeedAck, payload, true);
 
             // 第一版这里只给出桥接骨架。
             // 真正落地时，这里需要把 response 暂存起来，等机载响应回来后再填充。
@@ -101,9 +101,9 @@ void GroundLinkBridge::sendPacket(uint8_t type, uint8_t flags, const QByteArray 
 {
     const uint16_t seq = nextSeq();
     //将消息类型、标志位、序列号和载荷数据编码成一个完整的帧数据，准备发送
-    const QByteArray frame = encodeFrame(type, flags, seq, payload);
+    //const QByteArray frame = encodeFrame(type, flags, seq, payload);
     //发送协议帧到串口
-    serial_.write(frame);
+    //serial_.write(frame);
 
     //如果需要ACK，则将请求信息保存到待重试列表中，以便后续检查和重试
     if (need_ack) {
@@ -111,7 +111,7 @@ void GroundLinkBridge::sendPacket(uint8_t type, uint8_t flags, const QByteArray 
         pending.request_type = type;
         pending.seq = seq;
         pending.retry_count = 0;
-        pending.encoded_frame = frame;
+        //pending.encoded_frame = frame;
         pending.deadline = this->now() + rclcpp::Duration::from_seconds(0.3);
         pending_requests_[seq] = pending;
     }
@@ -129,9 +129,9 @@ void GroundLinkBridge::onSerialReadyRead()
 
     //接收到数据后，进入第一层handlePacket处理函数，后续分路
     Packet packet;
-    while (tryParseOnePacket(packet)) {
-        handlePacket(packet);
-    }
+    // while (tryParseOnePacket(packet)) {
+    //     handlePacket(packet);
+    // }
 }
 
 void GroundLinkBridge::handlePacket(const Packet &packet)
@@ -143,32 +143,32 @@ void GroundLinkBridge::handlePacket(const Packet &packet)
     }
 
     //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
-    switch (packet.type) {
-    case kTypeDroneStatus:
-        handleDroneStatusReport(packet.payload);
-        break;
-    case kTypeTaskStatus:
-        handleTaskStatusReport(packet.payload);
-        break;
-    case kTypePathReady:
-        handlePathReadyReport(packet.payload);
-        break;
-    case kTypeUploadMissionSummaryResp:
-        handleUploadMissionSummaryResponse(packet.payload);
-        break;
-    case kTypeStartOffboardResp:
-        handleStartOffboardResponse(packet.payload);
-        break;
-    case kTypeStartTaskResp:
-        handleStartTaskResponse(packet.payload);
-        break;
-    case kTypeStopPushResp:
-        handleStopPushResponse(packet.payload);
-        break;
-    default:
-        RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
-        break;
-    }
+    // switch (packet.type) {
+    // case kTypeDroneStatus:
+    //     handleDroneStatusReport(packet.payload);
+    //     break;
+    // case kTypeTaskStatus:
+    //     handleTaskStatusReport(packet.payload);
+    //     break;
+    // case kTypePathReady:
+    //     handlePathReadyReport(packet.payload);
+    //     break;
+    // case kTypeUploadMissionSummaryResp:
+    //     handleUploadMissionSummaryResponse(packet.payload);
+    //     break;
+    // case kTypeStartOffboardResp:
+    //     handleStartOffboardResponse(packet.payload);
+    //     break;
+    // case kTypeStartTaskResp:
+    //     handleStartTaskResponse(packet.payload);
+    //     break;
+    // case kTypeStopPushResp:
+    //     handleStopPushResponse(packet.payload);
+    //     break;
+    // default:
+    //     RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
+    //     break;
+    // }
 }
 
 void GroundLinkBridge::handleAck(uint16_t seq)
