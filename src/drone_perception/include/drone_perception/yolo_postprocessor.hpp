@@ -45,6 +45,6 @@ private:
 
     int class_count_ = 2;
     float confidence_threshold_ = 0.60F;
-    float nms_threshold_ = 0.45F;
+    float nms_threshold_ = 0.70F;
 
 };
