@@ -82,6 +82,20 @@ def format_freq(raw):
     return one_line(raw, 80)
 
 
+def format_hz(value):
+    try:
+        hz = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if hz >= 1_000_000_000:
+        return f"{hz / 1_000_000_000:.2f}GHz"
+    if hz >= 1_000_000:
+        return f"{hz / 1_000_000:.0f}MHz"
+    if hz >= 1_000:
+        return f"{hz / 1_000:.0f}KHz"
+    return f"{hz:.0f}Hz"
+
+
 def read_system_cpu():
     text, _ = read_text("/proc/stat")
     if not text:
@@ -228,39 +242,72 @@ def discover_npu_devfreq():
     return result
 
 
+def parse_rknpu_core_load(raw):
+    if not raw:
+        return None
+    text = one_line(raw, 240)
+    pairs = re.findall(r"(?:core|Core)\s*([0-2])\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*%?", text)
+    if pairs:
+        loads = {int(core): float(load) for core, load in pairs}
+        if all(core in loads for core in (0, 1, 2)):
+            return "  ".join(f"core{core}={loads[core]:.1f}%" for core in (0, 1, 2))
+
+    numbers = [float(item) for item in re.findall(r"(?<![A-Za-z0-9.])([0-9]+(?:\.[0-9]+)?)\s*%?", text)]
+    percent_like = [value for value in numbers if 0.0 <= value <= 100.0]
+    if len(percent_like) >= 3:
+        return "  ".join(f"core{idx}={percent_like[idx]:.1f}%" for idx in range(3))
+    return text
+
+
+def parse_devfreq_load(raw):
+    if not raw:
+        return None
+    text = one_line(raw, 80)
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*@\s*([0-9]+)\s*Hz", text)
+    if match:
+        return f"overall={float(match.group(1)):.1f}%  sample_freq={format_hz(match.group(2))}"
+    return text
+
+
 def read_npu_status():
-    parts = []
-    debug_load_paths = [
-        "/sys/kernel/debug/rknpu/load",
-        "/sys/kernel/debug/rknpu/load_frequency",
-    ]
-    for path in debug_load_paths:
-        if not os.path.exists(path):
-            continue
-        text, err = read_text(path)
-        label = os.path.basename(path)
+    core_parts = []
+    extra_parts = []
+
+    load_path = "/sys/kernel/debug/rknpu/load"
+    if os.path.exists(load_path):
+        text, err = read_text(load_path)
         if text:
-            parts.append(f"{label}={one_line(text)}")
+            core_parts.append("debugfs " + parse_rknpu_core_load(text))
         elif err:
-            parts.append(f"{label}={err}")
+            core_parts.append(f"debugfs={err}")
+
+    freq_path = "/sys/kernel/debug/rknpu/load_frequency"
+    if os.path.exists(freq_path):
+        text, err = read_text(freq_path)
+        if text:
+            extra_parts.append(f"load_frequency={one_line(text, 80)}")
+        elif err:
+            extra_parts.append(f"load_frequency={err}")
 
     for dev in discover_npu_devfreq():
         name = os.path.basename(dev)
-        load, load_err = read_text(os.path.join(dev, "load"))
+        load, _ = read_text(os.path.join(dev, "load"))
         freq, _ = read_text(os.path.join(dev, "cur_freq"))
         status = []
         if load:
-            status.append(f"load={one_line(load, 80)}")
-        elif load_err == "permission denied":
-            status.append("load=permission denied")
-        else:
-            status.append("load=n/a")
+            parsed_load = parse_devfreq_load(load)
+            if parsed_load:
+                status.append(parsed_load)
         status.append(f"freq={format_freq(freq)}")
-        parts.append(f"{name}: " + " ".join(status))
+        extra_parts.append(f"{name}: " + " ".join(status))
 
-    if not parts:
-        return "n/a (未找到 rknpu/npu sysfs；在 RK3588 上可尝试 sudo 或挂载 debugfs)"
-    return "  ".join(parts)
+    if core_parts:
+        if extra_parts:
+            return "  ".join(core_parts) + "  |  " + "  ".join(extra_parts)
+        return "  ".join(core_parts)
+    if extra_parts:
+        return "三核占用=n/a (需要读取 /sys/kernel/debug/rknpu/load，尝试 sudo 或挂载 debugfs)  |  " + "  ".join(extra_parts)
+    return "n/a (未找到 rknpu/npu sysfs；在 RK3588 上可尝试 sudo 或挂载 debugfs)"
 
 
 class LogFpsReader:

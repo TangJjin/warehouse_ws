@@ -28,6 +28,7 @@ ament_target_dependencies(k230_tcp_bridge
   std_msgs
   drone_msgs
 )
+
 target_link_libraries(k230_tcp_bridge Threads::Threads)
 
 install(TARGETS
@@ -35,7 +36,26 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# ── k230_animals_uart_ros2_node ──────────────────────────
+add_executable(k230_animals_uart_ros2_node
+  src/k230_animals_uart_ros2_node.cpp
+)
+
+target_compile_features(k230_animals_uart_ros2_node PUBLIC cxx_std_17)
+
+ament_target_dependencies(k230_animals_uart_ros2_node
+  rclcpp
+  std_msgs
+  drone_msgs
+)
+
+install(TARGETS
+  k230_animals_uart_ros2_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(PROGRAMS
+  scripts/k230_animals_image_saver.sh
   scripts/k230_snapshot_decode.sh
   DESTINATION lib/${PROJECT_NAME}
 )
