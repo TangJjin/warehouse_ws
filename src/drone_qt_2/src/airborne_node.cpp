@@ -62,8 +62,13 @@ void AirborneNode::setupInterfaces()
     return_delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
         "/drone/pose_yaw_compare/delta", drone_return_delta_qos);
 
+    auto vision_barcode_pub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个发布者，发布视觉系统捕获的条形码消息，消息类型为自定义消息
+    vision_barcode_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
+        "/drone/vision/barcode", vision_barcode_pub_qos);
+
     //创建一个订阅者，订阅视觉系统发布的条形码捕获话题，消息类型为自定义消息
-    auto barcode_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    auto barcode_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     vision_barcode_sub_ = this->create_subscription<drone_msgs::msg::BarcodeCapture>(
         "/drone/image", barcode_qos,
         //使用std::bind将成员函数绑定为订阅回调函数
@@ -249,6 +254,11 @@ void AirborneNode::publishStatus()
 void AirborneNode::handleBarcodeCapture(
     const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
 {
+    drone_msgs::msg::BarcodeCapture vision_msg;
+    vision_msg.stamp = msg->stamp;
+    vision_msg.barcode = msg->barcode;
+    vision_msg.image_format = msg->image_format;
+    vision_barcode_pub_->publish(vision_msg);
     //接收到视觉系统发布的条形码捕获消息后，直接转发到自己的条形码捕获话题上
     barcode_pub_->publish(*msg);
 }

@@ -144,6 +144,25 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+    auto barcode_sub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    //创建一个订阅者，订阅条形码捕获话题，消息类型为自定义消息
+    vision_barcode_sub_ = node_->create_subscription<drone_msgs::msg::BarcodeCapture>(
+        "/drone/vision/barcode",
+        barcode_sub_qos,
+        [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
+        {
+            //使用Qt的信号槽机制在线程安全的方式下发条形码捕获信号，包含捕获到的条形码数据、图像数据、图像格式和时间文本等信息
+            const QString barcode = QString::fromStdString(msg->barcode);
+            const QString image_format = QString::fromStdString(msg->image_format);
+            const qint64 time_ms =
+                static_cast<qint64>(msg->stamp.sec) * 1000LL +
+                static_cast<qint64>(msg->stamp.nanosec) / 1000000LL;
+            const QString time_text = 
+                QDateTime::fromMSecsSinceEpoch(time_ms,Qt::LocalTime)
+                .toString("yyyy-MM-dd hh:mm:ss");
+
+        });
+
     auto local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
     local_position_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
