@@ -13,6 +13,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include "drone_qt/position_view_widget.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
+#include <QMap>
 
 //自定义消息头文件
 #include "drone_msgs/msg/drone_status.hpp"
@@ -77,6 +78,11 @@ class RosManager : public QObject
             const QString &barcode,
             const QByteArray &data,
             const QString &image_format,
+            const QString &time_text);
+
+        //定义一个信号，用于条形码捕获事件，不包含图像数据
+        void visionBarcodeCaptured(
+            const QString &barcode,
             const QString &time_text);
 
         //定义一个信号，用于位置更新事件，包含无人机的二维位置坐标与高度

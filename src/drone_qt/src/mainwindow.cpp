@@ -21,6 +21,8 @@
 #include <QByteArray>
 #include <QPlainTextEdit>
 #include <QMetaType>
+#include <QComboBox>
+#include <QMap>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -35,6 +37,16 @@ MainWindow::MainWindow(QWidget *parent)
     ros_manager_->start();
     //开始按钮还没上传路线时不应该可用
     start_button_->setEnabled(false);
+
+    const auto buttons = findChildren<QPushButton *>();
+    for (QPushButton *button : buttons) {
+        // button->setFixedWidth(120);
+        button->setFixedHeight(33);
+
+        QFont font = button->font();
+        font.setPointSize(10);
+        button->setFont(font);
+    }
 }
 
 void MainWindow::setupUi()
@@ -74,6 +86,11 @@ void MainWindow::setupUi()
     //右右侧识别结果区：垂直布局
     auto *capture_panel = new QGroupBox("识别结果", right_panel);
     auto *capture_layout = new QVBoxLayout(capture_panel);
+
+    barcode_mode_combo_ = new QComboBox(capture_panel);
+    barcode_mode_combo_->addItem("计数模式");
+    barcode_mode_combo_->addItem("明细模式");
+    barcode_mode_combo_->setCurrentIndex(0);
 
     //右下侧日志查看区：垂直布局
     auto *log_panel = new QGroupBox("日志", right_panel);
@@ -167,35 +184,31 @@ void MainWindow::setupUi()
     stop_button_ = new QPushButton("停止", right_panel);
     push_button_ = new QPushButton("上传", right_panel);
     refresh_button_ = new QPushButton("刷新", right_panel);
-    true_button_ = new QPushButton("确定", right_panel);
-    del_button_ = new QPushButton("删除", right_panel);
+    // true_button_ = new QPushButton("确定", right_panel);
+    // del_button_ = new QPushButton("删除", right_panel);
     display_button_ = new QPushButton("显示", right_panel);
     clear_button_ = new QPushButton("清空", right_panel);
 
-    //将按钮元素添加到右上方按钮区的布局中
-    // button_layout->addWidget(start_button_);
-    // button_layout->addWidget(stop_button_);
-    // button_layout->addWidget(push_button_);
-    // button_layout->addWidget(refresh_button_);
 
-    up_button_ = new QPushButton("↑", right_panel);
-    left_button_ = new QPushButton("←", right_panel);
-    down_button_ = new QPushButton("↓", right_panel);
-    right_button_ = new QPushButton("→", right_panel);
+    // up_button_ = new QPushButton("↑", right_panel);
+    // left_button_ = new QPushButton("←", right_panel);
+    // down_button_ = new QPushButton("↓", right_panel);
+    // right_button_ = new QPushButton("→", right_panel);
 
     //将方向控制按钮添加到右侧方向控制区的布局中，形成一个简单的网格布局
     direction_layout->addWidget(start_button_,    0, 0);
     direction_layout->addWidget(stop_button_,  0, 1);
-    direction_layout->addWidget(clear_button_,  0, 2);
     direction_layout->addWidget(push_button_,  1, 0);
     direction_layout->addWidget(refresh_button_, 1, 1);
-    direction_layout->addWidget(display_button_, 1, 2);
+    direction_layout->addWidget(clear_button_,  2, 0);
+    direction_layout->addWidget(display_button_, 2, 1);
     // direction_layout->addWidget(true_button_,  2, 0);
     // direction_layout->addWidget(del_button_, 2, 2);
     // direction_layout->addWidget(up_button_,    2, 1);
     // direction_layout->addWidget(left_button_,  3, 0);
     // direction_layout->addWidget(down_button_,  3, 1);
     // direction_layout->addWidget(right_button_, 3, 2);
+
     /*=============================================*/
 
     /*=============== 识别结果区控件 ===============*/
@@ -210,6 +223,7 @@ void MainWindow::setupUi()
     barcode_list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     //将视觉结果显示元素添加到右下识别结果区的布局中
+    capture_layout->addWidget(barcode_mode_combo_);
     capture_layout->addWidget(barcode_list_);
     /*=============================================*/
 
@@ -232,16 +246,19 @@ void MainWindow::setupUi()
     //main_layout->addWidget(upd_panel,0);
     main_layout->addWidget(down_panel,1);
 
-    //下方总区布局分配：左侧显示区占5份，右侧总区占2份
+    //下方总区布局分配：左侧显示区占1份，右侧总区占1份
     down_layout->addWidget(display_panel, 1);
     down_layout->addWidget(right_panel, 1);
 
-    //右侧总区布局分配：按钮区占1份，方向控制区占2份，识别结果区占2份
-    //right_layout->addWidget(button_panel,1);
+    //右侧总区布局分配：按钮区占1份，识别结果区占2份
     right_layout->addWidget(direction_label,0,0);
     right_layout->addWidget(capture_panel,0,1);
     right_layout->addWidget(log_panel,1,0,1,2);
-    direction_label->setMaximumWidth(220);
+    direction_label->setFixedHeight(190);
+    direction_label->setMaximumWidth(170);
+    capture_panel->setFixedHeight(190);
+    //capture_panel->setMaximumHeight(120);
+
     //direction_label->setMaximumHeight(100);
     right_layout->setRowStretch(0, 1);
     right_layout->setRowStretch(1, 1);
@@ -250,9 +267,6 @@ void MainWindow::setupUi()
     main_layout->setContentsMargins(2, 2, 2, 2);
     main_layout->setSpacing(1);
 
-    // 先给一个基础高度，确保界面上能看见
-    //barcode_list_->setFixedHeight(120);
-    //capture_panel->setMaximumHeight(120);
 
     //将中心部件设置为主窗口的中心部件
     setCentralWidget(central);
@@ -440,29 +454,31 @@ void MainWindow::setupConnections()
             barcode_records_.clear();
             if (barcode_list_) {
                 barcode_list_->clear();
+                vision_barcode_counts_.clear();
+                refreshBarcodeList();
             }
         });
     
     //连接按钮点击信号到位置视图控件的路线刷新槽
-    connect(true_button_, &QPushButton::clicked,
-            position_view_, &PositionViewWidget::refreshPlannedPath);
+    // connect(true_button_, &QPushButton::clicked,
+    //         position_view_, &PositionViewWidget::refreshPlannedPath);
 
-    connect(del_button_, &QPushButton::clicked,
-            position_view_, &PositionViewWidget::delPlannedPath);
+    // connect(del_button_, &QPushButton::clicked,
+    //         position_view_, &PositionViewWidget::delPlannedPath);
 
 
     //连接方向控制按钮的点击信号到位置视图控件的相应槽函数，用于更新当前选中的格子位置
-    connect(up_button_, &QPushButton::clicked,
-            position_view_,&PositionViewWidget::moveSelectionUp);
+    // connect(up_button_, &QPushButton::clicked,
+    //         position_view_,&PositionViewWidget::moveSelectionUp);
 
-    connect(down_button_, &QPushButton::clicked,
-            position_view_,&PositionViewWidget::moveSelectionDown);
+    // connect(down_button_, &QPushButton::clicked,
+    //         position_view_,&PositionViewWidget::moveSelectionDown);
 
-    connect(left_button_, &QPushButton::clicked,
-            position_view_,&PositionViewWidget::moveSelectionLeft);
+    // connect(left_button_, &QPushButton::clicked,
+    //         position_view_,&PositionViewWidget::moveSelectionLeft);
 
-    connect(right_button_, &QPushButton::clicked,
-            position_view_,&PositionViewWidget::moveSelectionRight);
+    // connect(right_button_, &QPushButton::clicked,
+    //         position_view_,&PositionViewWidget::moveSelectionRight);
 
     //连接串口接收数据到读取数据函数
     // connect(serial_port_, &QSerialPort::readyRead,
@@ -515,9 +531,22 @@ void MainWindow::setupConnections()
         },
         Qt::QueuedConnection);
 
+    connect(ros_manager_, &RosManager::visionBarcodeCaptured,
+        this,
+        [this](const QString &barcode, const QString &time_text)
+        {
+            appendVisionBarcodeCount(barcode, time_text);
+        },
+        Qt::QueuedConnection);
+
     //连接ROS管理器的条形码捕获信号到一个lambda槽，用于将接收到的条形码捕获消息中的数据添加到界面上的列表控件中
     connect(barcode_list_, &QListWidget::itemDoubleClicked,
         this, &MainWindow::showBarcodeImage);
+
+    connect(barcode_mode_combo_,
+        QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this,
+        &MainWindow::handleBarcodeDisplayModeChanged);
 
     connect(ros_manager_, &RosManager::positionUpdated,
         this,
@@ -590,13 +619,7 @@ void MainWindow::updateStatus(
     battery_label_->setText(QString::number(battery_percent * 100.0f, 'f', 1) + "%");
     mode_label_->setText(current_flight_mode);
     armed_label_->setText(armed ? "Unlock" : "Lock");
-    //const QString action_text = action_name.trimmed().isEmpty() ? "无" : action_name.trimmed();
-    //action_label_->setText(action_text);
-    // if (task_running_) {
-    //     status_label_->setText(QString("%1").arg(task_name));
-    // } else {
-    //     status_label_->setText("空闲");
-    // }
+
 
     if (armed == true) {
         if (unlock_flag_ == false) {
@@ -701,6 +724,18 @@ void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
     updateIndicator(dyaw_indicator_label_, abs_dyaw, 15.0, 30.0);
 }
 
+void MainWindow::handleBarcodeDisplayModeChanged(int index)
+{
+    //模式切换
+    if (index == 0) {
+        barcode_display_mode_ = BarcodeDisplayMode::Summary;
+    } else {
+        barcode_display_mode_ = BarcodeDisplayMode::Detail;
+    }
+
+    refreshBarcodeList();
+}
+
 void MainWindow::appendBarcodeRecord(
     const QString &barcode,
     const QByteArray &image_data,
@@ -720,17 +755,56 @@ void MainWindow::appendBarcodeRecord(
 
     //将记录添加到条形码捕获记录列表中，以便后续使用
     barcode_records_.append(record);
+    refreshBarcodeList();
+}
 
-    //在界面上的列表控件中添加一个新的列表项，显示条形码数据和时间文本等信息
-    const int index = barcode_records_.size() - 1;
-    const QString text = QString("%1 | %2").arg(barcode, time_text);
+void MainWindow::appendVisionBarcodeCount(
+    const QString &barcode,
+    const QString &time_text)
+{
+    Q_UNUSED(time_text);
 
-    //创建一个新的列表项，并将其数据设置为记录在列表中的索引，以便在点击列表项时能够找到对应的记录
-    auto *item = new QListWidgetItem(text, barcode_list_);
-    item->setData(Qt::UserRole, index);
+    if (barcode.trimmed().isEmpty()) {
+        return;
+    }
 
-    //将列表项添加到列表控件中，并更新列表控件的高度，以适应内容的变化
-    barcode_list_->addItem(item);
+    vision_barcode_counts_[barcode] += 1;
+
+    if (barcode_display_mode_ == BarcodeDisplayMode::Summary) {
+        refreshBarcodeList();//当处于计数模式时刷新数据
+    }
+    refreshBarcodeList();//当处于计数模式时刷新数据
+}
+
+void MainWindow::refreshBarcodeList()
+{
+    if (!barcode_list_) {
+        return;
+    }
+
+    barcode_list_->clear();
+
+    if (barcode_display_mode_ == BarcodeDisplayMode::Detail) {
+        for (int i = 0; i < barcode_records_.size(); ++i) {
+            const BarcodeRecord &record = barcode_records_[i];
+            const QString text = QString("%1 | %2").arg(record.barcode, record.time_text);
+
+            auto *item = new QListWidgetItem(text, barcode_list_);
+            item->setData(Qt::UserRole, i);
+            barcode_list_->addItem(item);
+        }
+    } else {
+        for (auto it = vision_barcode_counts_.constBegin();
+            it != vision_barcode_counts_.constEnd();
+            ++it) {
+            const QString text = QString("%1：%2只").arg(it.key()).arg(it.value());
+
+            auto *item = new QListWidgetItem(text, barcode_list_);
+            item->setData(Qt::UserRole, -1);
+            barcode_list_->addItem(item);
+        }
+    }
+
     updateBarcodeListHeight();
 }
 
@@ -743,7 +817,7 @@ void MainWindow::updateBarcodeListHeight()
     const int row_height = barcode_list_->count() > 0 ? barcode_list_->sizeHintForRow(0) : 32;
 
     //设置一个可见行数的上限，避免列表过高，同时考虑到列表的边框和间距等因素，计算出合适的最小高度
-    const int visible_rows = 5;
+    const int visible_rows = 3;
     const int frame = barcode_list_->frameWidth() *2;
     const int height = row_height * visible_rows + frame + 4;
     barcode_list_->setMinimumHeight(height);
@@ -753,6 +827,10 @@ void MainWindow::updateBarcodeListHeight()
 void MainWindow::showBarcodeImage(QListWidgetItem *item)
 {
     if (!item) {
+        return;
+    }
+
+    if (barcode_display_mode_ != BarcodeDisplayMode::Detail) {
         return;
     }
 
@@ -783,6 +861,8 @@ void MainWindow::showBarcodeImage(QListWidgetItem *item)
     image_preview_dialog_->raise();
     image_preview_dialog_->activateWindow();
 }
+
+
 
 void MainWindow::updatePathReadyState(bool ready)
 {
