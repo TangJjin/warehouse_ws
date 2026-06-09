@@ -153,7 +153,6 @@ void RosManager::setupRosInterfaces()
         {
             //使用Qt的信号槽机制在线程安全的方式下发条形码捕获信号，包含捕获到的条形码数据、图像数据、图像格式和时间文本等信息
             const QString barcode = QString::fromStdString(msg->barcode);
-            const QString image_format = QString::fromStdString(msg->image_format);
             const qint64 time_ms =
                 static_cast<qint64>(msg->stamp.sec) * 1000LL +
                 static_cast<qint64>(msg->stamp.nanosec) / 1000000LL;
@@ -161,6 +160,12 @@ void RosManager::setupRosInterfaces()
                 QDateTime::fromMSecsSinceEpoch(time_ms,Qt::LocalTime)
                 .toString("yyyy-MM-dd hh:mm:ss");
 
+            QMetaObject::invokeMethod(
+                this,
+                [this, barcode, time_text]() {
+                    emit visionBarcodeCaptured(barcode, time_text);
+                },
+                Qt::QueuedConnection);
         });
 
     auto local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();

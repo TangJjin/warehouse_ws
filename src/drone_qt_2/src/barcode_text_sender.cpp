@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
     const std::string image_path = argv[1];
     const std::string barcode_text = argv[2];
 
-    auto pub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    auto pub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     auto node = std::make_shared<rclcpp::Node>("barcode_test_sender");
     auto pub = node->create_publisher<drone_msgs::msg::BarcodeCapture>(
         "/drone/image", pub_qos);

@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include "drone_qt/position_view_widget.hpp"
 #include <QVector>
+#include <QMap>
 
 class QLabel;
 class QPushButton;
@@ -18,6 +19,8 @@ class QSerialPort;
 class QByteArray;
 
 class QPlainTextEdit;
+
+class QComboBox;
 
 //声明类的定义
 class MainWindow : public QMainWindow
@@ -50,7 +53,7 @@ class MainWindow : public QMainWindow
             int action_num,
             const QString &action_name);
 
-void updateDelta(double dx,double dy,double dyaw,bool valid);
+        void updateDelta(double dx,double dy,double dyaw,bool valid);
 
         //定义一个结构体，用于存储条形码捕获记录，包括条形码数据、图像数据、图像格式和时间文本等信息
         struct BarcodeRecord {
@@ -66,11 +69,27 @@ void updateDelta(double dx,double dy,double dyaw,bool valid);
             const QString &image_format,
             const QString &time_text); 
 
+        //计数模式用
+        void appendVisionBarcodeCount(
+            const QString &barcode,
+            const QString &time_text);
+
+        enum class BarcodeDisplayMode
+        {
+            Summary,//计数模式
+            Detail//明细模式
+        };
+
         //当用户双击列表项时，显示对应的图像预览对话框
         void showBarcodeImage(QListWidgetItem *item);
 
         //负责更新条形码捕获列表的高度，以适应内容的变化
         void updateBarcodeListHeight();
+
+        //统一重建识别结果区显示
+        void refreshBarcodeList();
+        //下拉框切换时更新模式
+        void handleBarcodeDisplayModeChanged(int index);
 
         //负责确认控制程序会传的状态
         void updatePathReadyState(bool ready);   
@@ -125,6 +144,11 @@ void updateDelta(double dx,double dy,double dyaw,bool valid);
         QPushButton *right_button_{nullptr};//右按钮
 
         QPlainTextEdit *run_log_view_{nullptr};
+
+        QComboBox *barcode_mode_combo_{nullptr};//识别结果区上方的下拉框
+        BarcodeDisplayMode barcode_display_mode_{BarcodeDisplayMode::Summary};
+
+        QMap<QString, int> vision_barcode_counts_;//计数模式容器
 
         QSerialPort *serial_port_{nullptr};//串口对象
         QByteArray serial_buffer_;//串口缓冲区

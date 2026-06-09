@@ -739,7 +739,7 @@ void PositionViewWidget::mousePressEvent(QMouseEvent *event)
     int col = -1;
 
     //判断鼠标点击的位置是否合法
-    if (!pointToCell(event->position(), row, col)) {
+    if (!pointToCell(event->localPos(), row, col)) {
         QWidget::mousePressEvent(event);
         return;
     }

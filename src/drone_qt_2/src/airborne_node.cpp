@@ -257,7 +257,6 @@ void AirborneNode::handleBarcodeCapture(
     drone_msgs::msg::BarcodeCapture vision_msg;
     vision_msg.stamp = msg->stamp;
     vision_msg.barcode = msg->barcode;
-    vision_msg.image_format = msg->image_format;
     vision_barcode_pub_->publish(vision_msg);
     //接收到视觉系统发布的条形码捕获消息后，直接转发到自己的条形码捕获话题上
     barcode_pub_->publish(*msg);
