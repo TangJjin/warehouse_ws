@@ -82,7 +82,7 @@ private:
     rclcpp::Publisher<drone_msgs::msg::ReadyStatus>::SharedPtr return_path_ready_pub_;
     rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr return_delta_pub_;
-    rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr path_pub_;
+    rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
     rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_sub_;
     rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr status_sub_;
     rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr battery_sub_;
