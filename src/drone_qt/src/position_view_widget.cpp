@@ -2,6 +2,7 @@
 #include "drone_qt/ros_manager.hpp"
 
 #include <QPaintEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
 #include <QColor>
@@ -526,8 +527,52 @@ void PositionViewWidget::rebuildPlannedPath()
 
     rebuildDisplayPath();
 }
+
+
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
+
+
+bool PositionViewWidget::pointToCell(const QPointF &pos, int &row, int &col) const
+{
+    const QRectF grid = gridRect();
+    // 首先判断点击位置是否在网格区域内，如果不在则返回 false。
+    if (!grid.contains(pos)) {
+        return false;
+    }
+
+    const qreal cell_width = grid.width() / cols_;
+    const qreal cell_height = grid.height() / rows_;
+
+    // 根据点击位置计算对应的格子索引，注意坐标系翻转：右下角是 (0,0)，左上角是 (rows_-1, cols_-1)。
+    col = static_cast<int>((pos.x() - grid.left()) / cell_width);
+    row = static_cast<int>((pos.y() - grid.top()) / cell_height);
+
+    if (col >= cols_) {
+        col = cols_ - 1;
+    }
+    if (row >= rows_) {
+        row = rows_ - 1;
+    }
+
+    //判断是否为有效格子（在网格范围内且非禁行格），并返回结果
+    return isInside(row, col);
+}
+
+
+void PositionViewWidget::toggleBlockedCell(int row, int col)
+{
+    //把二维格子坐标转成唯一整数
+    const int index = cellIndex(row, col);
+
+    //判断是否为灰格决定添加还是移除
+    if (blocked_cells_.contains(index)) {
+        blocked_cells_.remove(index);
+    } else {
+        blocked_cells_.insert(index);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 // 提供一个接口，让外部可以获取预规划路线的坐标点列表（显示坐标系）
@@ -686,4 +731,33 @@ void PositionViewWidget::paintEvent(QPaintEvent *event)
 
         painter.drawText(rect, Qt::AlignCenter, QString("A%1").arg(col + 1));
     }
+}
+
+void PositionViewWidget::mousePressEvent(QMouseEvent *event)
+{
+    int row = -1;
+    int col = -1;
+
+    //判断鼠标点击的位置是否合法
+    if (!pointToCell(event->position(), row, col)) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
+    current_row_ = row;
+    current_col_ = col;
+    current_display_coord_ = toDisplayCoord(current_row_, current_col_);
+
+    // 点击后直接切换格子状态（灰色<->白色），并刷新路线和显示状态
+    show_selection_rect_ = false;
+    toggleBlockedCell(row, col);
+
+    route_start_row_ = current_row_;
+    route_start_col_ = current_col_;
+
+    
+    rebuildPlannedPath();
+    push_flag_ = false;
+
+    update();
 }

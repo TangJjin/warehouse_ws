@@ -190,12 +190,12 @@ void MainWindow::setupUi()
     direction_layout->addWidget(push_button_,  1, 0);
     direction_layout->addWidget(refresh_button_, 1, 1);
     direction_layout->addWidget(display_button_, 1, 2);
-    direction_layout->addWidget(true_button_,  2, 0);
-    direction_layout->addWidget(del_button_, 2, 2);
-    direction_layout->addWidget(up_button_,    2, 1);
-    direction_layout->addWidget(left_button_,  3, 0);
-    direction_layout->addWidget(down_button_,  3, 1);
-    direction_layout->addWidget(right_button_, 3, 2);
+    // direction_layout->addWidget(true_button_,  2, 0);
+    // direction_layout->addWidget(del_button_, 2, 2);
+    // direction_layout->addWidget(up_button_,    2, 1);
+    // direction_layout->addWidget(left_button_,  3, 0);
+    // direction_layout->addWidget(down_button_,  3, 1);
+    // direction_layout->addWidget(right_button_, 3, 2);
     /*=============================================*/
 
     /*=============== 识别结果区控件 ===============*/

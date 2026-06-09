@@ -9,6 +9,7 @@
 
 class QPaintEvent;
 class QPainter;
+class QMouseEvent;
 
 struct WorldCoord
 {
@@ -55,6 +56,9 @@ public:
 protected:
     //重写paintEvent函数，在控件上绘制无人机位置的可视化表示
     void paintEvent(QPaintEvent *event) override;
+
+    //重写mousePressEvent函数，处理用户点击事件，更新当前选中的格子，并触发重绘
+    void mousePressEvent(QMouseEvent *event) override;
 
 private:
     //预规划路线经过的格子序列（内部索引坐标：左上角是 0,0）
@@ -121,6 +125,11 @@ private:
     void drawPlannedPath(QPainter &painter) const;
     void drawDirectionArrow(QPainter &painter, const QPointF &start, const QPointF &end) const;
     /* ----------------------------------- */
+
+    //根据点击位置计算对应的格子索引，并切换当前选中格子
+    bool pointToCell(const QPointF &pos, int &row, int &col) const;
+    //负责切换网格状态（空白<->障碍），并触发重绘
+    void toggleBlockedCell(int row, int col);
 
 private:
     // 无人机位置的坐标和缩放比例
