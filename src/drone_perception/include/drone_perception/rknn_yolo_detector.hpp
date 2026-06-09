@@ -13,10 +13,22 @@
 class RknnYoloDetector
 {
 public:
+    struct InferenceTimingStats
+    {
+        double preprocess_ms = 0.0;
+        double input_set_ms = 0.0;
+        double rknn_run_ms = 0.0;
+        double output_get_ms = 0.0;
+        double postprocess_ms = 0.0;
+        double detector_total_ms = 0.0;
+    };
+
     explicit RknnYoloDetector(const std::string &model_path);
     ~RknnYoloDetector();
 
     std::vector<Detection> infer(const cv::Mat &bgr_image);
+
+    const InferenceTimingStats &lastTiming() const;
 
 private:
     struct LetterboxResult
@@ -44,8 +56,9 @@ private:
     uint32_t class_output_index_ = 0;
     bool bbox_output_found_ = false;
     bool class_output_found_ = false;
-    YoloPostprocessor postprocessor_{2, 0.60F, 0.45F};
+    YoloPostprocessor postprocessor_{2, 0.75F, 0.35F};
 
     rknn_context context_ = 0;
     std::vector<unsigned char> model_data_;
+    InferenceTimingStats last_timing_;
 };

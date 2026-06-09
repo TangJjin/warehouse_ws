@@ -1,6 +1,7 @@
 #include "drone_perception/qr_vision_node.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <functional>
@@ -10,6 +11,18 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+
+namespace
+{
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsedMs(
+    const SteadyClock::time_point &start,
+    const SteadyClock::time_point &end)
+{
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+}  // namespace
 
 QrVisionNode::QrVisionNode()
     : Node("qr_vision_node")
@@ -146,6 +159,8 @@ void QrVisionNode::handleSyncedFrame(
     const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
     const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg)
 {
+  const auto callback_t0 = SteadyClock::now();
+
   cv_bridge::CvImageConstPtr color_bridge;
   cv_bridge::CvImageConstPtr depth_bridge;
 
@@ -269,6 +284,26 @@ void QrVisionNode::handleSyncedFrame(
   {
     displayDebugFrame(color_bridge->image, detections);
   }
+
+  const auto callback_t1 = SteadyClock::now();
+  const RknnYoloDetector::InferenceTimingStats &timing = detector_->lastTiming();
+  RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      log_throttle_ms_,
+      "perf fps=%.1f total_callback_ms=%.2f detector_total_ms=%.2f "
+      "preprocess_ms=%.2f input_set_ms=%.2f rknn_run_ms=%.2f "
+      "output_get_ms=%.2f postprocess_ms=%.2f detections=%zu debug_view=%s",
+      smoothed_fps_,
+      elapsedMs(callback_t0, callback_t1),
+      timing.detector_total_ms,
+      timing.preprocess_ms,
+      timing.input_set_ms,
+      timing.rknn_run_ms,
+      timing.output_get_ms,
+      timing.postprocess_ms,
+      detections.size(),
+      debug_view_ ? "true" : "false");
 }
 
 void QrVisionNode::displayDebugFrame(

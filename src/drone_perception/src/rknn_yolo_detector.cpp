@@ -1,6 +1,7 @@
 #include "drone_perception/rknn_yolo_detector.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,15 @@
 
 namespace
 {
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsedMs(
+    const SteadyClock::time_point &start,
+    const SteadyClock::time_point &end)
+{
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 void printTensorAttr(const char *prefix, const rknn_tensor_attr &attr)
 {
     std::cout << "[RKNN] " << prefix << "[" << attr.index << "]"
@@ -84,6 +94,11 @@ RknnYoloDetector::~RknnYoloDetector()
         rknn_destroy(context_);
         context_ = 0;
     }
+}
+
+const RknnYoloDetector::InferenceTimingStats &RknnYoloDetector::lastTiming() const
+{
+    return last_timing_;
 }
 
 std::vector<unsigned char> RknnYoloDetector::readFile(const std::string &path)
@@ -276,10 +291,16 @@ void RknnYoloDetector::loadModel(const std::string &model_path)
 
 std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
 {
+    InferenceTimingStats timing;
+    const auto detector_t0 = SteadyClock::now();
+
+    const auto preprocess_t0 = SteadyClock::now();
     const LetterboxResult letterbox = makeLetterbox(bgr_image);
 
     cv::Mat rgb_image;
     cv::cvtColor(letterbox.image, rgb_image, cv::COLOR_BGR2RGB);
+    const auto preprocess_t1 = SteadyClock::now();
+    timing.preprocess_ms = elapsedMs(preprocess_t0, preprocess_t1);
 
     rknn_input input;
     std::memset(&input, 0, sizeof(input));
@@ -290,14 +311,20 @@ std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
     input.fmt = RKNN_TENSOR_NHWC;
     input.buf = rgb_image.data;
 
+    const auto input_set_t0 = SteadyClock::now();
     int ret = rknn_inputs_set(context_, 1, &input);
+    const auto input_set_t1 = SteadyClock::now();
+    timing.input_set_ms = elapsedMs(input_set_t0, input_set_t1);
 
     if (ret != RKNN_SUCC)
     {
         throw std::runtime_error("rknn_inputs_set failed, ret=" + std::to_string(ret));
     }
 
+    const auto rknn_run_t0 = SteadyClock::now();
     ret = rknn_run(context_, nullptr);
+    const auto rknn_run_t1 = SteadyClock::now();
+    timing.rknn_run_ms = elapsedMs(rknn_run_t0, rknn_run_t1);
 
     if (ret != RKNN_SUCC)
     {
@@ -318,7 +345,10 @@ std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
         outputs[i].want_float = 1;
     }
 
+    const auto output_get_t0 = SteadyClock::now();
     ret = rknn_outputs_get(context_, output_count_, outputs.data(), nullptr);
+    const auto output_get_t1 = SteadyClock::now();
+    timing.output_get_ms = elapsedMs(output_get_t0, output_get_t1);
 
     if (ret != RKNN_SUCC)
     {
@@ -327,6 +357,7 @@ std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
 
     RknnOutputGuard output_guard{context_, output_count_, outputs.data()};
 
+    const auto postprocess_t0 = SteadyClock::now();
     std::vector<Detection> detections;
     if (output_count_ == 1)
     {
@@ -353,6 +384,10 @@ std::vector<Detection> RknnYoloDetector::infer(const cv::Mat &bgr_image)
             letterbox.pad_y);
     }
 
-    
+    const auto postprocess_t1 = SteadyClock::now();
+    timing.postprocess_ms = elapsedMs(postprocess_t0, postprocess_t1);
+    timing.detector_total_ms = elapsedMs(detector_t0, postprocess_t1);
+    last_timing_ = timing;
+
     return detections;
 }
