@@ -23,6 +23,8 @@
 #include <QMetaType>
 #include <QComboBox>
 #include <QMap>
+#include <QTimer>
+#include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -41,12 +43,15 @@ MainWindow::MainWindow(QWidget *parent)
     const auto buttons = findChildren<QPushButton *>();
     for (QPushButton *button : buttons) {
         // button->setFixedWidth(120);
-        button->setFixedHeight(33);
+        button->setFixedHeight(43);
 
         QFont font = button->font();
-        font.setPointSize(10);
+        font.setPointSize(12);
         button->setFont(font);
     }
+
+    exit_long_press_timer_ = new QTimer(this);
+    exit_long_press_timer_->setSingleShot(true);
 }
 
 void MainWindow::setupUi()
@@ -222,6 +227,11 @@ void MainWindow::setupUi()
     barcode_list_->setSelectionMode(QAbstractItemView::SingleSelection);
     barcode_list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
+    //字体大小设置
+    QFont list_font = barcode_list_->font();
+    list_font.setPointSize(12);
+    barcode_list_->setFont(list_font);
+
     //将视觉结果显示元素添加到右下识别结果区的布局中
     capture_layout->addWidget(barcode_mode_combo_);
     capture_layout->addWidget(barcode_list_);
@@ -254,9 +264,9 @@ void MainWindow::setupUi()
     right_layout->addWidget(direction_label,0,0);
     right_layout->addWidget(capture_panel,0,1);
     right_layout->addWidget(log_panel,1,0,1,2);
-    direction_label->setFixedHeight(190);
+    direction_label->setFixedHeight(210);
     direction_label->setMaximumWidth(170);
-    capture_panel->setFixedHeight(190);
+    capture_panel->setFixedHeight(210);
     //capture_panel->setMaximumHeight(120);
 
     //direction_label->setMaximumHeight(100);
@@ -272,7 +282,9 @@ void MainWindow::setupUi()
     setCentralWidget(central);
 
     //设置窗口标题和初始大小和窗口标题
-    setFixedSize(1024, 540);
+    //setFixedSize(1024, 540);
+    showFullScreen();
+    //showMaximized();//相对保守
     setWindowTitle("Ground Station");
     /*=============================================*/
 }
@@ -287,9 +299,36 @@ void MainWindow::setupConnections()
     connect(start_button_, &QPushButton::clicked,
             this, &MainWindow::handleStartButtonClicked);
 
-    //连接按钮点击信号到ROS管理器的任务启动槽
-    connect(stop_button_, &QPushButton::clicked,
-            ros_manager_, &RosManager::stopTask);
+    connect(stop_button_, &QPushButton::pressed, this, [this]() {
+        stop_button_pressed_ = true;
+        long_press_triggered_ = false;
+
+        const int current_token = ++stop_press_token_;
+
+        QTimer::singleShot(1500, this, [this, current_token]() {
+            if (!stop_button_pressed_) {
+                return;
+            }
+
+            if (current_token != stop_press_token_) {
+                return;
+            }
+
+            if (stop_button_ && stop_button_->isDown()) {
+                long_press_triggered_ = true;
+
+                close();
+            }
+        });
+    });
+
+    connect(stop_button_, &QPushButton::released, this, [this]() {
+        stop_button_pressed_ = false;
+
+        if (!long_press_triggered_ && ros_manager_) {
+            ros_manager_->stopTask();
+        }
+    });
 
     //连接按钮点击信号到ROS管理器的发布路径与参数摘要
     connect(push_button_, &QPushButton::clicked,
@@ -773,7 +812,6 @@ void MainWindow::appendVisionBarcodeCount(
     if (barcode_display_mode_ == BarcodeDisplayMode::Summary) {
         refreshBarcodeList();//当处于计数模式时刷新数据
     }
-    refreshBarcodeList();//当处于计数模式时刷新数据
 }
 
 void MainWindow::refreshBarcodeList()
@@ -791,6 +829,7 @@ void MainWindow::refreshBarcodeList()
 
             auto *item = new QListWidgetItem(text, barcode_list_);
             item->setData(Qt::UserRole, i);
+            item->setSizeHint(QSize(item->sizeHint().width(), 30));
             barcode_list_->addItem(item);
         }
     } else {
@@ -801,6 +840,7 @@ void MainWindow::refreshBarcodeList()
 
             auto *item = new QListWidgetItem(text, barcode_list_);
             item->setData(Qt::UserRole, -1);
+            item->setSizeHint(QSize(item->sizeHint().width(), 30));
             barcode_list_->addItem(item);
         }
     }
