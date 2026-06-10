@@ -22,6 +22,8 @@ class QPlainTextEdit;
 
 class QComboBox;
 
+class QTimer;
+
 //声明类的定义
 class MainWindow : public QMainWindow
 {
@@ -159,6 +161,12 @@ class MainWindow : public QMainWindow
 
         RosManager *ros_manager_{nullptr};//ROS管理器
         PositionViewWidget *position_view_{nullptr};//位置显示控件
+
+        QTimer *exit_long_press_timer_{nullptr};
+        bool long_press_triggered_{false};
+
+        int stop_press_token_{0};
+        bool stop_button_pressed_{false};
 
         bool path_ready_{false};  //确认控制程序路线是否准备好
         bool waiting_task_result_{false};//防止开始按钮反复触发逻辑
