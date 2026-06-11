@@ -184,6 +184,13 @@ void RknnYoloDetector::loadModel(const std::string &model_path)
         throw std::runtime_error("rknn_init failed, ret=" + std::to_string(ret));
     }
 
+    const int core_ret = rknn_set_core_mask(context_, RKNN_NPU_CORE_0_1_2);
+    if (core_ret != RKNN_SUCC)
+    {
+        throw std::runtime_error("rknn_set_core_mask failed, ret=" + std::to_string(core_ret));
+    }
+    std::cout << "[RKNN] NPU core mask: RKNN_NPU_CORE_0_1_2" << std::endl;
+
     rknn_input_output_num io_num;
     std::memset(&io_num, 0, sizeof(io_num));
 
