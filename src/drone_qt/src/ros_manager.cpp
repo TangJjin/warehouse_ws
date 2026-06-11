@@ -74,7 +74,7 @@ void RosManager::setupRosInterfaces()
         });
 
     auto control_path_ready_qos =
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
     ready_status_sub_ = node_->create_subscription<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready", 
@@ -92,7 +92,7 @@ void RosManager::setupRosInterfaces()
         });
 
     auto return_world_group_qos =
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序的路线消息，消息类型为自定义消息
     return_world_group_sub_ = node_->create_subscription<drone_msgs::msg::WorldGroup>(
         "/drone/return/world_group", 
