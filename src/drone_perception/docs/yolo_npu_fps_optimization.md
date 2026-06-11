@@ -23,7 +23,91 @@ YOLO 进程 CPU/RSS
 温度和频率
 ```
 
+## 当前实测结论
+
+### 2026-06-10 分段耗时
+
+测试条件：开启视频流，打开 `debug_view`，节点内部已加入 detector 分段计时。
+
+| 阶段 | 耗时 |
+| --- | ---: |
+| `preprocess_ms` | `0.97 ms` |
+| `input_set_ms` | `0.34 ms` |
+| `rknn_run_ms` | `28.52 ms` |
+| `output_get_ms` | `0.16 ms` |
+| `postprocess_ms` | `0.20 ms` |
+| `detector_total_ms` | `30.20 ms` |
+
+换算：
+
+```text
+detector 理论上限 FPS = 1000 / 30.20 ≈ 33.1 FPS
+rknn_run 占 detector_total 比例 = 28.52 / 30.20 ≈ 94.4%
+```
+
+结论：
+
+```text
+当前主要瓶颈是 NPU 推理本身，即 rknn_run。
+preprocess / input_set / output_get / postprocess 都不是当前主要瓶颈。
+```
+
+因此当前优先级应调整为：
+
+| 优化项 | 当前优先级 | 原因 |
+| --- | --- | --- |
+| NPU 频率 / governor 检查 | 高 | `rknn_run_ms` 占比最高，先确认频率是否稳定 |
+| `rknn_set_core_mask` | 高 | 直接影响 RKNN context 如何使用 NPU core |
+| `RKNN_FLAG_PRIOR_HIGH` | 中 | 可能降低 NPU 调度等待和抖动 |
+| FP16 / INT8 / hybrid 模型对比 | 高 | 判断 bbox FP16 是否显著增加 `rknn_run_ms` |
+| 降低输入尺寸 / 更小模型 | 高 | 若要明显超过当前 FPS，上限主要由模型计算量决定 |
+| RGA 预处理 | 低 | 当前 `preprocess_ms≈0.97ms`，收益空间小 |
+| zero-copy 输入 | 低 | 当前 `input_set_ms≈0.34ms`，收益空间小 |
+| NMS / 后处理优化 | 低 | 当前 `postprocess_ms≈0.20ms`，收益空间小 |
+| `want_float=0` raw output 后处理 | 低 | 当前 `output_get_ms + postprocess_ms` 很小，收益有限 |
+
 ## GitHub 可借鉴点
+
+### leafqycc/rknn-cpp-Multithreading
+
+仓库地址：
+
+```text
+https://github.com/leafqycc/rknn-cpp-Multithreading
+```
+
+这个仓库是 C++ OpenCV 视频推理 demo，不是 ROS2 节点。它的核心目标是提高视频推理吞吐，不是控制场景下的低延迟结果发布。
+
+可借鉴点：
+
+| 机制 | 仓库做法 | 对当前项目的适用性 |
+| --- | --- | --- |
+| 多 RKNN context | `rknnPool` 中为多个 worker 创建多个模型对象 | 可借鉴，但要改成 ROS2 最新帧队列 |
+| 权重复用 | 使用 `rknn_dup_context(ctx_in, &ctx)` | 可借鉴，适合多 context 降低模型内存开销 |
+| NPU core 绑定 | 每个 context 调用 `rknn_set_core_mask` 绑定不同 core | 可借鉴，适合测试三核吞吐 |
+| 线程池异步 | `ThreadPool` + `std::future` FIFO 队列 | 不能直接照搬，FIFO 可能导致控制拿到旧帧 |
+| CPU/NPU 定频 | `performance.sh` 锁 CPU/NPU 频率 | 适合基准测试和对比模型 |
+| RGA | 用 RGA 做 resize 预处理 | 只有 `preprocess_ms` 明显偏高时才值得做 |
+| `want_float=0` | 后处理直接使用 int8 输出和 scale/zp | 后处理瓶颈明显时再考虑 |
+| ReLU 模型 | 使用 RKNN 友好的 YOLOv5s ReLU 模型 | 属于模型训练/导出侧改造，不能直接套到当前 YOLO 模型 |
+
+不建议直接照搬的点：
+
+```text
+1. FIFO future 队列会积压旧帧，不适合无人机实时控制。
+2. demo FPS 代表视频吞吐，不代表 ROS2 + D435i + depth 同步端到端 FPS。
+3. ReLU 优化需要模型结构和训练/导出配合，不能直接修改当前 RKNN 文件得到。
+4. 仓库里的 RGA 是 resize 预处理，不是 RGA 加速画框。
+```
+
+如果后续要做多 context，应采用本文“多 RKNN context / 多 worker”中的实时策略：
+
+```text
+输入队列只保留最新帧
+结果带 timestamp/frame_id
+旧结果直接丢弃
+严禁无限队列积压
+```
 
 ### hannahrepo/rk3588-npu
 
@@ -160,11 +244,13 @@ postprocess_ms 高 -> 优先优化候选框遍历 / NMS / 阈值 / 输出格式
 
 ```text
 NPU 推理瓶颈:
+  检查 NPU 频率/governor
+  测试 RKNN_NPU_CORE_0_1_2
+  测试 RKNN_FLAG_PRIOR_HIGH
+  对比 FP16 / INT8 / hybrid 的 rknn_run_ms
   INT8
   更小模型
   更小输入尺寸
-  high priority
-  core mask
   多 RKNN context
 
 预处理瓶颈:
@@ -179,6 +265,16 @@ NPU 推理瓶颈:
   避免每帧画框和 clone
   减少 want_float 反量化开销
 ```
+
+结合当前实测数据，当前分支属于：
+
+```text
+NPU 推理瓶颈
+rknn_run_ms = 28.52ms
+rknn_run 占 detector_total 约 94.4%
+```
+
+因此当前不应优先投入 RGA、zero-copy 或 NMS 优化，除非后续新计时显示这些阶段重新变成瓶颈。
 
 ### 步骤 4：单项改动后复测
 
@@ -261,6 +357,31 @@ optimization_level: 3
 - 隔帧推理，例如两帧推理一次
 
 对 NPU 满载场景，降低输入尺寸通常比多线程更直接。
+
+### 5.1 ReLU 激活函数优化
+
+如果模型结构仍然是 `SiLU/Swish` 这类较复杂激活函数，可以考虑在训练阶段改成更适合 RKNN/NPU 的 `ReLU` 或 `ReLU6`。它的目标不是改代码，而是改模型结构，让编译器更容易做算子融合，降低 `rknn_run_ms`。
+
+大致流程：
+
+```text
+原始数据集
+-> 训练得到 SiLU/Swish 版本 best.pt
+-> 替换激活函数为 ReLU/ReLU6
+-> 用原数据集继续微调
+-> 导出 ReLU 版本 ONNX
+-> 再转 RKNN
+```
+
+适用前提：
+
+```text
+1. 当前模型确实存在激活函数瓶颈。
+2. 能接受重新训练或至少微调。
+3. 愿意重新比较精度和速度。
+```
+
+不建议直接在已有 ONNX/RKNN 上硬改激活函数，因为权重分布是按原激活函数训练出来的，直接替换可能让检测精度明显下降。
 
 ### 6. RGA 预处理加速
 
@@ -366,6 +487,8 @@ rknn_inputs_set() 可能带来的内部 copy
 - 小图或轻量预处理场景下，RGA 调度开销可能大于收益。
 - RGA 只优化预处理，不会让 YOLO 模型本身的 `rknn_run` 更快。
 
+当前实测 `preprocess_ms≈0.97ms`，RGA 不是第一优先级。即使把预处理完全优化为 `0ms`，理论提升也只有约 `0.97ms / 30.20ms ≈ 3.2%`。只有当后续输入格式变化、分辨率升高或 `preprocess_ms` 超过 `3ms~5ms` 时，再进入 RGA 实现。
+
 ### 7. 高优先级运行
 
 `main.cc` 使用：
@@ -452,6 +575,8 @@ rknn_set_io_mem(ctx, input_mem, &input_attr);
 - 需要保证输入格式、布局、尺寸和模型 input attr 完全匹配。
 - 这属于后期优化，应在确认 preprocess/input-set 成本明显后再做。
 
+当前实测 `input_set_ms≈0.34ms`，zero-copy 不是第一优先级。它属于后期优化，适合在输入拷贝或 `rknn_inputs_set()` 明显偏高时再做。
+
 ### 10. 多 RKNN context / 多 worker
 
 不要直接照搬 `board_stress_test_6p.py` 的 6 进程方式。那是压测模型吞吐，不适合实时无人机视觉。
@@ -485,6 +610,24 @@ frame 103 -> worker2
 ```
 
 严格按顺序发布会增加延迟，不适合控制。
+
+这个方向适合在以下条件满足时再做：
+
+```text
+1. 单 context 的 rknn_run_ms 已经通过频率/core mask/high priority 测过。
+2. 输入 topic Hz 足够高，单 context 处理不过来。
+3. debugfs 显示 NPU 三核没有被单 context 充分利用。
+4. 系统允许“提高吞吐但不保证每帧都按顺序返回”。
+```
+
+不要照搬视频 demo 的 FIFO future 队列。无人机实时视觉应使用最新帧策略：
+
+```text
+推理输入队列长度 1
+新帧到来时覆盖旧待处理帧
+输出结果比最新已发布结果旧则丢弃
+发布端只使用最新 timestamp/frame_id
+```
 
 ### 11. 频率锁定
 
@@ -531,46 +674,84 @@ rknn.eval_memory()
 
 ## 推荐实施路线
 
-### 阶段 1：测清楚
+### 阶段 0：当前基线结论
+
+当前已测得：
 
 ```text
-1. 加 preprocess / rknn_run / postprocess 分段计时
+preprocess_ms:      0.97
+input_set_ms:       0.34
+rknn_run_ms:       28.52
+output_get_ms:      0.16
+postprocess_ms:     0.20
+detector_total_ms: 30.20
+```
+
+当前阶段判断：
+
+```text
+主要瓶颈 = rknn_run
+理论 detector FPS 上限 ≈ 33.1
+RGA / zero-copy / NMS 暂不优先
+```
+
+### 阶段 1：补齐测量闭环
+
+```text
+1. 保留 preprocess / input_set / rknn_run / output_get / postprocess 分段计时
 2. 用 ros2 topic hz 测 color/depth 输入频率
 3. 用 monitor_yolo_npu_perf.sh 看 NPU load/freq/三核/温度
 4. 关闭 debug_view 做纯性能测试
+5. 记录 total_callback_ms，区分 detector 耗时和 ROS/debug view 耗时
 ```
 
-### 阶段 2：低风险优化
+### 阶段 2：当前优先优化
 
 ```text
-1. 使用 INT8 RKNN
-2. 降低输入尺寸，例如 640 -> 416/320
-3. 换更小模型，例如 yolov8s -> yolov8n
-4. 减少类别数或只检测必要类别
-5. 如果 preprocess_ms 高，先试 RGA resize/cvtColor
-6. 测试 RKNN_FLAG_PRIOR_HIGH
-7. 测试 RKNN_NPU_CORE_0_1_2
+1. 检查 NPU cur_freq/governor/load，必要时测试锁频
+2. 测试 RKNN_NPU_CORE_0_1_2
+3. 测试 RKNN_FLAG_PRIOR_HIGH
+4. 同场景对比 FP16 / 纯 INT8 / hybrid bbox FP16 的 rknn_run_ms
+5. 如果 hybrid bbox FP16 明显变慢，评估是否改回纯 INT8 或减少保 FP16 的层
+6. 如果想明显超过当前上限，测试 640 -> 416/320 或更小模型
 ```
 
-### 阶段 3：结构优化
+### 阶段 3：结构优化，按条件进入
 
 ```text
-1. 如果单 context 无法充分利用三核，再做 2-3 个 RKNN context
-2. 每个 worker 绑定一个 NPU core
-3. 输入队列只保留最新帧
-4. 输出按 timestamp/frame_id 丢弃旧结果
-5. 严禁无限队列积压
+进入条件：
+  单 context 已测完 core mask/high priority
+  输入 topic Hz 足够高
+  三核心没有被单 context 充分利用
+  需要提高吞吐而不是严格逐帧低延迟
+
+实现要求：
+  2 或 3 个 RKNN context
+  每个 worker 绑定一个 NPU core
+  输入队列只保留最新帧
+  输出按 timestamp/frame_id 丢弃旧结果
+  严禁无限队列积压
 ```
 
-### 阶段 4：后期优化
+### 阶段 4：后期优化，按瓶颈触发
 
 ```text
-1. RGA 输出 buffer 与 RKNN input memory 打通
-2. zero-copy 输入
-3. 输出保持量化格式，减少 want_float 反量化开销
-4. 优化 NMS 和候选框遍历
-5. ROI / 隔帧推理
-6. 频率锁定和散热优化
+preprocess_ms 高:
+  RGA resize/cvtColor/letterbox
+  RGA 输出 buffer 与 RKNN input memory 打通
+
+input_set_ms 高:
+  zero-copy 输入
+
+output_get/postprocess 高:
+  输出保持量化格式，减少 want_float 反量化开销
+  优化 NMS 和候选框遍历
+
+任务侧允许:
+  ROI / 隔帧推理
+
+长期测试:
+  频率锁定和散热优化
 ```
 
 ## 常见坑
@@ -650,14 +831,15 @@ YOLO 进程 CPU
 当前最值得优先做的是：
 
 ```text
-分段计时
-确认输入 topic 频率
-关闭 debug_view
-使用 INT8
-降低输入尺寸或换小模型
-preprocess 高时测试 RGA
-测试 high priority
-测试 core mask
+保留分段计时
+确认输入 topic 频率和 total_callback_ms
+检查 NPU 频率/governor/load
+对比 FP16 / INT8 / hybrid 的 rknn_run_ms
+测试 RKNN_NPU_CORE_0_1_2
+测试 RKNN_FLAG_PRIOR_HIGH
+需要明显提速时降低输入尺寸或换更小模型
 ```
 
-RGA、多 worker 和 zero-copy 都是有效方向，但进入时机不同：RGA 只在 `preprocess_ms` 明显偏高时优先做；multi-worker 要在单 context 无法充分利用三核心时再做；zero-copy 要在输入拷贝或 input-set 成本明确偏高时再做。
+RGA、多 worker 和 zero-copy 都是有效方向，但进入时机不同：RGA 只在 `preprocess_ms` 明显偏高时优先做；multi-worker 要在单 context 无法充分利用三核心且输入帧率足够高时再做；zero-copy 要在输入拷贝或 input-set 成本明确偏高时再做。
+
+当前实测下，`rknn_run_ms` 占比约 `94.4%`，所以任何不直接降低 `rknn_run_ms` 的优化都只能带来很小收益。
