@@ -217,25 +217,6 @@ private:
         return true;
     }
 
-    static std::string sanitize_label(const std::string &label)
-    {
-        std::string out;
-        for (const char ch : label)
-        {
-            if ((ch >= 'a' && ch <= 'z') ||
-                (ch >= 'A' && ch <= 'Z') ||
-                (ch >= '0' && ch <= '9'))
-            {
-                out.push_back(ch);
-            }
-            else
-            {
-                out.push_back('_');
-            }
-        }
-        return out.empty() ? "animal" : out;
-    }
-
     void open_serial()
     {
         serial_fd_ = open(serial_port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -276,12 +257,9 @@ private:
         RCLCPP_INFO(this->get_logger(), "serial opened successfully fd=%d", serial_fd_);
     }
 
-    std::string make_image_barcode(uint32_t seq) const
+    std::string make_image_barcode(uint32_t) const
     {
-        const std::string label = last_label_.empty() ? "animal" : sanitize_label(last_label_);
-        std::ostringstream out;
-        out << "k230_" << label << "_" << std::setw(4) << std::setfill('0') << seq;
-        return out.str();
+        return last_label_.empty() ? "动物" : last_label_;
     }
 
     void publish_image_packet(uint32_t seq, const std::vector<uint8_t> &payload)

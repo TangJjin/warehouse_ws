@@ -39,7 +39,7 @@ MODEL_INPUT_SIZE = [640, 640]
 CAMERA_FPS = 30
 
 KMODEL_PATH = "/sdcard/best.kmodel"
-LABELS = ["elephant", "tiger", "wolf", "peacock", "monkey"]
+LABELS = ["大象", "老虎", "狼", "孔雀", "猴子"]
 
 CONF_THRESH = 0.60
 NMS_THRESH = 0.50
@@ -60,10 +60,25 @@ SNAPSHOT_REQUIRED_FRAMES = 3
 SNAPSHOT_CENTER_STABLE_PX = 40
 SNAPSHOT_LOST_RESET_FRAMES = 5
 SNAPSHOT_MIN_SCORE = 0.60
-SNAPSHOT_JPEG_QUALITY = 80
-SNAPSHOT_OUTPUT_SIZE = 320
+SNAPSHOT_JPEG_QUALITY = 50
+SNAPSHOT_OUTPUT_SIZE = 160
 SNAPSHOT_ROI_SCALE = 1.5
 SNAPSHOT_MIN_ROI_SIZE = 160
+SNAPSHOT_EDGE_MARGIN_PX = 20
+SNAPSHOT_MIN_BBOX_W = 80
+SNAPSHOT_MIN_BBOX_H = 100
+SNAPSHOT_MIN_BBOX_AREA = 10000
+SNAPSHOT_HISTORY_MAX = 20
+SNAPSHOT_HISTORY_KEEP_MS = 30000
+SNAPSHOT_DUP_IOU = 0.35
+SNAPSHOT_DUP_CENTER_PX = 90
+SNAPSHOT_DUP_AREA_RATIO_MIN = 0.60
+SNAPSHOT_DUP_AREA_RATIO_MAX = 1.60
+SNAPSHOT_BETTER_AREA_RATIO = 1.45
+TRACK_MATCH_IOU = 0.25
+TRACK_MATCH_CENTER_PX = 80
+TRACK_MAX_LOST_FRAMES = 5
+TRACK_MAX_COUNT = 10
 
 OSD_STATUS_X = 8
 OSD_STATUS_Y = 8
@@ -142,6 +157,7 @@ def make_detection_uart_payload(payload):
         "valid": bool(payload.get("valid", False)),
         "label": str(payload.get("label", "")),
         "score": payload.get("score", 0.0),
+        "track_id": payload.get("track_id", -1),
         "cx": payload.get("cx", -1),
         "cy": payload.get("cy", -1),
         "err_x": payload.get("err_x", 0),
@@ -560,58 +576,211 @@ def best_detection(detections):
     return best_det
 
 
-def make_stable_state():
+def detection_is_complete(det):
+    if det is None:
+        return False
+    x1 = int(det.get("x1", 0))
+    y1 = int(det.get("y1", 0))
+    x2 = int(det.get("x2", 0))
+    y2 = int(det.get("y2", 0))
+    bbox_w = int(det.get("bbox_w", 0))
+    bbox_h = int(det.get("bbox_h", 0))
+    bbox_area = int(det.get("bbox_area", 0))
+
+    if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
+        return False
+    if x2 >= CONTROL_WIDTH - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+        return False
+    if y2 >= CONTROL_HEIGHT - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+        return False
+    if bbox_w < SNAPSHOT_MIN_BBOX_W or bbox_h < SNAPSHOT_MIN_BBOX_H:
+        return False
+    if bbox_area < SNAPSHOT_MIN_BBOX_AREA:
+        return False
+    return True
+
+
+def make_snapshot_record(payload, now_ms):
     return {
-        "candidate": None,
-        "frames": 0,
-        "lost_frames": 0,
+        "time_ms": now_ms,
+        "class_id": int(payload.get("class_id", -1)),
+        "label": str(payload.get("label", "")),
+        "x1": int(payload.get("x1", 0)),
+        "y1": int(payload.get("y1", 0)),
+        "x2": int(payload.get("x2", 0)),
+        "y2": int(payload.get("y2", 0)),
+        "cx": int(payload.get("cx", 0)),
+        "cy": int(payload.get("cy", 0)),
+        "bbox_area": int(payload.get("bbox_area", 0)),
     }
 
 
-def reset_stable_state(state):
-    state["candidate"] = None
-    state["frames"] = 0
-    state["lost_frames"] = 0
+def bbox_iou(a, b):
+    ax1 = int(a.get("x1", 0))
+    ay1 = int(a.get("y1", 0))
+    ax2 = int(a.get("x2", 0))
+    ay2 = int(a.get("y2", 0))
+    bx1 = int(b.get("x1", 0))
+    by1 = int(b.get("y1", 0))
+    bx2 = int(b.get("x2", 0))
+    by2 = int(b.get("y2", 0))
+
+    ix1 = ax1 if ax1 > bx1 else bx1
+    iy1 = ay1 if ay1 > by1 else by1
+    ix2 = ax2 if ax2 < bx2 else bx2
+    iy2 = ay2 if ay2 < by2 else by2
+    iw = ix2 - ix1
+    ih = iy2 - iy1
+    if iw <= 0 or ih <= 0:
+        return 0.0
+
+    inter = iw * ih
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
 
 
-def stable_candidate_matches(prev, cur):
-    if prev is None or cur is None:
+def prune_snapshot_history(history, now_ms):
+    kept = []
+    for item in history:
+        if time.ticks_diff(now_ms, item.get("time_ms", 0)) <= SNAPSHOT_HISTORY_KEEP_MS:
+            kept.append(item)
+    if len(kept) > SNAPSHOT_HISTORY_MAX:
+        kept = kept[-SNAPSHOT_HISTORY_MAX:]
+    return kept
+
+
+def snapshot_is_duplicate(history, payload):
+    current_area = int(payload.get("bbox_area", 0))
+    if current_area <= 0:
         return False
-    if int(prev.get("class_id", -1)) != int(cur.get("class_id", -2)):
-        return False
-    dx = abs(int(cur.get("cx", 0)) - int(prev.get("cx", 0)))
-    dy = abs(int(cur.get("cy", 0)) - int(prev.get("cy", 0)))
-    return dx <= SNAPSHOT_CENTER_STABLE_PX and dy <= SNAPSHOT_CENTER_STABLE_PX
+
+    for item in history:
+        if int(item.get("class_id", -1)) != int(payload.get("class_id", -2)):
+            continue
+
+        last_area = int(item.get("bbox_area", 0))
+        if last_area <= 0:
+            continue
+
+        area_ratio = current_area / last_area
+        if area_ratio >= SNAPSHOT_BETTER_AREA_RATIO:
+            continue
+
+        iou = bbox_iou(item, payload)
+        dx = abs(int(payload.get("cx", 0)) - int(item.get("cx", 0)))
+        dy = abs(int(payload.get("cy", 0)) - int(item.get("cy", 0)))
+        center_close = dx <= SNAPSHOT_DUP_CENTER_PX and dy <= SNAPSHOT_DUP_CENTER_PX
+        area_close = (
+            area_ratio >= SNAPSHOT_DUP_AREA_RATIO_MIN and
+            area_ratio <= SNAPSHOT_DUP_AREA_RATIO_MAX
+        )
+        if area_close and (iou >= SNAPSHOT_DUP_IOU or center_close):
+            return True
+
+    return False
 
 
-def best_stable_candidate(detections):
-    best = best_detection(detections)
-    if best is None:
-        return None
-    if best.get("score", 0.0) < SNAPSHOT_MIN_SCORE:
-        return None
-    return best
+def make_track(track_id, det):
+    track = det.copy()
+    track["track_id"] = track_id
+    track["stable_frames"] = 1
+    track["lost_frames"] = 0
+    return track
 
 
-def update_stable_detection(state, detections):
-    candidate = best_stable_candidate(detections)
-    if candidate is None:
-        state["lost_frames"] += 1
-        if state["lost_frames"] >= SNAPSHOT_LOST_RESET_FRAMES:
-            reset_stable_state(state)
-        return None, state["frames"]
+def update_track(track, det):
+    stable_frames = int(track.get("stable_frames", 0))
+    track.update(det)
+    track["stable_frames"] = stable_frames + 1
+    track["lost_frames"] = 0
 
-    state["lost_frames"] = 0
-    if stable_candidate_matches(state["candidate"], candidate):
-        state["frames"] += 1
-    else:
-        state["candidate"] = candidate
-        state["frames"] = 1
 
-    state["candidate"] = candidate
-    if state["frames"] >= SNAPSHOT_REQUIRED_FRAMES:
-        return candidate, state["frames"]
-    return None, state["frames"]
+def track_match_score(track, det):
+    if int(track.get("class_id", -1)) != int(det.get("class_id", -2)):
+        return -1.0
+
+    iou = bbox_iou(track, det)
+    dx = abs(int(det.get("cx", 0)) - int(track.get("cx", 0)))
+    dy = abs(int(det.get("cy", 0)) - int(track.get("cy", 0)))
+    center_close = dx <= TRACK_MATCH_CENTER_PX and dy <= TRACK_MATCH_CENTER_PX
+    if iou < TRACK_MATCH_IOU and not center_close:
+        return -1.0
+
+    center_score = 1.0 - ((dx + dy) / (2.0 * TRACK_MATCH_CENTER_PX))
+    if center_score < 0.0:
+        center_score = 0.0
+    return iou + center_score
+
+
+def update_tracks(tracks, detections, next_track_id):
+    usable_dets = []
+    for det in detections:
+        if det.get("score", 0.0) >= SNAPSHOT_MIN_SCORE and detection_is_complete(det):
+            usable_dets.append(det)
+
+    matched_track_indexes = []
+    matched_det_indexes = []
+    matches = []
+
+    while True:
+        best_score = -1.0
+        best_track_index = -1
+        best_det_index = -1
+
+        for ti in range(len(tracks)):
+            if ti in matched_track_indexes:
+                continue
+            for di in range(len(usable_dets)):
+                if di in matched_det_indexes:
+                    continue
+                score = track_match_score(tracks[ti], usable_dets[di])
+                if score > best_score:
+                    best_score = score
+                    best_track_index = ti
+                    best_det_index = di
+
+        if best_track_index < 0 or best_det_index < 0 or best_score < 0.0:
+            break
+
+        matched_track_indexes.append(best_track_index)
+        matched_det_indexes.append(best_det_index)
+        matches.append([best_track_index, best_det_index])
+
+    for pair in matches:
+        update_track(tracks[pair[0]], usable_dets[pair[1]])
+
+    for ti in range(len(tracks)):
+        if ti not in matched_track_indexes:
+            tracks[ti]["lost_frames"] = int(tracks[ti].get("lost_frames", 0)) + 1
+
+    for di in range(len(usable_dets)):
+        if di not in matched_det_indexes:
+            tracks.append(make_track(next_track_id, usable_dets[di]))
+            next_track_id += 1
+
+    kept_tracks = []
+    for track in tracks:
+        if int(track.get("lost_frames", 0)) <= TRACK_MAX_LOST_FRAMES:
+            kept_tracks.append(track)
+
+    if len(kept_tracks) > TRACK_MAX_COUNT:
+        kept_tracks.sort(key=lambda t: (int(t.get("stable_frames", 0)), t.get("score", 0.0)), reverse=True)
+        kept_tracks = kept_tracks[:TRACK_MAX_COUNT]
+
+    return kept_tracks, next_track_id
+
+
+def stable_tracks(tracks):
+    out = []
+    for track in tracks:
+        if int(track.get("lost_frames", 0)) == 0 and int(track.get("stable_frames", 0)) >= SNAPSHOT_REQUIRED_FRAMES:
+            out.append(track)
+    out.sort(key=lambda t: t.get("score", 0.0), reverse=True)
+    return out
 
 
 def make_empty_payload(seq):
@@ -702,8 +871,9 @@ def main():
     last_send_ms = 0
     last_uart_log_ms = 0
     last_res_debug_ms = 0
-    stable_state = make_stable_state()
-    last_valid = False
+    tracks = []
+    next_track_id = 1
+    snapshot_history = []
     snapshot_seq = 0
     seq = 0
 
@@ -751,8 +921,9 @@ def main():
                         print_res_debug(res)
 
                     detections = parse_detections(res)
-                    stable_detection, stable_frames = update_stable_detection(stable_state, detections)
-                    display_payload = make_payload(seq, detections, stable_detection, stable_frames)
+                    tracks, next_track_id = update_tracks(tracks, detections, next_track_id)
+                    ready_tracks = stable_tracks(tracks)
+                    display_payload = make_payload(seq, detections, ready_tracks[0], ready_tracks[0].get("stable_frames", 0)) if ready_tracks else make_payload(seq, detections, None, 0)
                     raw_detection = best_detection(detections)
 
                     osd_img.clear()
@@ -760,38 +931,49 @@ def main():
                     draw_status_osd(osd_img, display_payload, raw_detection, len(detections))
                     Display.show_image(osd_img, 0, 0, Display.LAYER_OSD3)
 
-                    current_valid = bool(display_payload.get("valid", False))
-                    if current_valid and not last_valid:
+                    snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
+                    for track in ready_tracks:
+                        if snapshot_is_duplicate(snapshot_history, track):
+                            continue
                         snapshot_seq += 1
                         try:
                             photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
-                            send_snapshot_uart(uart, snapshot_seq, photo_img, display_payload)
+                            send_snapshot_uart(uart, snapshot_seq, photo_img, track)
+                            snapshot_history.append(make_snapshot_record(track, now_ms))
+                            snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
                         except Exception as e:
                             print("snapshot uart send failed:", e)
-                    last_valid = current_valid
 
                     should_send = len(detections) > 0 or SEND_EMPTY_RESULT
                     if should_send:
                         if time.ticks_diff(now_ms, last_send_ms) >= UART_SEND_INTERVAL_MS:
                             last_send_ms = now_ms
-                            seq += 1
-                            payload = make_payload(seq, detections, stable_detection, stable_frames)
+                            payloads = []
+                            if ready_tracks:
+                                for track in ready_tracks:
+                                    seq += 1
+                                    payloads.append(make_payload(seq, detections, track, track.get("stable_frames", 0)))
+                            else:
+                                seq += 1
+                                payloads.append(make_payload(seq, detections, None, 0))
                             try:
-                                send_detection_uart(uart, seq, payload)
-                                if payload["valid"] and time.ticks_diff(now_ms, last_uart_log_ms) >= UART_LOG_INTERVAL_MS:
-                                    last_uart_log_ms = now_ms
-                                    print(
-                                        "uart sent seq=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
-                                        % (
-                                            seq,
-                                            payload["stable_frames"],
-                                            payload["label"],
-                                            payload["norm_x"],
-                                            payload["norm_y"],
-                                            payload["cx"],
-                                            payload["cy"],
+                                for payload in payloads:
+                                    send_detection_uart(uart, payload.get("seq", seq), payload)
+                                    if payload["valid"] and time.ticks_diff(now_ms, last_uart_log_ms) >= UART_LOG_INTERVAL_MS:
+                                        last_uart_log_ms = now_ms
+                                        print(
+                                            "uart sent seq=%d track=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
+                                            % (
+                                                payload["seq"],
+                                                payload.get("track_id", -1),
+                                                payload["stable_frames"],
+                                                payload["label"],
+                                                payload["norm_x"],
+                                                payload["norm_y"],
+                                                payload["cx"],
+                                                payload["cy"],
+                                            )
                                         )
-                                    )
                             except Exception as e:
                                 print("uart send failed:", e)
 

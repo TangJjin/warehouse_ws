@@ -55,9 +55,9 @@ OUT_DIR = os.environ.get(
 def sanitize(text: str) -> str:
     text = (text or "").strip()
     if not text:
-        return "k230_animal"
-    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
-    return text.strip("._-") or "k230_animal"
+        return "动物"
+    text = re.sub(r"[^\w._-]+", "_", text)
+    return text.strip("._-") or "动物"
 
 
 def image_extension(image_format: str) -> str:
@@ -94,10 +94,7 @@ class AnimalsImageSaver(Node):
         self._count += 1
         name = sanitize(msg.barcode)
         ext = image_extension(msg.image_format)
-        filename = (
-            f"{name}_{int(msg.stamp.sec)}_{int(msg.stamp.nanosec)}_"
-            f"{self._count:04d}.{ext}"
-        )
+        filename = f"{name}.{ext}"
         return os.path.join(OUT_DIR, filename)
 
     def _on_image(self, msg: BarcodeCapture) -> None:
