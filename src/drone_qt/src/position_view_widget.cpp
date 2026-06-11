@@ -22,9 +22,12 @@ PositionViewWidget::PositionViewWidget(QWidget *parent)
 
 void PositionViewWidget::setPosition(double x, double y, double z)
 {
-    //更新位置数据，并调用 `update()` 触发重绘
-    x_ = x;
-    y_ = y;
+    // 原始 /drone/local_position 语义：
+    // x+ = 右, y+ = 上
+    // 地面站显示语义：
+    // x+ = 上, y+ = 左
+    x_ = y;
+    y_ = -x;
     z_ = z;
     update();
 }
