@@ -26,7 +26,8 @@ namespace
           declare_parameter<bool>("enable_offboard_control", false);
       use_camera_aim_ = declare_parameter<bool>("use_camera_aim", true);
 
-      const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+      const auto qos =
+          rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
 
       ready_status_pub_ =
           create_publisher<drone_msgs::msg::ReadyStatus>("/control/path_ready", qos);

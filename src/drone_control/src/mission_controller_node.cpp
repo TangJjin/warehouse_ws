@@ -57,7 +57,8 @@ class MissionController {
                   std::placeholders::_1));
 
     task_status_pub_ = node_->create_publisher<drone_msgs::msg::TaskStatus>(
-      "/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
+      "/task/status",
+      rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local()
     );
 
     arming_client_ = node_->create_client<mavros_msgs::srv::CommandBool>(
