@@ -33,23 +33,35 @@ public:
         image_topic_ = this->declare_parameter<std::string>("image_topic", "/drone/image");
         detect_topic_ = this->declare_parameter<std::string>("detect_topic", "/k230/animals/detect");
         center_topic_ = this->declare_parameter<std::string>("center_topic", "/k230/animals/center");
+        heartbeat_topic_ = this->declare_parameter<std::string>("heartbeat_topic", "/k230/animals/heartbeat");
 
         RCLCPP_INFO(this->get_logger(), "K230 animals UART ROS2 node started");
         RCLCPP_INFO(this->get_logger(), "serial_port=%s baudrate=%d", serial_port_.c_str(), baudrate_);
         RCLCPP_INFO(this->get_logger(), "image_topic=%s", image_topic_.c_str());
         RCLCPP_INFO(this->get_logger(), "detect_topic=%s", detect_topic_.c_str());
         RCLCPP_INFO(this->get_logger(), "center_topic=%s", center_topic_.c_str());
-
+        RCLCPP_INFO(this->get_logger(), "heartbeat_topic=%s", heartbeat_topic_.c_str());
         image_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
             image_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
         detect_pub_ = this->create_publisher<std_msgs::msg::String>(
             detect_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
         center_pub_ = this->create_publisher<drone_msgs::msg::K230AnimalCenter>(
             center_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
+        heartbeat_pub_ = this->create_publisher<std_msgs::msg::String>(
+            heartbeat_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
 
         open_serial();
 
         read_timer_ = this->create_wall_timer(std::chrono::milliseconds(5), std::bind(&K230AnimalsUartRos2Node::read_serial_once, this));
+
+        heartbeat_timer_ = this->create_wall_timer(
+            std::chrono::seconds(2),
+            [this]()
+            {
+                std_msgs::msg::String msg;
+                msg.data = "alive";
+                heartbeat_pub_->publish(msg);
+            });
     }
 
     ~K230AnimalsUartRos2Node() override
@@ -533,11 +545,14 @@ private:
     std::string detect_topic_;
     std::string center_topic_;
     std::string last_label_;
+    std::string heartbeat_topic_;
     int baudrate_;
     int serial_fd_{-1};
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr image_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr detect_pub_;
     rclcpp::Publisher<drone_msgs::msg::K230AnimalCenter>::SharedPtr center_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr heartbeat_pub_;
+    rclcpp::TimerBase::SharedPtr heartbeat_timer_;
     rclcpp::TimerBase::SharedPtr read_timer_;
     std::vector<uint8_t> rx_buffer_;
     size_t total_rx_bytes_{0};
