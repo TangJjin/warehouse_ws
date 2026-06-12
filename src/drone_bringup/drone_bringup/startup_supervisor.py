@@ -64,6 +64,14 @@ class StartupSupervisor:
                 ready_qos_reliability='best_effort',
             ),
             StartupStep(
+                name='k230_animals_uart_ros2_node',
+                command=['ros2', 'run', 'drone_perception', 'k230_animals_uart_ros2_node'],
+                ready_topic='/k230/animals/heartbeat',
+                ready_type='std_msgs/msg/String',
+                timeout_sec=15,
+                ready_qos_reliability='best_effort',
+            ),
+            StartupStep(
                 name='compare_yaw',
                 command=['ros2', 'run', 'drone_localization', 'compare_yaw_node'],
                 ready_topic='/pose_yaw_compare/delta',
