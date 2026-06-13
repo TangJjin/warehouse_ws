@@ -16,7 +16,7 @@
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
 
-#include "drone_msgs/link_protocol.hpp"
+#include "drone_qt_2/link_protocol.hpp"
 
 class AirborneLinkBridge : public rclcpp::Node
 {
