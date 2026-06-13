@@ -223,47 +223,49 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
 
 bool AirborneLinkBridge::tryParseOnePacket(Packet &packet)
 {
-    //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
-    while (rx_buffer_.size() >= 2) {
-        const uint8_t b0 = static_cast<uint8_t>(rx_buffer_[0]);
-        const uint8_t b1 = static_cast<uint8_t>(rx_buffer_[1]);
-        if (b0 == lp::kSof1 && b1 == lp::kSof2) {
-            break;
+    while(true){
+        //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
+        while (rx_buffer_.size() >= 2) {
+            const uint8_t b0 = static_cast<uint8_t>(rx_buffer_[0]);
+            const uint8_t b1 = static_cast<uint8_t>(rx_buffer_[1]);
+            if (b0 == lp::kSof1 && b1 == lp::kSof2) {
+                break;
+            }
+            rx_buffer_.remove(0, 1);
         }
-        rx_buffer_.remove(0, 1);
+
+        if (rx_buffer_.size() < 11) {
+            return false;
+        }
+
+        //从帧数据中提取载荷长度字段，计算出预期的帧长度，并与实际接收的帧长度进行比较，如果不匹配则认为帧不合法，继续尝试解析下一个帧
+        const auto *data = reinterpret_cast<const uint8_t *>(rx_buffer_.constData());
+        const uint16_t payload_len =
+            static_cast<uint16_t>(data[7]) |
+            (static_cast<uint16_t>(data[8]) << 8);
+
+        //协议帧格式：2字节帧头 + 1字节版本 + 1字节类型 + 1字节标志 + 2字节序列号 + 2字节载荷长度 + N字节载荷 + 2字节CRC16校验
+        const int frame_len = 9 + static_cast<int>(payload_len) + 2;
+        if (rx_buffer_.size() < frame_len) {
+            return false;
+        }
+
+        const QByteArray frame = rx_buffer_.left(frame_len);
+        rx_buffer_.remove(0, frame_len);
+
+        if (!validateFrame(frame)) {
+            continue;
+        }
+
+        //从帧数据中提取消息类型、标志位、序列号和载荷数据，填充到Packet结构体中，供后续处理函数使用
+        const auto *frame_data = reinterpret_cast<const uint8_t *>(frame.constData());
+        packet.type = frame_data[3];
+        packet.flags = frame_data[4];
+        packet.seq = static_cast<uint16_t>(frame_data[5]) |
+                    (static_cast<uint16_t>(frame_data[6]) << 8);
+        packet.payload = frame.mid(9, payload_len);
+        return true;
     }
-
-    if (rx_buffer_.size() < 11) {
-        return false;
-    }
-
-    //从帧数据中提取载荷长度字段，计算出预期的帧长度，并与实际接收的帧长度进行比较，如果不匹配则认为帧不合法，继续尝试解析下一个帧
-    const auto *data = reinterpret_cast<const uint8_t *>(rx_buffer_.constData());
-    const uint16_t payload_len =
-        static_cast<uint16_t>(data[7]) |
-        (static_cast<uint16_t>(data[8]) << 8);
-
-    //协议帧格式：2字节帧头 + 1字节版本 + 1字节类型 + 1字节标志 + 2字节序列号 + 2字节载荷长度 + N字节载荷 + 2字节CRC16校验
-    const int frame_len = 9 + static_cast<int>(payload_len) + 2;
-    if (rx_buffer_.size() < frame_len) {
-        return false;
-    }
-
-    const QByteArray frame = rx_buffer_.left(frame_len);
-    rx_buffer_.remove(0, frame_len);
-
-    if (!validateFrame(frame)) {
-        continue;
-    }
-
-    //从帧数据中提取消息类型、标志位、序列号和载荷数据，填充到Packet结构体中，供后续处理函数使用
-    const auto *frame_data = reinterpret_cast<const uint8_t *>(frame.constData());
-    packet.type = frame_data[3];
-    packet.flags = frame_data[4];
-    packet.seq = static_cast<uint16_t>(frame_data[5]) |
-                 (static_cast<uint16_t>(frame_data[6]) << 8);
-    packet.payload = frame.mid(9, payload_len);
-    return true;
 }
 
 QByteArray AirborneLinkBridge::encodeFrame(
