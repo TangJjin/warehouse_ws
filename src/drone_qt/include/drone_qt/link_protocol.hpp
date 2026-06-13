@@ -25,3 +25,5 @@ namespace drone_msgs::link_protocol
     constexpr uint8_t kTypeTaskStatus = 0x92;//消息类型：任务状态
     constexpr uint8_t kTypePathReady = 0x93;//消息类型：路径就绪
 }
+
+
