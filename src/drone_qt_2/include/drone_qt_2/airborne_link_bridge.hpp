@@ -16,6 +16,8 @@
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
 
+#include "drone_msgs/link_protocol.hpp"
+
 class AirborneLinkBridge : public rclcpp::Node
 {
     
@@ -37,12 +39,15 @@ private:
     //设置串口通信参数，并连接相关信号槽
     void setupSerial();
 
+
     //串口数据读取回调函数，用于处理接收到的数据
     void onSerialReadyRead();
     //协议帧处理函数，包括尝试解析一帧数据、验证帧的合法性、生成新的序列号等
     bool tryParseOnePacket(Packet &packet);
     //协议帧编码函数，用于将消息类型、标志位、序列号和载荷编码成完整的帧数据
     QByteArray encodeFrame(uint8_t type, uint8_t flags, uint16_t seq, const QByteArray &payload) const;
+    //验证函数，用于检查接收到的帧数据是否符合协议格式和校验要求，确保数据的正确性和完整性
+    bool validateFrame(const QByteArray &frame) const;
 
     //协议帧处理函数，根据不同的消息类型调用不同的处理函数
     void handlePacket(const Packet &packet);
