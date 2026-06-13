@@ -19,6 +19,8 @@
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
 
+#include "drone_msgs/link_protocol.hpp"
+
 class GroundLinkBridge : public QObject, public rclcpp::Node
 {
     Q_OBJECT
@@ -85,6 +87,7 @@ private:
     void handleTaskStatusReport(const QByteArray &payload);
     void handlePathReadyReport(const QByteArray &payload);
 
+    //发送函数，用于发送协议帧到串口
     void sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
     void sendAck(uint16_t seq);
 

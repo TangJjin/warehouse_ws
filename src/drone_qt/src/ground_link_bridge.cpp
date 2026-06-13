@@ -2,29 +2,25 @@
 
 #include <QDataStream>
 
-using namespace std::chrono_literals;
+namespace lp = drone_msgs::link_protocol;
 
-namespace {
-constexpr uint8_t kSof1 = 0xAA;//帧头1，固定值0xAA，表示一帧数据的开始
-constexpr uint8_t kSof2 = 0x55;//帧头2，固定值0x55，与kSof1一起用于帧同步，确保接收端能够正确识别帧的起始位置
-constexpr uint8_t kVersion = 0x01;//协议版本号，当前版本为0x01，接收端可以根据这个版本号来解析不同格式的帧数据
-constexpr uint8_t kFlagNeedAck = 0x01;//标志位，表示发送的请求需要对方回复确认帧
-constexpr uint8_t kFlagAck = 0x02;//标志位，表示为一个确认帧
-
-constexpr uint8_t kTypeUploadMissionSummaryReq = 0x01;//消息类型：上传 mission summary 请求
-constexpr uint8_t kTypeStartOffboardReq = 0x02;//消息类型：start_offboard 请求
-constexpr uint8_t kTypeStartTaskReq = 0x03;//消息类型：start_task 请求
-constexpr uint8_t kTypeStopPushReq = 0x04;//消息类型：stop_push 请求
-constexpr uint8_t kTypeAck = 0x05;//消息类型：确认帧
-
-constexpr uint8_t kTypeUploadMissionSummaryResp = 0x81;//消息类型：上传 mission summary 响应
-constexpr uint8_t kTypeStartOffboardResp = 0x82;//消息类型：start_offboard 响应
-constexpr uint8_t kTypeStartTaskResp = 0x83;//消息类型：start_task 响应
-constexpr uint8_t kTypeStopPushResp = 0x84;//消息类型：stop_push 响应
-constexpr uint8_t kTypeDroneStatus = 0x90;//消息类型：无人机状态报告
-constexpr uint8_t kTypereturngroup = 0x91;//消息类型：回传路线报告
-constexpr uint8_t kTypeTaskStatus = 0x92;//消息类型：任务状态报告
-constexpr uint8_t kTypePathReady = 0x93;//消息类型：路径就绪报告
+namespace
+{
+    uint16_t crc16_ccitt(const uint8_t *data, int length)
+    {
+        uint16_t crc = 0xFFFF;
+        for (int i = 0; i < length; ++i) {
+            crc ^= static_cast<uint16_t>(data[i]) << 8;
+            for (int j = 0; j < 8; ++j) {
+                if (crc & 0x8000) {
+                    crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
+                } else {
+                    crc = static_cast<uint16_t>(crc << 1);
+                }
+            }
+        }
+        return crc;
+    }
 }
 
 GroundLinkBridge::GroundLinkBridge()
@@ -52,6 +48,25 @@ void GroundLinkBridge::setupRosInterfaces()
     path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
+    start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
+    "/drone/start_offboard",
+    [this](
+        const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
+        std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response)
+    {
+        if (!request) {
+            response->success = false;
+            response->message = "空请求";
+            return;
+        }
+
+        const QByteArray payload = encodeStartOffboardRequest(*request);
+        sendPacket(lp::kTypeStartOffboardReq, lp::kFlagNeedAck, payload, true);
+
+        response->success = true;
+        response->message = "StartOffboard 请求已发出，后续再补完整异步响应绑定";
+    });
+    
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
         "/drone/upload_mission_summary",
         [this](
@@ -79,10 +94,12 @@ void GroundLinkBridge::setupRosInterfaces()
     /************************************************************/
 }
 
+
+/************************ 用户层 *************************/
 void GroundLinkBridge::setupSerial()
 {
     serial_.setPortName("/dev/ttyUSB0");
-    serial_.setBaudRate(QSerialPort::Baud57600);
+    serial_.setBaudRate(QSerialPort::Baud115200);
     serial_.setDataBits(QSerialPort::Data8);
     serial_.setParity(QSerialPort::NoParity);
     serial_.setStopBits(QSerialPort::OneStop);
@@ -97,13 +114,24 @@ void GroundLinkBridge::setupSerial()
     }
 }
 
+void GroundLinkBridge::onSerialReadyRead()
+{
+    rx_buffer_.append(serial_.readAll());
+
+    //接收到数据后，进入第一层handlePacket处理函数，后续分路
+    Packet packet;
+    while (tryParseOnePacket(packet)) {
+        handlePacket(packet);
+    }
+}
+
 void GroundLinkBridge::sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack)
 {
     const uint16_t seq = nextSeq();
     //将消息类型、标志位、序列号和载荷数据编码成一个完整的帧数据，准备发送
-    //const QByteArray frame = encodeFrame(type, flags, seq, payload);
+    const QByteArray frame = encodeFrame(type, flags, seq, payload);
     //发送协议帧到串口
-    //serial_.write(frame);
+    serial_.write(frame);
 
     //如果需要ACK，则将请求信息保存到待重试列表中，以便后续检查和重试
     if (need_ack) {
@@ -111,10 +139,54 @@ void GroundLinkBridge::sendPacket(uint8_t type, uint8_t flags, const QByteArray 
         pending.request_type = type;
         pending.seq = seq;
         pending.retry_count = 0;
-        //pending.encoded_frame = frame;
+        pending.encoded_frame = frame;
         pending.deadline = this->now() + rclcpp::Duration::from_seconds(0.3);
         pending_requests_[seq] = pending;
+
+        RCLCPP_INFO(this->get_logger(), "sendPacket type=0x%02X seq=%u payload=%d",
+            type, seq, payload.size());
     }
+}
+
+void GroundLinkBridge::handlePacket(const Packet &packet)
+{
+    //如果收到的是ACK帧，则调用handleAck函数处理，并返回
+    if (packet.type == lp::kTypeAck) {
+        handleAck(packet.seq);
+        return;
+    }
+
+    //如果收到的帧需要ACK，则先发送ACK帧，通知对方已经收到消息，避免对方继续重试
+    if (packet.flags & lp::kFlagNeedAck) {
+        sendAck(packet.seq);
+    }
+
+    //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
+    switch (packet.type) {
+    case lp::kTypeStartOffboardResp:
+        handleStartOffboardResponse(packet.payload);
+
+        RCLCPP_INFO(this->get_logger(), "recv packet type=0x%02X seq=%u payload=%d",
+            packet.type, packet.seq, packet.payload.size());
+        break;
+    default:
+        RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
+        break;
+    }
+}
+
+void GroundLinkBridge::sendAck(uint16_t seq)
+{
+    //发送ACK帧到串口，通知对方之前发送的消息已经收到，无需再重试
+    const QByteArray empty_payload;
+    const QByteArray frame = encodeFrame(lp::kTypeAck, lp::kFlagAck, seq, empty_payload);
+    serial_.write(frame);
+}
+
+void GroundLinkBridge::handleAck(uint16_t seq)
+{
+    //收到ACK帧后，从待重试列表中删除对应的请求信息，表示请求已经成功完成，不需要再重试
+    pending_requests_.erase(seq);
 }
 
 uint16_t GroundLinkBridge::nextSeq()
@@ -123,58 +195,188 @@ uint16_t GroundLinkBridge::nextSeq()
     return next_seq_++;
 }
 
-void GroundLinkBridge::onSerialReadyRead()
-{
-    rx_buffer_.append(serial_.readAll());
 
-    //接收到数据后，进入第一层handlePacket处理函数，后续分路
-    Packet packet;
-    // while (tryParseOnePacket(packet)) {
-    //     handlePacket(packet);
-    // }
+
+
+
+
+/******************* 数据处理层(发送层) ********************/
+
+QByteArray GroundLinkBridge::encodeStartOffboardRequest(
+    const drone_msgs::srv::StartOffboard::Request &request) const
+{
+    //编码函数，用于将ROS服务请求对象编码成协议帧的载荷格式，准备发送给机载端
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    const QByteArray source = QByteArray::fromStdString(request.request_source);
+    stream << static_cast<quint16>(source.size());
+    payload.append(source);
+    return payload;
 }
 
-void GroundLinkBridge::handlePacket(const Packet &packet)
+
+
+
+
+
+
+/******************* 数据处理层(接收层) ********************/
+
+void GroundLinkBridge::handleStartOffboardResponse(const QByteArray &payload)
 {
-    //如果收到的是ACK帧，则调用handleAck函数处理，并返回
-    if (packet.type == kTypeAck) {
-        handleAck(packet.seq);
+    QDataStream stream(payload);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint8 success = 0;
+    quint16 msg_len = 0;
+    stream >> success;
+    stream >> msg_len;
+
+    if (payload.size() < 3 + msg_len) {
+        RCLCPP_ERROR(this->get_logger(), "invalid StartOffboardResp payload");
         return;
     }
 
-    //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
-    // switch (packet.type) {
-    // case kTypeDroneStatus:
-    //     handleDroneStatusReport(packet.payload);
-    //     break;
-    // case kTypeTaskStatus:
-    //     handleTaskStatusReport(packet.payload);
-    //     break;
-    // case kTypePathReady:
-    //     handlePathReadyReport(packet.payload);
-    //     break;
-    // case kTypeUploadMissionSummaryResp:
-    //     handleUploadMissionSummaryResponse(packet.payload);
-    //     break;
-    // case kTypeStartOffboardResp:
-    //     handleStartOffboardResponse(packet.payload);
-    //     break;
-    // case kTypeStartTaskResp:
-    //     handleStartTaskResponse(packet.payload);
-    //     break;
-    // case kTypeStopPushResp:
-    //     handleStopPushResponse(packet.payload);
-    //     break;
-    // default:
-    //     RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
-    //     break;
-    // }
+    const QByteArray msg_bytes = payload.mid(3, msg_len);
+    const QString message = QString::fromUtf8(msg_bytes);
+
+    RCLCPP_INFO(
+        this->get_logger(),
+        "StartOffboardResp: success=%d, message=%s",
+        static_cast<int>(success),
+        message.toStdString().c_str());
 }
 
-void GroundLinkBridge::handleAck(uint16_t seq)
+
+
+
+
+
+
+
+/************************ 底层 *************************/
+
+bool GroundLinkBridge::tryParseOnePacket(Packet &packet)
 {
-    //收到ACK帧后，从待重试列表中删除对应的请求信息，表示请求已经成功完成，不需要再重试
-    pending_requests_.erase(seq);
+    //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
+    while (rx_buffer_.size() >= 2) {
+        const uint8_t b0 = static_cast<uint8_t>(rx_buffer_[0]);
+        const uint8_t b1 = static_cast<uint8_t>(rx_buffer_[1]);
+        if (b0 == lp::kSof1 && b1 == lp::kSof2) {
+            break;
+        }
+        rx_buffer_.remove(0, 1);
+    }
+
+    if (rx_buffer_.size() < 11) {
+        return false;
+    }
+
+    //从帧数据中提取载荷长度字段，计算出预期的帧长度，并与实际接收的帧长度进行比较，如果不匹配则认为帧不合法，继续尝试解析下一个帧
+    const auto *data = reinterpret_cast<const uint8_t *>(rx_buffer_.constData());
+    const uint16_t payload_len =
+        static_cast<uint16_t>(data[7]) |
+        (static_cast<uint16_t>(data[8]) << 8);
+
+    //协议帧格式：2字节帧头 + 1字节版本 + 1字节类型 + 1字节标志 + 2字节序列号 + 2字节载荷长度 + N字节载荷 + 2字节CRC16校验
+    const int frame_len = 9 + static_cast<int>(payload_len) + 2;
+    if (rx_buffer_.size() < frame_len) {
+        return false;
+    }
+
+    const QByteArray frame = rx_buffer_.left(frame_len);
+    rx_buffer_.remove(0, frame_len);
+
+    if (!validateFrame(frame)) {
+        continue;
+    }
+
+    //从帧数据中提取消息类型、标志位、序列号和载荷数据，填充到Packet结构体中，供后续处理函数使用
+    const auto *frame_data = reinterpret_cast<const uint8_t *>(frame.constData());
+    packet.type = frame_data[3];
+    packet.flags = frame_data[4];
+    packet.seq = static_cast<uint16_t>(frame_data[5]) |
+                 (static_cast<uint16_t>(frame_data[6]) << 8);
+    packet.payload = frame.mid(9, payload_len);
+    return true;
+}
+
+QByteArray GroundLinkBridge::encodeFrame(
+    uint8_t type,
+    uint8_t flags,
+    uint16_t seq,
+    const QByteArray &payload) const
+{
+    //编码函数，用于将消息类型、标志位、序列号和载荷数据编码成一个完整的帧数据，准备发送
+    QByteArray frame;
+    frame.reserve(9 + payload.size() + 2);
+
+    //帧格式：2字节帧头 + 1字节版本 + 1字节类型 + 1字节标志 + 2字节序列号 + 2字节载荷长度 + N字节载荷 + 2字节CRC16校验
+    frame.append(static_cast<char>(lp::kSof1));
+    frame.append(static_cast<char>(lp::kSof2));
+    frame.append(static_cast<char>(lp::kVersion));
+    frame.append(static_cast<char>(type));
+    frame.append(static_cast<char>(flags));
+
+    frame.append(static_cast<char>(seq & 0xFF));
+    frame.append(static_cast<char>((seq >> 8) & 0xFF));
+
+    const uint16_t payload_len = static_cast<uint16_t>(payload.size());
+    frame.append(static_cast<char>(payload_len & 0xFF));
+    frame.append(static_cast<char>((payload_len >> 8) & 0xFF));
+
+    frame.append(payload);
+
+    const uint8_t *crc_begin = reinterpret_cast<const uint8_t *>(frame.constData() + 2);
+    const int crc_len = frame.size() - 2;
+    const uint16_t crc = crc16_ccitt(crc_begin, crc_len);
+
+    frame.append(static_cast<char>(crc & 0xFF));
+    frame.append(static_cast<char>((crc >> 8) & 0xFF));
+
+    return frame;
+}
+
+bool GroundLinkBridge::validateFrame(const QByteArray &frame) const
+{
+    //验证函数，用于检查接收到的帧数据是否符合协议格式和校验要求，确保数据的正确性和完整性
+    if (frame.size() < 11) {
+        return false;
+    }
+
+    const auto *data = reinterpret_cast<const uint8_t *>(frame.constData());
+
+    //检查帧头、版本号、载荷长度和CRC校验等字段，确保帧的合法性和完整性
+    if (data[0] != lp::kSof1 || data[1] != lp::kSof2) {
+        return false;
+    }
+
+    if (data[2] != lp::kVersion) {
+        return false;
+    }
+
+    //从帧数据中提取载荷长度字段，计算出预期的帧长度，并与实际接收的帧长度进行比较，如果不匹配则认为帧不合法
+    const uint16_t payload_len =
+        static_cast<uint16_t>(data[7]) |
+        (static_cast<uint16_t>(data[8]) << 8);
+
+    const int expected_size = 9 + static_cast<int>(payload_len) + 2;
+    if (frame.size() != expected_size) {
+        return false;
+    }
+
+    //从帧数据中提取CRC16校验字段，计算出接收到的帧数据的CRC16校验值，并与提取的CRC16值进行比较，如果不匹配则认为帧数据有误，需要丢弃
+    const uint16_t recv_crc =
+        static_cast<uint16_t>(data[frame.size() - 2]) |
+        (static_cast<uint16_t>(data[frame.size() - 1]) << 8);
+
+    //计算CRC16校验值时，需要从帧数据的第3个字节开始（即版本号字段），一直计算到载荷数据的最后一个字节，才能得到正确的CRC16值
+    const uint16_t calc_crc = crc16_ccitt(data + 2, frame.size() - 4);
+
+    //如果帧数据的CRC16校验通过，则认为帧数据合法，可以继续进行后续处理；否则认为帧数据有误，需要丢弃
+    return recv_crc == calc_crc;
 }
 
 void GroundLinkBridge::onRetryTimer()
