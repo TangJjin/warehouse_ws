@@ -1,0 +1,96 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include <termios.h>
+
+#include "drone_msgs/msg/barcode_capture.hpp"
+#include "drone_msgs/msg/k230_animal_center.hpp"
+#include "drone_msgs/msg/k230_animal_target.hpp"
+#include "drone_msgs/msg/k230_animal_targets.hpp"
+#include "drone_msgs/msg/world_group.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/string.hpp"
+
+class K230AnimalsUartRos2Node : public rclcpp::Node
+{
+public:
+	K230AnimalsUartRos2Node();
+	~K230AnimalsUartRos2Node() override;
+
+private:
+	static constexpr size_t kHeaderSize = 13;
+	static constexpr size_t kCrcSize = 2;
+	static constexpr size_t kMaxPayloadSize = 2 * 1024 * 1024;
+	static constexpr double kDefaultScanRadiusM = 0.2;
+
+	static speed_t baudrateToSpeed(int baudrate);
+	static uint32_t readU32Be(const uint8_t *p);
+	static uint16_t readU16Be(const uint8_t *p);
+	static uint16_t crc16Ccitt(const uint8_t *data, size_t len);
+	static bool isLikelyJpeg(const std::vector<uint8_t> &payload);
+	static bool jsonBoolFieldTrue(const std::string &json_text, const std::string &field);
+	static std::string jsonStringField(const std::string &json_text, const std::string &field);
+	static bool jsonNumberField(const std::string &json_text, const std::string &field, double &value);
+
+	void openSerial();
+	std::string makeImageBarcode(uint32_t seq) const;
+	void publishImagePacket(uint32_t seq, const std::vector<uint8_t> &payload);
+	void publishDetectionPacket(uint32_t seq, const std::string &json_text);
+	void publishTargetsPacket(uint32_t seq, const std::string &json_text);
+	void handlePacket(uint8_t type, uint32_t seq, const std::vector<uint8_t> &payload);
+	void parsePackets();
+	void readSerialOnce();
+	void publishHeartbeat();
+
+	void handleRoutePoints(const drone_msgs::msg::WorldGroup::SharedPtr msg);
+	void handleLocalPose(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+
+	int32_t findActiveScanPointOffset();
+
+	std::string _serial_port;
+	std::string _image_topic;
+	std::string _detect_topic;
+	std::string _center_topic;
+	std::string _last_label;
+	std::string _heartbeat_topic;
+	std::string _targets_topic;
+	std::string _route_topic;
+	std::string _local_pose_topic;
+
+	struct ScanPoint
+	{
+		int32_t index{-1};
+		double x{0.0};
+		double y{0.0};
+		bool scanned{false};
+	};
+
+	std::vector<ScanPoint> _scan_points;
+	bool _has_local_pose{false};
+	double _current_x{0.0};
+	double _current_y{0.0};
+	double _scan_radius_m{kDefaultScanRadiusM};
+
+	int _baudrate{0};
+	int _serial_fd{-1};
+
+	rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr _image_pub;
+	rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _detect_pub;
+	rclcpp::Publisher<drone_msgs::msg::K230AnimalCenter>::SharedPtr _center_pub;
+	rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _heartbeat_pub;
+	rclcpp::Publisher<drone_msgs::msg::K230AnimalTargets>::SharedPtr _targets_pub;
+
+	rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr _route_points_sub;
+	rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr _local_pose_sub;
+
+	rclcpp::TimerBase::SharedPtr _heartbeat_timer;
+	rclcpp::TimerBase::SharedPtr _read_timer;
+
+	std::vector<uint8_t> _rx_buffer;
+	size_t _total_rx_bytes{0};
+};
