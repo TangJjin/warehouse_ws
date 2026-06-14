@@ -2,7 +2,8 @@
 #
 # UART packet format:
 #   magic(4) + type(1) + seq(4) + length(4) + payload + crc16(2)
-#   type: 1 = detection JSON, 2 = JPEG image bytes
+#   type: 1 = legacy detection JSON, 2 = JPEG image bytes
+#   type: 3 = stable targets JSON, 4 = capture command JSON, 5 = record result JSON
 
 import os
 import sys
@@ -46,15 +47,23 @@ NMS_THRESH = 0.50
 MAX_BOXES_NUM = 20
 DEBUG_MODE = 0
 
-UART_BAUDRATE = 921600
-UART_SEND_INTERVAL_MS = 100
+UART_BAUDRATE = 460800 # Adjust as needed, e.g. 115200, 230400, 460800, 921600
+UART_SEND_INTERVAL_MS = 66  # ~15 FPS max, adjust as needed
 UART_LOG_INTERVAL_MS = 1000
 RES_DEBUG_INTERVAL_MS = 1000
 RES_DEBUG_MAX_ITEMS = 5
 UART_PACKET_MAGIC = b"K230"
 UART_PACKET_TYPE_DETECTION = 1
 UART_PACKET_TYPE_JPEG = 2
+UART_PACKET_TYPE_TARGETS = 3
+UART_PACKET_TYPE_CAPTURE_COMMAND = 4
+UART_PACKET_TYPE_RECORD_RESULT = 5
 SEND_EMPTY_RESULT = True
+SEND_LEGACY_DETECTION = True
+AUTO_SNAPSHOT_ENABLED = False
+UART_RX_MAX_BYTES = 8192
+TARGET_FRAME_HISTORY_MAX = 60
+PROCESSED_CAPTURE_HISTORY_MAX = 50
 
 SNAPSHOT_REQUIRED_FRAMES = 3
 SNAPSHOT_CENTER_STABLE_PX = 40
@@ -152,12 +161,89 @@ def send_uart_packet(uart, packet_type, seq, payload):
     uart_write_all(uart, packet)
 
 
+def read_u32_be(data, offset):
+    return (
+        (data[offset] << 24) |
+        (data[offset + 1] << 16) |
+        (data[offset + 2] << 8) |
+        data[offset + 3]
+    )
+
+
+def read_u16_be(data, offset):
+    return (data[offset] << 8) | data[offset + 1]
+
+
+def find_magic(buffer):
+    magic_len = len(UART_PACKET_MAGIC)
+    limit = len(buffer) - magic_len + 1
+    for i in range(limit):
+        if buffer[i:i + magic_len] == UART_PACKET_MAGIC:
+            return i
+    return -1
+
+
+def parse_uart_rx_buffer(rx_buffer):
+    packets = []
+    header_len = 13
+    crc_len = 2
+
+    while len(rx_buffer) >= header_len + crc_len:
+        magic_index = find_magic(rx_buffer)
+        if magic_index < 0:
+            keep = len(UART_PACKET_MAGIC) - 1
+            if len(rx_buffer) > keep:
+                del rx_buffer[:-keep]
+            break
+        if magic_index > 0:
+            del rx_buffer[:magic_index]
+        if len(rx_buffer) < header_len + crc_len:
+            break
+
+        packet_type = rx_buffer[4]
+        seq = read_u32_be(rx_buffer, 5)
+        payload_len = read_u32_be(rx_buffer, 9)
+        if payload_len > UART_RX_MAX_BYTES:
+            print("uart rx payload too large:", payload_len)
+            del rx_buffer[0]
+            continue
+
+        packet_len = header_len + payload_len + crc_len
+        if len(rx_buffer) < packet_len:
+            break
+
+        rx_crc = read_u16_be(rx_buffer, header_len + payload_len)
+        calc_crc = crc16_ccitt(rx_buffer[:header_len + payload_len])
+        if rx_crc != calc_crc:
+            print("uart rx crc mismatch type=%d seq=%d len=%d" % (packet_type, seq, payload_len))
+            del rx_buffer[0]
+            continue
+
+        payload = bytes(rx_buffer[header_len:header_len + payload_len])
+        packets.append((packet_type, seq, payload))
+        del rx_buffer[:packet_len]
+
+    return packets
+
+
+def poll_uart_packets(uart, rx_buffer):
+    try:
+        data = uart.read()
+    except Exception as e:
+        print("uart read failed:", e)
+        return []
+    if data:
+        rx_buffer.extend(data)
+    return parse_uart_rx_buffer(rx_buffer)
+
+
 def make_detection_uart_payload(payload):
     compact = {
         "valid": bool(payload.get("valid", False)),
         "label": str(payload.get("label", "")),
         "score": payload.get("score", 0.0),
         "track_id": payload.get("track_id", -1),
+        "label_instance_id": payload.get("label_instance_id", 0),
         "cx": payload.get("cx", -1),
         "cy": payload.get("cy", -1),
         "err_x": payload.get("err_x", 0),
@@ -172,6 +258,14 @@ def make_detection_uart_payload(payload):
 
 def send_detection_uart(uart, seq, payload):
     send_uart_packet(uart, UART_PACKET_TYPE_DETECTION, seq, make_detection_uart_payload(payload))
+
+
+def send_targets_uart(uart, frame_seq, payload):
+    send_uart_packet(uart, UART_PACKET_TYPE_TARGETS, frame_seq, json.dumps(payload))
+
+
+def send_record_result_uart(uart, seq, payload):
+    send_uart_packet(uart, UART_PACKET_TYPE_RECORD_RESULT, seq, json.dumps(payload))
 
 
 def send_jpeg_uart(uart, seq, jpeg_bytes):
@@ -783,6 +877,128 @@ def stable_tracks(tracks):
     return out
 
 
+def assign_label_instance_ids(targets):
+    counts = {}
+    for target in targets:
+        label = str(target.get("label", ""))
+        current = counts.get(label, 0) + 1
+        counts[label] = current
+        target["label_instance_id"] = current
+    return targets
+
+
+def compact_target(track):
+    return {
+        "label": str(track.get("label", "")),
+        "label_instance_id": int(track.get("label_instance_id", 0)),
+        "track_id": int(track.get("track_id", -1)),
+        "score": track.get("score", 0.0),
+        "confirmed": True,
+        "stable_frames": int(track.get("stable_frames", 0)),
+        "cx": int(track.get("cx", -1)),
+        "cy": int(track.get("cy", -1)),
+        "err_x": int(track.get("err_x", 0)),
+        "err_y": int(track.get("err_y", 0)),
+        "norm_x": track.get("norm_x", 0.0),
+        "norm_y": track.get("norm_y", 0.0),
+        "x1": int(track.get("x1", 0)),
+        "y1": int(track.get("y1", 0)),
+        "x2": int(track.get("x2", 0)),
+        "y2": int(track.get("y2", 0)),
+        "bbox_w": int(track.get("bbox_w", 0)),
+        "bbox_h": int(track.get("bbox_h", 0)),
+        "bbox_area": int(track.get("bbox_area", 0)),
+    }
+
+
+def make_targets_payload(frame_seq, detections, ready_tracks):
+    targets = assign_label_instance_ids([track.copy() for track in ready_tracks])
+    return {
+        "type": "k230_animal_targets",
+        "schema": 2,
+        "source": "k230_animals_detect_uart",
+        "frame_seq": frame_seq,
+        "seq": frame_seq,
+        "timestamp_ms": time.ticks_ms(),
+        "img_w": CONTROL_WIDTH,
+        "img_h": CONTROL_HEIGHT,
+        "raw_count": len(detections),
+        "target_count": len(targets),
+        "targets": [compact_target(track) for track in targets],
+    }
+
+
+def remember_frame_targets(frame_history, frame_seq, ready_tracks):
+    frame_history.append({
+        "frame_seq": frame_seq,
+        "targets": [track.copy() for track in ready_tracks],
+    })
+    if len(frame_history) > TARGET_FRAME_HISTORY_MAX:
+        del frame_history[0]
+
+
+def find_target_for_capture(frame_history, command):
+    frame_seq = int(command.get("frame_seq", -1))
+    label = str(command.get("label", ""))
+    label_instance_id = int(command.get("label_instance_id", 0))
+
+    for frame in frame_history:
+        if int(frame.get("frame_seq", -2)) != frame_seq:
+            continue
+        for target in frame.get("targets", []):
+            if str(target.get("label", "")) != label:
+                continue
+            if int(target.get("label_instance_id", 0)) != label_instance_id:
+                continue
+            return target
+    return None
+
+
+def capture_key(command):
+    return "%d:%s:%d" % (
+        int(command.get("frame_seq", -1)),
+        str(command.get("label", "")),
+        int(command.get("label_instance_id", 0)),
+    )
+
+
+def remember_processed_capture(history, key):
+    history.append(key)
+    if len(history) > PROCESSED_CAPTURE_HISTORY_MAX:
+        del history[0]
+
+
+def make_record_result(command, success, result_state, image_name=""):
+    return {
+        "type": "k230_record_result",
+        "schema": 1,
+        "source": "k230_animals_detect_uart",
+        "timestamp_ms": time.ticks_ms(),
+        "frame_seq": int(command.get("frame_seq", -1)),
+        "scan_point_index": int(command.get("scan_point_index", -1)),
+        "label": str(command.get("label", "")),
+        "label_instance_id": int(command.get("label_instance_id", 0)),
+        "record_success": bool(success),
+        "result_state": str(result_state),
+        "image_name": str(image_name),
+    }
+
+
+def decode_capture_command(payload):
+    try:
+        text = payload.decode("utf-8")
+    except Exception:
+        text = str(payload)
+    try:
+        command = json.loads(text)
+    except Exception as e:
+        print("capture command json parse failed:", e, text)
+        return None
+    if not bool(command.get("capture_ready", False)):
+        return None
+    return command
+
+
 def make_empty_payload(seq):
     return {
         "type": "animals_control",
@@ -874,6 +1090,9 @@ def main():
     tracks = []
     next_track_id = 1
     snapshot_history = []
+    frame_history = []
+    processed_captures = []
+    uart_rx_buffer = bytearray()
     snapshot_seq = 0
     seq = 0
 
@@ -922,7 +1141,7 @@ def main():
 
                     detections = parse_detections(res)
                     tracks, next_track_id = update_tracks(tracks, detections, next_track_id)
-                    ready_tracks = stable_tracks(tracks)
+                    ready_tracks = assign_label_instance_ids(stable_tracks(tracks))
                     display_payload = make_payload(seq, detections, ready_tracks[0], ready_tracks[0].get("stable_frames", 0)) if ready_tracks else make_payload(seq, detections, None, 0)
                     raw_detection = best_detection(detections)
 
@@ -932,39 +1151,80 @@ def main():
                     Display.show_image(osd_img, 0, 0, Display.LAYER_OSD3)
 
                     snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
-                    for track in ready_tracks:
-                        if snapshot_is_duplicate(snapshot_history, track):
+                    if AUTO_SNAPSHOT_ENABLED:
+                        for track in ready_tracks:
+                            if snapshot_is_duplicate(snapshot_history, track):
+                                continue
+                            snapshot_seq += 1
+                            try:
+                                photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
+                                send_snapshot_uart(uart, snapshot_seq, photo_img, track)
+                                snapshot_history.append(make_snapshot_record(track, now_ms))
+                                snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
+                            except Exception as e:
+                                print("snapshot uart send failed:", e)
+
+                    for packet_type, packet_seq, packet_payload in poll_uart_packets(uart, uart_rx_buffer):
+                        if packet_type != UART_PACKET_TYPE_CAPTURE_COMMAND:
+                            print("uart rx ignored type=%d seq=%d bytes=%d" % (packet_type, packet_seq, len(packet_payload)))
+                            continue
+                        command = decode_capture_command(packet_payload)
+                        if command is None:
+                            continue
+                        key = capture_key(command)
+                        if key in processed_captures:
+                            result = make_record_result(command, False, "skipped", "")
+                            send_record_result_uart(uart, packet_seq, result)
+                            continue
+                        target = find_target_for_capture(frame_history, command)
+                        if target is None:
+                            result = make_record_result(command, False, "skipped", "")
+                            send_record_result_uart(uart, packet_seq, result)
+                            print("capture target not found:", key)
                             continue
                         snapshot_seq += 1
+                        image_name = "%s.jpg" % target.get("label", "animal")
                         try:
                             photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
-                            send_snapshot_uart(uart, snapshot_seq, photo_img, track)
-                            snapshot_history.append(make_snapshot_record(track, now_ms))
+                            send_snapshot_uart(uart, snapshot_seq, photo_img, target)
+                            snapshot_history.append(make_snapshot_record(target, now_ms))
                             snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
+                            remember_processed_capture(processed_captures, key)
+                            result = make_record_result(command, True, "captured", image_name)
+                            send_record_result_uart(uart, packet_seq, result)
+                            print("capture done:", key, image_name)
                         except Exception as e:
-                            print("snapshot uart send failed:", e)
+                            result = make_record_result(command, False, "failed", image_name)
+                            send_record_result_uart(uart, packet_seq, result)
+                            print("capture failed:", key, e)
 
                     should_send = len(detections) > 0 or SEND_EMPTY_RESULT
                     if should_send:
                         if time.ticks_diff(now_ms, last_send_ms) >= UART_SEND_INTERVAL_MS:
                             last_send_ms = now_ms
-                            payloads = []
-                            if ready_tracks:
-                                for track in ready_tracks:
-                                    seq += 1
-                                    payloads.append(make_payload(seq, detections, track, track.get("stable_frames", 0)))
-                            else:
-                                seq += 1
-                                payloads.append(make_payload(seq, detections, None, 0))
+                            seq += 1
+                            targets_payload = make_targets_payload(seq, detections, ready_tracks)
                             try:
+                                send_targets_uart(uart, seq, targets_payload)
+                                remember_frame_targets(frame_history, seq, ready_tracks)
+                                if SEND_LEGACY_DETECTION:
+                                    payloads = []
+                                    if ready_tracks:
+                                        for track in ready_tracks:
+                                            payloads.append(make_payload(seq, detections, track, track.get("stable_frames", 0)))
+                                    else:
+                                        payloads.append(make_payload(seq, detections, None, 0))
+                                else:
+                                    payloads = []
                                 for payload in payloads:
-                                    send_detection_uart(uart, payload.get("seq", seq), payload)
+                                    send_detection_uart(uart, seq, payload)
                                     if payload["valid"] and time.ticks_diff(now_ms, last_uart_log_ms) >= UART_LOG_INTERVAL_MS:
                                         last_uart_log_ms = now_ms
                                         print(
-                                            "uart sent seq=%d track=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
+                                            "uart sent seq=%d target=%d track=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
                                             % (
-                                                payload["seq"],
+                                                seq,
+                                                payload.get("label_instance_id", 0),
                                                 payload.get("track_id", -1),
                                                 payload["stable_frames"],
                                                 payload["label"],

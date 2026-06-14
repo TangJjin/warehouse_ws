@@ -10,6 +10,7 @@ find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(drone_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 # ── k230_tcp_bridge ──────────────────────────────────────
 add_executable(k230_tcp_bridge
@@ -43,10 +44,16 @@ add_executable(k230_animals_uart_ros2_node
 
 target_compile_features(k230_animals_uart_ros2_node PUBLIC cxx_std_17)
 
+target_include_directories(k230_animals_uart_ros2_node
+  PRIVATE
+  include
+)
+
 ament_target_dependencies(k230_animals_uart_ros2_node
   rclcpp
   std_msgs
   drone_msgs
+  geometry_msgs
 )
 
 install(TARGETS
@@ -71,6 +78,7 @@ if(RKNN_INCLUDE AND RKNN_LIB AND EXISTS "${RKNN_RUNTIME_SO}")
   find_package(image_geometry REQUIRED)
   find_package(message_filters REQUIRED)
   find_package(sensor_msgs REQUIRED)
+  find_package(geometry_msgs REQUIRED)
 
   add_executable(qr_vision_node
     src/main.cpp
