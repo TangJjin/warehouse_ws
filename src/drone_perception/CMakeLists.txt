@@ -141,6 +141,49 @@ else()
     "Set RKNN_INCLUDE and RKNN_LIB so that ${RKNN_RUNTIME_SO} exists to enable it.")
 endif()
 
+# ── optional RDK X5 BPU model probe ──────────────────────
+find_path(RDK_DNN_INCLUDE_DIR
+  NAMES dnn/hb_dnn.h
+  PATHS /usr/include
+)
+
+find_library(RDK_DNN_LIBRARY
+  NAMES dnn
+  PATHS /usr/lib /usr/lib/aarch64-linux-gnu
+)
+
+find_library(RDK_HBRT_LIBRARY
+  NAMES hbrt
+  PATHS /usr/lib /usr/lib/aarch64-linux-gnu
+)
+
+if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY AND RDK_HBRT_LIBRARY)
+  add_executable(bpu_model_probe
+    src/bpu_model_probe.cpp
+  )
+
+  target_compile_features(bpu_model_probe PUBLIC cxx_std_17)
+
+  target_include_directories(bpu_model_probe
+    PRIVATE
+    ${RDK_DNN_INCLUDE_DIR}
+  )
+
+  target_link_libraries(bpu_model_probe
+    ${RDK_DNN_LIBRARY}
+    ${RDK_HBRT_LIBRARY}
+  )
+
+  install(TARGETS
+    bpu_model_probe
+    DESTINATION lib/${PROJECT_NAME}
+  )
+else()
+  message(STATUS
+    "Skipping bpu_model_probe because RDK BPU SDK is unavailable. "
+    "Need dnn/hb_dnn.h, libdnn.so, and libhbrt.so.")
+endif()
+
 install(DIRECTORY include/
   DESTINATION include
 )
