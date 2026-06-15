@@ -12,6 +12,9 @@
 #include "drone_msgs/msg/drone_status.hpp"
 #include "drone_msgs/msg/task_status.hpp"
 #include "drone_msgs/msg/ready_status.hpp"
+#include "drone_msgs/msg/world_group.hpp"
+#include "drone_msgs/msg/barcode_capture.hpp"
+#include <geometry_msgs/msg/vector3.hpp>
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
@@ -58,8 +61,11 @@ private:
 
     //发布状态消息到ROS话题
     void publishDroneStatus(const drone_msgs::msg::DroneStatus::SharedPtr msg);
-    void publishTaskStatus(const drone_msgs::msg::TaskStatus::SharedPtr msg);
     void publishPathReady(const drone_msgs::msg::ReadyStatus::SharedPtr msg);
+    void publishTaskStatus(const drone_msgs::msg::TaskStatus::SharedPtr msg);
+    void publishReturnWorldGroup(const drone_msgs::msg::WorldGroup::SharedPtr msg);
+    void publishVisionBarcode(const drone_msgs::msg::BarcodeCapture::SharedPtr msg);
+    void publishDelta(const geometry_msgs::msg::Vector3::SharedPtr msg);
 
     //发送ACK帧，包含被确认的序列号
     void sendAck(uint16_t seq);
@@ -74,6 +80,9 @@ private:
     rclcpp::Subscription<drone_msgs::msg::DroneStatus>::SharedPtr status_sub_;
     rclcpp::Subscription<drone_msgs::msg::TaskStatus>::SharedPtr task_status_sub_;
     rclcpp::Subscription<drone_msgs::msg::ReadyStatus>::SharedPtr path_ready_sub_;
+    rclcpp::Subscription<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_sub_;
+    rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
 
     QSerialPort serial_;
     QByteArray rx_buffer_;

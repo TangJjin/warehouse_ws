@@ -11,10 +11,12 @@
 #include <QSerialPort>
 
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/vector3.hpp>
 #include "drone_msgs/msg/drone_status.hpp"
 #include "drone_msgs/msg/task_status.hpp"
 #include "drone_msgs/msg/ready_status.hpp"
+#include "drone_msgs/msg/world_group.hpp"
+#include "drone_msgs/msg/barcode_capture.hpp"
+#include <geometry_msgs/msg/vector3.hpp>
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 #include "drone_msgs/srv/start_offboard.hpp"
 #include "drone_msgs/srv/start_task.hpp"
@@ -75,17 +77,23 @@ private:
         const drone_msgs::srv::StartOffboard::Request &request) const;
     QByteArray encodeStartTaskRequest(
         const drone_msgs::srv::StartTask::Request &request) const;
+    QByteArray encodeStopPushRequest(
+        const drone_msgs::srv::StartTask::Request &request) const;
 
     //处理函数，用于处理接收到的协议帧，根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
     void handlePacket(const Packet &packet);
     void handleAck(uint16_t seq);
+
+    void handleDroneStatusReport(const QByteArray &payload);
+    void handlePathReadyReport(const QByteArray &payload);
+    void handleTaskStatusReport(const QByteArray &payload);
+    void handleReturnWorldGroupReport(const QByteArray &payload);
+    void handleVisionBarcodeReport(const QByteArray &payload);
+    void handleDeltaReport(const QByteArray &payload);
     void handleUploadMissionSummaryResponse(const QByteArray &payload);
     void handleStartOffboardResponse(const QByteArray &payload);
     void handleStartTaskResponse(const QByteArray &payload);
     void handleStopPushResponse(const QByteArray &payload);
-    void handleDroneStatusReport(const QByteArray &payload);
-    void handleTaskStatusReport(const QByteArray &payload);
-    void handlePathReadyReport(const QByteArray &payload);
 
     //发送函数，用于发送协议帧到串口
     void sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
@@ -99,6 +107,9 @@ private:
     rclcpp::Publisher<drone_msgs::msg::DroneStatus>::SharedPtr status_pub_;
     rclcpp::Publisher<drone_msgs::msg::TaskStatus>::SharedPtr task_status_pub_;
     rclcpp::Publisher<drone_msgs::msg::ReadyStatus>::SharedPtr path_ready_pub_;
+    rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_pub_;
+    rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
 
     rclcpp::TimerBase::SharedPtr retry_timer_;
 
