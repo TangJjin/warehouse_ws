@@ -11,6 +11,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ReadyStatus.msg"
   "msg/BarcodeCapture.msg"
   "msg/K230AnimalCenter.msg"
+  "msg/K230AnimalTarget.msg"
+  "msg/K230AnimalTargets.msg"
   "msg/GridPoint.msg"
   "msg/GridGroup.msg"
   "msg/WorldPoint.msg"
