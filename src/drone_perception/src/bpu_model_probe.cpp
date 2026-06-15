@@ -52,7 +52,7 @@ void printTensorProperties(
 int main()
 {
   const char *model_path =
-    "/home/gjl/drone_ws/src/rdk_best_bayese_640x640_nv12.bin";
+    "/home/sunrise/drone_ws/src/rdk_best_bayese_640x640_nv12.bin";
 
   hbPackedDNNHandle_t packed_dnn_handle = nullptr;
   const char *model_files[] = {model_path};
