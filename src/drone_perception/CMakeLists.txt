@@ -11,6 +11,11 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(image_geometry REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 # ── k230_tcp_bridge ──────────────────────────────────────
 add_executable(k230_tcp_bridge
@@ -68,55 +73,71 @@ install(PROGRAMS
 )
 
 # ── qr_vision_node ───────────────────────────────────────
+add_executable(qr_vision_node
+  src/main.cpp
+  src/qr_vision_node.cpp
+  src/depth_processor.cpp
+)
+
+target_compile_features(qr_vision_node PUBLIC cxx_std_17)
+
+target_include_directories(qr_vision_node
+  PRIVATE
+  include
+  ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(qr_vision_node
+  ${OpenCV_LIBS}
+)
+
+ament_target_dependencies(qr_vision_node
+  cv_bridge
+  image_geometry
+  message_filters
+  rclcpp
+  sensor_msgs
+)
+
+install(TARGETS
+  qr_vision_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ── optional standalone RKNN detector library ─────────────
 set(RKNN_INCLUDE $ENV{RKNN_INCLUDE})
 set(RKNN_LIB $ENV{RKNN_LIB})
 set(RKNN_RUNTIME_SO "${RKNN_LIB}/librknnrt.so")
 
 if(RKNN_INCLUDE AND RKNN_LIB AND EXISTS "${RKNN_RUNTIME_SO}")
-  find_package(OpenCV REQUIRED)
-  find_package(cv_bridge REQUIRED)
-  find_package(image_geometry REQUIRED)
-  find_package(message_filters REQUIRED)
-  find_package(sensor_msgs REQUIRED)
-  find_package(geometry_msgs REQUIRED)
-
-  add_executable(qr_vision_node
-    src/main.cpp
-    src/qr_vision_node.cpp
+  add_library(rknn_yolo_detector STATIC
     src/rknn_yolo_detector.cpp
     src/yolo_postprocessor.cpp
-    src/depth_processor.cpp
   )
 
-  target_compile_features(qr_vision_node PUBLIC cxx_std_17)
+  target_compile_features(rknn_yolo_detector PUBLIC cxx_std_17)
 
-  target_include_directories(qr_vision_node
+  target_include_directories(rknn_yolo_detector
     PRIVATE
     include
     ${OpenCV_INCLUDE_DIRS}
     ${RKNN_INCLUDE}
   )
 
-  target_link_libraries(qr_vision_node
+  target_link_libraries(rknn_yolo_detector
     ${OpenCV_LIBS}
     ${RKNN_RUNTIME_SO}
   )
 
-  ament_target_dependencies(qr_vision_node
-    cv_bridge
-    image_geometry
-    message_filters
-    rclcpp
-    sensor_msgs
-  )
-
   install(TARGETS
-    qr_vision_node
-    DESTINATION lib/${PROJECT_NAME}
+    rknn_yolo_detector
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
   )
 else()
-  message(WARNING
-    "Skipping qr_vision_node because RKNN runtime is unavailable. "
+  message(STATUS
+    "Skipping standalone RKNN detector library because RKNN runtime is unavailable. "
     "Set RKNN_INCLUDE and RKNN_LIB so that ${RKNN_RUNTIME_SO} exists to enable it.")
 endif()
 

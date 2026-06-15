@@ -1,12 +1,8 @@
 #include "drone_perception/qr_vision_node.hpp"
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <exception>
 #include <functional>
 #include <string>
-#include <vector>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui.hpp>
@@ -29,16 +25,6 @@ QrVisionNode::QrVisionNode()
 {
   declareParameters();
 
-  try
-  {
-    detector_ = std::make_unique<RknnYoloDetector>(model_path_);
-  }
-  catch (const std::exception &e)
-  {
-    RCLCPP_FATAL(get_logger(), "Failed to initialize RKNN detector: %s", e.what());
-    throw;
-  }
-
   initializeSubscriptions();
 
   if (debug_view_)
@@ -57,7 +43,7 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i base ready. color=%s depth=%s camera_info=%s",
+      "QR D435i video stream ready. color=%s depth=%s camera_info=%s",
       color_topic_.c_str(),
       depth_topic_.c_str(),
       camera_info_topic_.c_str());
@@ -82,22 +68,15 @@ void QrVisionNode::declareParameters()
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
-  log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
+  log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
   sample_radius_px_ = this->declare_parameter<int>("sample_radius_px", 3);
-
-  // 测试同学运行时可以用下面的 ROS 参数覆盖默认模型路径：
-  // --ros-args -p model_path:=$HOME/qr_ws/src/qr_vision_cpp/qr_yolo11n_rk3588_i8.rknn
-  model_path_ = this->declare_parameter<std::string>(
-      "model_path",
-      "/home/orangepi/drone_ws/src/drone_perception/qr_rk3588_FP16.rknn");
-
 
   if (log_throttle_ms_ <= 0)
   {
     RCLCPP_WARN(
         get_logger(),
-        "log_throttle_ms must be greater than 0, reset to 2000");
-    log_throttle_ms_ = 2000;
+        "log_throttle_ms must be greater than 0, reset to 500");
+    log_throttle_ms_ = 500;
   }
 
   if (sample_radius_px_ < 0)
@@ -136,7 +115,7 @@ void QrVisionNode::initializeSubscriptions()
 void QrVisionNode::handleCameraInfo(
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg)
 {
-  latest_camera_info_ = *camera_info_msg;
+  (void)camera_info_msg;
   has_camera_info_ = true;
 }
 
@@ -197,158 +176,62 @@ void QrVisionNode::handleSyncedFrame(
 
   updateFps();
 
-  std::vector<Detection> detections;
-
-  try
-  {
-    detections = detector_->infer(color_bridge->image);
-  }
-  catch (const std::exception &ex)
-  {
-    RCLCPP_ERROR_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "RKNN inference failed: %s",
-        ex.what());
-    return;
-  }
-
-  for (Detection &detection : detections)
-  {
-    DepthSampleResult depth_result = depth_processor_.sampleAt(
-        depth_bridge->image,
-        detection.center.x,
-        detection.center.y,
-        sample_radius_px_);
-
-    if (depth_result.has_valid_depth)
-    {
-      detection.has_depth = true;
-      detection.depth_m = depth_result.depth_m;
-
-      if (has_camera_info_)
-      {
-        detection.point_3d = depth_processor_.projectTo3D(
-            detection.center.x,
-            detection.center.y,
-            detection.depth_m,
-            latest_camera_info_);
-      }
-    }
-  }
-
-  if (!detections.empty())
-  {
-    const Detection &best_detection = detections.front();
-
-    if (best_detection.has_depth)
-    {
-      RCLCPP_INFO_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          log_throttle_ms_,
-          "qr detection: class=%d score=%.2f center=(%d,%d) depth=%.3fm fps=%.1f",
-          best_detection.class_id,
-          best_detection.score,
-          best_detection.center.x,
-          best_detection.center.y,
-          best_detection.depth_m,
-          smoothed_fps_);
-    }
-    else
-    {
-      RCLCPP_INFO_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          log_throttle_ms_,
-          "qr detection: class=%d score=%.2f center=(%d,%d) depth=invalid fps=%.1f",
-          best_detection.class_id,
-          best_detection.score,
-          best_detection.center.x,
-          best_detection.center.y,
-          smoothed_fps_);
-    }
-  }
-  else
-  {
-    RCLCPP_WARN_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "no qr detection fps=%.1f",
-        smoothed_fps_);
-  }
+  const int center_u = color_bridge->image.cols / 2;
+  const int center_v = color_bridge->image.rows / 2;
+  const DepthSampleResult center_depth = depth_processor_.sampleAt(
+      depth_bridge->image,
+      center_u,
+      center_v,
+      sample_radius_px_);
 
   if (debug_view_)
   {
-    displayDebugFrame(color_bridge->image, detections);
+    displayDebugFrame(color_bridge->image, center_depth);
   }
 
   const auto callback_t1 = SteadyClock::now();
-  const RknnYoloDetector::InferenceTimingStats &timing = detector_->lastTiming();
-  RCLCPP_INFO_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      log_throttle_ms_,
-      "perf fps=%.1f total_callback_ms=%.2f detector_total_ms=%.2f "
-      "preprocess_ms=%.2f input_set_ms=%.2f rknn_run_ms=%.2f "
-      "output_get_ms=%.2f postprocess_ms=%.2f detections=%zu debug_view=%s",
-      smoothed_fps_,
-      elapsedMs(callback_t0, callback_t1),
-      timing.detector_total_ms,
-      timing.preprocess_ms,
-      timing.input_set_ms,
-      timing.rknn_run_ms,
-      timing.output_get_ms,
-      timing.postprocess_ms,
-      detections.size(),
-      debug_view_ ? "true" : "false");
+  if (center_depth.has_valid_depth)
+  {
+    RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "video stream fps=%.1f size=%dx%d center_depth=%.3fm camera_info=%s "
+        "callback_ms=%.2f debug_view=%s",
+        smoothed_fps_,
+        color_bridge->image.cols,
+        color_bridge->image.rows,
+        center_depth.depth_m,
+        has_camera_info_ ? "true" : "false",
+        elapsedMs(callback_t0, callback_t1),
+        debug_view_ ? "true" : "false");
+  }
+  else
+  {
+    RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "video stream fps=%.1f size=%dx%d center_depth=invalid camera_info=%s "
+        "callback_ms=%.2f debug_view=%s",
+        smoothed_fps_,
+        color_bridge->image.cols,
+        color_bridge->image.rows,
+        has_camera_info_ ? "true" : "false",
+        elapsedMs(callback_t0, callback_t1),
+        debug_view_ ? "true" : "false");
+  }
 }
 
 void QrVisionNode::displayDebugFrame(
     const cv::Mat &color_image,
-    const std::vector<Detection> &detections)
+    const DepthSampleResult &center_depth)
 {
   cv::Mat display = color_image.clone();
 
   cv::Mat overlay = display.clone();
-  cv::rectangle(overlay, cv::Point(12, 12), cv::Point(250, 76), cv::Scalar(30, 30, 30), cv::FILLED);
+  cv::rectangle(overlay, cv::Point(12, 12), cv::Point(320, 98), cv::Scalar(30, 30, 30), cv::FILLED);
   cv::addWeighted(overlay, 0.45, display, 0.55, 0.0, display);
-
-  for (const Detection &detection : detections)
-  {
-    const cv::Scalar color(0, 255, 0);
-    cv::rectangle(display, detection.box, color, 2);
-    cv::circle(display, detection.center, 4, cv::Scalar(0, 0, 255), cv::FILLED);
-
-    std::string label;
-    if (detection.has_depth)
-    {
-      label = cv::format(
-          "cls:%d %.2f %.2fm",
-          detection.class_id,
-          detection.score,
-          detection.depth_m);
-    }
-    else
-    {
-      label = cv::format(
-          "cls:%d %.2f",
-          detection.class_id,
-          detection.score);
-    }
-
-    const int text_y = std::max(20, detection.box.y - 8);
-    cv::putText(
-        display,
-        label,
-        cv::Point(detection.box.x, text_y),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.5,
-        color,
-        1);
-  }
 
   cv::putText(
       display,
@@ -365,6 +248,16 @@ void QrVisionNode::displayDebugFrame(
       cv::FONT_HERSHEY_SIMPLEX,
       0.55,
       cv::Scalar(255, 255, 255),
+      1);
+  cv::putText(
+      display,
+      center_depth.has_valid_depth
+        ? std::string(cv::format("Center depth: %.3fm", center_depth.depth_m))
+        : std::string("Center depth: invalid"),
+      cv::Point(24, 82),
+      cv::FONT_HERSHEY_SIMPLEX,
+      0.55,
+      cv::Scalar(180, 255, 180),
       1);
 
   cv::imshow(window_name_, display);
