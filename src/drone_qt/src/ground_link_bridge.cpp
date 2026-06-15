@@ -40,38 +40,30 @@ void GroundLinkBridge::setupRosInterfaces()
 {
     /*************** 创建与机载端相对应的通信接口 ***************/
     status_pub_ = this->create_publisher<drone_msgs::msg::DroneStatus>(
-        "/drone/status", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        "/serial/drone/status", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     task_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
-        "/drone/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
-        "/drone/control/path_ready", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/control/path_ready", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
-    start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
-    "/drone/start_offboard",
-    [this](
-        const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
-        std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response)
-    {
-        if (!request) {
-            response->success = false;
-            response->message = "空请求";
-            return;
-        }
+    return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
+        "/serial/drone/return/world_group", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
-        const QByteArray payload = encodeStartOffboardRequest(*request);
-        sendPacket(lp::kTypeStartOffboardReq, lp::kFlagNeedAck, payload, true);
+    vision_barcode_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
+        "/serial/drone/vision/barcode", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
-        response->success = true;
-        response->message = "StartOffboard 请求已发出，后续再补完整异步响应绑定";
-    });
+    delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
+        "/serial/drone/pose_yaw_compare/delta", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+
+    
     
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
-        "/drone/upload_mission_summary",
+        "/serial/drone/upload_mission_summary",
         [this](
-            const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
-            std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response)
+        const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
+        std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response)
         {
             if (!request || request->points.empty()) {
                 response->success = false;
@@ -81,8 +73,8 @@ void GroundLinkBridge::setupRosInterfaces()
                 return;
             }
 
-            //const QByteArray payload = encodeUploadMissionSummaryRequest(*request, next_msg_id_++);
-            //sendPacket(kTypeUploadMissionSummaryReq, kFlagNeedAck, payload, true);
+            const QByteArray payload = encodeUploadMissionSummaryRequest(*request, next_msg_id_++);
+            sendPacket(kTypeUploadMissionSummaryReq, kFlagNeedAck, payload, true);
 
             // 第一版这里只给出桥接骨架。
             // 真正落地时，这里需要把 response 暂存起来，等机载响应回来后再填充。
@@ -91,6 +83,63 @@ void GroundLinkBridge::setupRosInterfaces()
             response->saved_path = "";
             response->action_count = 0;
         });
+
+    start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
+        "/serial/drone/start_offboard",
+        [this](
+        const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
+        std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response)
+        {
+            if (!request) {
+                response->success = false;
+                response->message = "空请求";
+                return;
+            }
+
+            const QByteArray payload = encodeStartOffboardRequest(*request);
+            sendPacket(lp::kTypeStartOffboardReq, lp::kFlagNeedAck, payload, true);
+
+            response->success = true;
+            response->message = "StartOffboard 请求已发出，后续再补完整异步响应绑定";
+        });
+
+    start_task_srv_ = this->create_service<drone_msgs::srv::StartTask>(
+        "/serial/drone/start_task",
+        [this](
+        const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
+        std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
+        {
+            if (!request) {
+                response->success = false;
+                response->message = "空请求";
+                return;
+            }
+
+            const QByteArray payload = encodeStartTaskRequest(*request);
+            sendPacket(lp::kTypeStartTaskReq, lp::kFlagNeedAck, payload, true);
+
+            response->success = true;
+            response->message = "StartTask 请求已发出，后续再补完整异步响应绑定";
+        });
+
+    stop_push_srv_ = this->create_service<drone_msgs::srv::StartTask>(
+        "/serial/drone/stop_push",
+        [this](
+        const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
+        std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
+        {
+            if (!request) {
+                response->success = false;
+                response->message = "空请求";
+                return;
+            }
+
+            const QByteArray payload = encodeStopPushRequest(*request);
+            sendPacket(lp::kTypeStopPushReq, lp::kFlagNeedAck, payload, true);
+
+            response->success = true;
+            response->message = "StopPush 请求已发出，后续再补完整异步响应绑定";
+        });
     /************************************************************/
 }
 
@@ -98,7 +147,7 @@ void GroundLinkBridge::setupRosInterfaces()
 /************************ 用户层 *************************/
 void GroundLinkBridge::setupSerial()
 {
-    serial_.setPortName("/dev/ttyUSB0");
+    serial_.setPortName("/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0");
     serial_.setBaudRate(QSerialPort::Baud115200);
     serial_.setDataBits(QSerialPort::Data8);
     serial_.setParity(QSerialPort::NoParity);
@@ -116,8 +165,6 @@ void GroundLinkBridge::setupSerial()
 
 void GroundLinkBridge::onSerialReadyRead()
 {
-    RCLCPP_INFO(this->get_logger(), "ground readyRead triggered, bytes=%lld",
-                static_cast<long long>(serial_.bytesAvailable()));
     rx_buffer_.append(serial_.readAll());
 
     //接收到数据后，进入第一层handlePacket处理函数，后续分路
@@ -144,9 +191,6 @@ void GroundLinkBridge::sendPacket(uint8_t type, uint8_t flags, const QByteArray 
         pending.encoded_frame = frame;
         pending.deadline = this->now() + rclcpp::Duration::from_seconds(0.3);
         pending_requests_[seq] = pending;
-
-        RCLCPP_INFO(this->get_logger(), "sendPacket type=0x%02X seq=%u payload=%d",
-            type, seq, payload.size());
     }
 }
 
@@ -165,11 +209,35 @@ void GroundLinkBridge::handlePacket(const Packet &packet)
 
     //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
     switch (packet.type) {
+    case lp::kTypeDroneStatus:
+        handleDroneStatusReport(packet.payload);
+        break;
+    case lp::kTypePathReady:
+        handlePathReadyReport(packet.payload);
+        break;
+    case lp::kTypeTaskStatus:
+        handleTaskStatusReport(packet.payload);
+        break;
+    case lp::kTypeReturnWorldGroup:
+        handleReturnWorldGroupReport(packet.payload);
+        break;
+    case lp::kTypeVisionBarcode:
+        handleVisionBarcodeReport(packet.payload);
+        break;
+    case lp::kTypeDelta:
+        handleDeltaReport(packet.payload);
+        break;
+    case lp::kTypeUploadMissionSummaryResp:
+        handleUploadMissionSummaryResponse(packet.payload);
+        break;
     case lp::kTypeStartOffboardResp:
         handleStartOffboardResponse(packet.payload);
-
-        RCLCPP_INFO(this->get_logger(), "recv packet type=0x%02X seq=%u payload=%d",
-            packet.type, packet.seq, packet.payload.size());
+        break;
+    case lp::kTypeStartTaskResp:
+        handleStartTaskResponse(packet.payload);
+        break;
+    case lp::kTypeStopPushResp:
+        handleStopPushResponse(packet.payload);
         break;
     default:
         RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
@@ -204,6 +272,13 @@ uint16_t GroundLinkBridge::nextSeq()
 
 /******************* 数据处理层(发送层) ********************/
 
+QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
+    const drone_msgs::srv::UploadMissionSummary::Request &request,
+    uint16_t msg_id) const
+{
+    
+}
+
 QByteArray GroundLinkBridge::encodeStartOffboardRequest(
     const drone_msgs::srv::StartOffboard::Request &request) const
 {
@@ -218,6 +293,19 @@ QByteArray GroundLinkBridge::encodeStartOffboardRequest(
     return payload;
 }
 
+QByteArray GroundLinkBridge::encodeStartTaskRequest(
+    const drone_msgs::srv::StartTask::Request &request) const
+{
+    
+}
+
+QByteArray GroundLinkBridge::encodeStopPushRequest(
+    const drone_msgs::srv::StartTask::Request &request) const
+{
+    
+}
+
+
 
 
 
@@ -225,6 +313,77 @@ QByteArray GroundLinkBridge::encodeStartOffboardRequest(
 
 
 /******************* 数据处理层(接收层) ********************/
+
+void GroundLinkBridge::handleDroneStatusReport(const QByteArray &payload)
+{
+    QDataStream stream(payload);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint8 connected = 0;
+    float battery_percent = 0.0f;
+    qint32 flight_mode = 0;
+    quint8 armed = 0;
+    quint16 state_len = 0;
+
+    stream >> connected;
+    stream >> battery_percent;
+    stream >> flight_mode;
+    stream >> armed;
+    stream >> state_len;
+
+    if (payload.size() < 1 + 4 + 4 + 1 + 2 + state_len) {
+        RCLCPP_ERROR(this->get_logger(), "invalid DroneStatus payload");
+        return;
+    }
+
+    const QString state = QString::fromUtf8(payload.mid(12, state_len));
+
+    drone_msgs::msg::DroneStatus msg;
+    msg.connected = (connected != 0);
+    msg.battery_percent = battery_percent;
+    msg.flight_mode = static_cast<uint8_t>(flight_mode);
+    msg.armed = (armed != 0);
+    msg.state = state.toStdString();
+
+    status_pub_->publish(msg);
+}
+
+void GroundLinkBridge::handlePathReadyReport(const QByteArray &payload)
+{
+    if (payload.size() < 1) {
+        RCLCPP_ERROR(this->get_logger(), "invalid PathReady payload");
+        return;
+    }
+
+    drone_msgs::msg::ReadyStatus msg;
+    msg.air_route_ready = (static_cast<uint8_t>(payload[0]) != 0);
+    path_ready_pub_->publish(msg);
+}
+
+void GroundLinkBridge::handleTaskStatusReport(const QByteArray &payload)
+{
+    
+}
+
+void GroundLinkBridge::handleReturnWorldGroupReport(const QByteArray &payload)
+{
+
+}
+
+void GroundLinkBridge::handleVisionBarcodeReport(const QByteArray &payload)
+{
+
+}
+
+void GroundLinkBridge::handleDeltaReport(const QByteArray &payload)
+{
+
+}
+
+void GroundLinkBridge::handleUploadMissionSummaryResponse(const QByteArray &payload)
+{
+
+}
 
 void GroundLinkBridge::handleStartOffboardResponse(const QByteArray &payload)
 {
@@ -249,6 +408,16 @@ void GroundLinkBridge::handleStartOffboardResponse(const QByteArray &payload)
         "StartOffboardResp: success=%d, message=%s",
         static_cast<int>(success),
         message.toStdString().c_str());
+}
+
+void GroundLinkBridge::handleStartTaskResponse(const QByteArray &payload)
+{
+
+}
+
+void GroundLinkBridge::handleStopPushResponse(const QByteArray &payload)
+{
+
 }
 
 

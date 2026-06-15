@@ -32,6 +32,48 @@ AirborneLinkBridge::AirborneLinkBridge()
 
 void AirborneLinkBridge::setupRosInterfaces()
 {
+    status_sub_ = this->create_subscription<drone_msgs::msg::DroneStatus>(
+        "/drone/status",
+        rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
+        [this](const drone_msgs::msg::DroneStatus::SharedPtr msg) {
+            publishDroneStatus(msg);
+        });
+
+    path_ready_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
+        "/drone/control/path_ready",
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg) {
+            publishPathReady(msg);
+        });
+
+    task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
+        "/drone/task/status",
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
+            publishTaskStatus(msg);
+        });
+
+    return_world_group_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
+        "/drone/return/world_group",
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
+            publishReturnWorldGroup(msg);
+        });
+
+    vision_barcode_sub_ = this->create_subscription<drone_msgs::msg::BarcodeCapture>(
+        "/drone/vision/barcode",
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg) {
+            publishVisionBarcode(msg);
+        });
+
+    delta_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+        "/drone/pose_yaw_compare/delta",
+        rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
+        [this](const geometry_msgs::msg::Vector3::SharedPtr msg) {
+            publishDelta(msg);
+        });
+
     upload_mission_summary_client_ = this->create_client<drone_msgs::srv::UploadMissionSummary>(
         "/drone/upload_mission_summary");
 
@@ -43,34 +85,13 @@ void AirborneLinkBridge::setupRosInterfaces()
 
     stop_push_client_ = this->create_client<drone_msgs::srv::StartTask>(
         "/drone/stop_push");
-
-    status_sub_ = this->create_subscription<drone_msgs::msg::DroneStatus>(
-        "/drone/status",
-        rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
-        [this](const drone_msgs::msg::DroneStatus::SharedPtr msg) {
-            //publishDroneStatus(msg);
-        });
-
-    task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
-        "/drone/task/status",
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-        [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
-            //publishTaskStatus(msg);
-        });
-
-    path_ready_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
-        "/drone/control/path_ready",
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-        [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg) {
-            //publishPathReady(msg);
-        });
 }
 
 /************************ 用户层 *************************/
 
 void AirborneLinkBridge::setupSerial()
 {
-    serial_.setPortName("/dev/ttyUSB0");
+    serial_.setPortName("/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0");
     serial_.setBaudRate(QSerialPort::Baud115200);
     serial_.setDataBits(QSerialPort::Data8);
     serial_.setParity(QSerialPort::NoParity);
@@ -88,8 +109,6 @@ void AirborneLinkBridge::setupSerial()
 
 void AirborneLinkBridge::onSerialReadyRead()
 {
-    RCLCPP_INFO(this->get_logger(), "ground readyRead triggered, bytes=%lld",
-                static_cast<long long>(serial_.bytesAvailable()));
     rx_buffer_.append(serial_.readAll());
     //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
     Packet packet;
@@ -112,10 +131,17 @@ void AirborneLinkBridge::handlePacket(const Packet &packet)
 
     //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
     switch (packet.type) {
+    case lp::kTypeUploadMissionSummaryReq:
+        handleUploadMissionSummaryRequest(packet.seq, packet.payload);
+        break;
     case lp::kTypeStartOffboardReq:
         handleStartOffboardRequest(packet.seq, packet.payload);
-
-        RCLCPP_INFO(this->get_logger(), "recv request type=0x%02X seq=%u", packet.type, packet.seq);
+        break;
+    case lp::kTypeStartTaskReq:
+        handleStartTaskRequest(packet.seq, packet.payload);
+        break;  
+    case lp::kTypeStopPushReq:
+        handleStopPushRequest(packet.seq, packet.payload);
         break;
     default:
         RCLCPP_WARN(this->get_logger(), "unknown packet type: 0x%02X", packet.type);
@@ -134,7 +160,6 @@ void AirborneLinkBridge::sendResponse(uint8_t type, uint16_t seq, const QByteArr
 {
     const QByteArray frame = encodeFrame(type, 0, seq, payload);
     serial_.write(frame);
-    RCLCPP_INFO(this->get_logger(), "sending response type=0x%02X seq=%u", type, seq);
 }
 
 
@@ -143,6 +168,63 @@ void AirborneLinkBridge::sendResponse(uint8_t type, uint16_t seq, const QByteArr
 
 /******************* 数据处理层(发送层) ********************/
 
+void AirborneLinkBridge::publishDroneStatus(const drone_msgs::msg::DroneStatus::SharedPtr msg)
+{
+    if (!msg) {
+        return;
+    }
+
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    stream << static_cast<quint8>(msg->connected ? 1 : 0);
+    stream << msg->battery_percent;
+    stream << static_cast<qint32>(msg->flight_mode);
+    stream << static_cast<quint8>(msg->armed ? 1 : 0);
+
+    const QByteArray state = QByteArray::fromStdString(msg->state);
+    stream << static_cast<quint16>(state.size());
+    payload.append(state);
+
+    const QByteArray frame = encodeFrame(lp::kTypeDroneStatus, 0, 0, payload);
+    serial_.write(frame);
+}
+
+void AirborneLinkBridge::publishTaskStatus(const drone_msgs::msg::TaskStatus::SharedPtr msg)
+{
+
+}
+
+void AirborneLinkBridge::publishPathReady(const drone_msgs::msg::ReadyStatus::SharedPtr msg)
+{
+    if (!msg) {
+        return;
+    }
+
+    QByteArray payload;
+    payload.append(static_cast<char>(msg->air_route_ready ? 1 : 0));
+    const QByteArray frame = encodeFrame(lp::kTypePathReady, 0, 0, payload);
+    serial_.write(frame);
+}
+
+void AirborneLinkBridge::publishReturnWorldGroup(const drone_msgs::msg::WorldGroup::SharedPtr msg)
+{
+
+}
+
+void AirborneLinkBridge::publishVisionBarcode(const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
+{
+
+}
+
+void AirborneLinkBridge::publishDelta(const drone_msgs::msg::Vector3::SharedPtr msg)
+{
+
+}
+
+
+
 
 
 
@@ -150,6 +232,11 @@ void AirborneLinkBridge::sendResponse(uint8_t type, uint16_t seq, const QByteArr
 
 
 /******************* 数据处理层(接收层) ********************/
+
+void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const QByteArray &payload)
+{
+
+}
 
 void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArray &payload)
 {
@@ -193,8 +280,6 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
     auto request = std::make_shared<drone_msgs::srv::StartOffboard::Request>();
     request->request_source = request_source;
 
-    RCLCPP_INFO(this->get_logger(), "calling /drone/start_offboard, request_source=%s",request_source.c_str());
-
     start_offboard_client_->async_send_request(
         request,
         [this, seq](rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedFuture future)
@@ -212,6 +297,16 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
 
             sendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
         });
+}
+
+void AirborneLinkBridge::handleStartTaskRequest(uint16_t seq, const QByteArray &payload)
+{
+
+}
+
+void AirborneLinkBridge::handleStopPushRequest(uint16_t seq, const QByteArray &payload)
+{
+
 }
 
 
