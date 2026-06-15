@@ -88,6 +88,8 @@ void AirborneLinkBridge::setupSerial()
 
 void AirborneLinkBridge::onSerialReadyRead()
 {
+    RCLCPP_INFO(this->get_logger(), "ground readyRead triggered, bytes=%lld",
+                static_cast<long long>(serial_.bytesAvailable()));
     rx_buffer_.append(serial_.readAll());
     //尝试从接收缓冲区中解析出完整的协议帧，直到无法再解析出新的帧为止
     Packet packet;

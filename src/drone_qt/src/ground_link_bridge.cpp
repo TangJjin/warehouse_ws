@@ -116,6 +116,8 @@ void GroundLinkBridge::setupSerial()
 
 void GroundLinkBridge::onSerialReadyRead()
 {
+    RCLCPP_INFO(this->get_logger(), "ground readyRead triggered, bytes=%lld",
+                static_cast<long long>(serial_.bytesAvailable()));
     rx_buffer_.append(serial_.readAll());
 
     //接收到数据后，进入第一层handlePacket处理函数，后续分路
