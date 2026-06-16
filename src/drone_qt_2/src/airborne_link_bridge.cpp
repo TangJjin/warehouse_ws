@@ -41,21 +41,21 @@ void AirborneLinkBridge::setupRosInterfaces()
 
     path_ready_sub_ = this->create_subscription<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready",
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local(),
         [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg) {
             publishPathReady(msg);
         });
 
     task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
         "/drone/task/status",
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local(),
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
             publishTaskStatus(msg);
         });
 
     return_world_group_sub_ = this->create_subscription<drone_msgs::msg::WorldGroup>(
         "/drone/return/world_group",
-        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local(),
         [this](const drone_msgs::msg::WorldGroup::SharedPtr msg) {
             publishReturnWorldGroup(msg);
         });

@@ -681,6 +681,8 @@ void GroundLinkBridge::handleUploadMissionSummaryResponse(uint16_t seq, const QB
     quint32 action_count = 0;
     count_stream >> action_count;
 
+    pending_requests_.erase(seq);
+
     auto it = pending_upload_calls_.find(seq);
     if (it != pending_upload_calls_.end()) {
         it->second.success = (success != 0);
@@ -717,6 +719,8 @@ void GroundLinkBridge::handleStartOffboardResponse(uint16_t seq, const QByteArra
     const QByteArray msg_bytes = payload.mid(3, msg_len);
     const QString message = QString::fromUtf8(msg_bytes);
 
+    pending_requests_.erase(seq);
+
     auto it = pending_start_offboard_calls_.find(seq);
     if (it != pending_start_offboard_calls_.end()) {
         it->second.success = (success != 0);
@@ -749,6 +753,8 @@ void GroundLinkBridge::handleStartTaskResponse(uint16_t seq, const QByteArray &p
     const QByteArray msg_bytes = payload.mid(3, msg_len);
     const QString message = QString::fromUtf8(msg_bytes);
 
+    pending_requests_.erase(seq);
+
     auto it = pending_start_task_calls_.find(seq);
     if (it != pending_start_task_calls_.end()) {
         it->second.success = (success != 0);
@@ -780,6 +786,8 @@ void GroundLinkBridge::handleStopPushResponse(uint16_t seq, const QByteArray &pa
 
     const QByteArray msg_bytes = payload.mid(3, msg_len);
     const QString message = QString::fromUtf8(msg_bytes);
+
+    pending_requests_.erase(seq);
 
     auto it = pending_stop_push_calls_.find(seq);
     if (it != pending_stop_push_calls_.end()) {
