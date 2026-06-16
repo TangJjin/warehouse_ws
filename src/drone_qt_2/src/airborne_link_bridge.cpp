@@ -337,9 +337,9 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         const QByteArray saved_path;
         resp_stream << static_cast<quint8>(0);
         resp_stream << static_cast<quint16>(msg.size());
-        resp_payload.append(msg);
+        resp_stream.writeRawData(msg.constData(), msg.size());
         resp_stream << static_cast<quint16>(saved_path.size());
-        resp_payload.append(saved_path);
+        resp_stream.writeRawData(saved_path.constData(), saved_path.size());
         resp_stream << static_cast<quint32>(0);
 
         cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
@@ -366,9 +366,9 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         const QByteArray saved_path;
         resp_stream << static_cast<quint8>(0);
         resp_stream << static_cast<quint16>(msg.size());
-        resp_payload.append(msg);
+        resp_stream.writeRawData(msg.constData(), msg.size());
         resp_stream << static_cast<quint16>(saved_path.size());
-        resp_payload.append(saved_path);
+        resp_stream.writeRawData(saved_path.constData(), saved_path.size());
         resp_stream << static_cast<quint32>(0);
 
         cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
@@ -439,9 +439,9 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         const QByteArray saved_path;
         resp_stream << static_cast<quint8>(0);
         resp_stream << static_cast<quint16>(msg.size());
-        resp_payload.append(msg);
+        resp_stream.writeRawData(msg.constData(), msg.size());
         resp_stream << static_cast<quint16>(saved_path.size());
-        resp_payload.append(saved_path);
+        resp_stream.writeRawData(saved_path.constData(), saved_path.size());
         resp_stream << static_cast<quint32>(0);
 
         cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
@@ -466,9 +466,9 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
 
             resp_stream << static_cast<quint8>(response->success ? 1 : 0);
             resp_stream << static_cast<quint16>(msg.size());
-            resp_payload.append(msg);
+            resp_stream.writeRawData(msg.constData(), msg.size());
             resp_stream << static_cast<quint16>(saved_path.size());
-            resp_payload.append(saved_path);
+            resp_stream.writeRawData(saved_path.constData(), saved_path.size());
             resp_stream << static_cast<quint32>(response->action_count);
 
             cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
