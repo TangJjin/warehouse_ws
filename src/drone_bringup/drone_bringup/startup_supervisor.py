@@ -72,6 +72,14 @@ class StartupSupervisor:
                 ready_qos_reliability='best_effort',
             ),
             StartupStep(
+                name='airborne_link_bridge',
+                command=['ros2', 'run', 'drone_qt_2', 'airborne_link_bridge'],
+                ready_topic='/mavros/state',
+                ready_type='mavros_msgs/msg/State',
+                timeout_sec=15,
+                ready_qos_reliability='best_effort',
+            ),
+            StartupStep(
                 name='compare_yaw',
                 command=['ros2', 'run', 'drone_localization', 'compare_yaw_node'],
                 ready_topic='/pose_yaw_compare/delta',
