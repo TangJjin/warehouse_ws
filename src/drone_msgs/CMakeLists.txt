@@ -13,6 +13,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/K230AnimalCenter.msg"
   "msg/K230AnimalTarget.msg"
   "msg/K230AnimalTargets.msg"
+  "msg/K230CaptureReady.msg"
+  "msg/K230RecordResult.msg"
+  "msg/K230ScanPointDone.msg"
   "msg/GridPoint.msg"
   "msg/GridGroup.msg"
   "msg/WorldPoint.msg"
@@ -24,7 +27,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/UploadMissionSummary.srv"
   DEPENDENCIES builtin_interfaces
 )
-
 
 ament_export_dependencies(rosidl_default_runtime)
 
