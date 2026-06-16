@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <deque>
 
 #include <QObject>
 #include <QByteArray>
@@ -29,6 +30,12 @@ public:
     ~AirborneLinkBridge() override = default;
 
 private:
+    struct CachedResponse
+    {
+        uint8_t response_type{0};
+        QByteArray payload;
+    };
+
     struct Packet
     {
         uint8_t type{0};
@@ -71,6 +78,8 @@ private:
     void sendAck(uint16_t seq);
     //发送响应帧，包含消息类型、序列号和载荷数据
     void sendResponse(uint8_t type, uint16_t seq, const QByteArray &payload);
+    //服务任务去重
+    void cacheAndSendResponse(uint8_t type, uint16_t seq, const QByteArray &payload);
 
     rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_client_;
     rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
@@ -86,4 +95,7 @@ private:
 
     QSerialPort serial_;
     QByteArray rx_buffer_;
+
+    std::unordered_map<uint16_t, CachedResponse> completed_requests_;
+    std::deque<uint16_t> completed_request_order_;
 };

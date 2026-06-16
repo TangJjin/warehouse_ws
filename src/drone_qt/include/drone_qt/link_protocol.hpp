@@ -20,6 +20,7 @@ namespace drone_msgs::link_protocol
     constexpr uint8_t kTypeStartOffboardResp = 0x82;//消息类型：start_offboard 响应
     constexpr uint8_t kTypeStartTaskResp = 0x83;//消息类型：start_task 响应
     constexpr uint8_t kTypeStopPushResp = 0x84;//消息类型：stop_push 响应
+    
     constexpr uint8_t kTypeDroneStatus = 0x90;//消息类型：无人机状态
     constexpr uint8_t kTypePathReady = 0x91;//消息类型：路径准备就绪
     constexpr uint8_t kTypeTaskStatus = 0x92;//消息类型：任务状态

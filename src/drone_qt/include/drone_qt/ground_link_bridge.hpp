@@ -50,6 +50,36 @@ private:
         rclcpp::Time deadline;//请求的截止时间，超过这个时间还没有收到响应就认为请求失败，需要重试
     };
 
+    struct PendingUploadMissionSummaryCall
+    {
+        bool done{false};
+        bool success{false};
+        std::string message;
+        std::string saved_path;
+        uint32_t action_count{0};
+    };
+
+    struct PendingStartOffboardCall
+    {
+        bool done{false};
+        bool success{false};
+        std::string message;
+    };
+
+    struct PendingStartTaskCall
+    {
+        bool done{false};
+        bool success{false};
+        std::string message;
+    };
+
+    struct PendingStopPushCall
+    {
+        bool done{false};
+        bool success{false};
+        std::string message;
+    };
+
     //设置ROS接口，包括创建发布者、服务端和订阅者等
     void setupRosInterfaces();
     //设置串口通信参数，并连接相关信号槽
@@ -90,13 +120,13 @@ private:
     void handleReturnWorldGroupReport(const QByteArray &payload);
     void handleVisionBarcodeReport(const QByteArray &payload);
     void handleDeltaReport(const QByteArray &payload);
-    void handleUploadMissionSummaryResponse(const QByteArray &payload);
-    void handleStartOffboardResponse(const QByteArray &payload);
-    void handleStartTaskResponse(const QByteArray &payload);
-    void handleStopPushResponse(const QByteArray &payload);
+    void handleUploadMissionSummaryResponse(uint16_t seq, const QByteArray &payload);
+    void handleStartOffboardResponse(uint16_t seq, const QByteArray &payload);
+    void handleStartTaskResponse(uint16_t seq, const QByteArray &payload);
+    void handleStopPushResponse(uint16_t seq, const QByteArray &payload);
 
     //发送函数，用于发送协议帧到串口
-    void sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
+    uint16_t sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
     void sendAck(uint16_t seq);
 
     rclcpp::Service<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_srv_;
@@ -112,6 +142,11 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
 
     rclcpp::TimerBase::SharedPtr retry_timer_;
+
+    std::unordered_map<uint16_t, PendingUploadMissionSummaryCall> pending_upload_calls_;
+    std::unordered_map<uint16_t, PendingStartOffboardCall> pending_start_offboard_calls_;
+    std::unordered_map<uint16_t, PendingStartTaskCall> pending_start_task_calls_;
+    std::unordered_map<uint16_t, PendingStopPushCall> pending_stop_push_calls_;
 
     QSerialPort serial_;
     QByteArray rx_buffer_;
