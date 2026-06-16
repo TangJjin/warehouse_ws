@@ -1,6 +1,8 @@
 #include "drone_qt/ground_link_bridge.hpp"
 
+#include <QCoreApplication>
 #include <QDataStream>
+#include <QEventLoop>
 
 namespace lp = drone_msgs::link_protocol;
 
@@ -73,9 +75,7 @@ void GroundLinkBridge::setupRosInterfaces()
 
             const auto deadline = this->now() + rclcpp::Duration::from_seconds(8.0);
             while (rclcpp::ok()) {
-                if (serial_.waitForReadyRead(20)) {
-                    onSerialReadyRead();
-                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                 onRetryTimer();
 
                 auto it = pending_upload_calls_.find(seq);
@@ -124,9 +124,7 @@ void GroundLinkBridge::setupRosInterfaces()
 
             const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
-                if (serial_.waitForReadyRead(20)) {
-                    onSerialReadyRead();
-                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                 onRetryTimer();
 
                 auto it = pending_start_offboard_calls_.find(seq);
@@ -169,9 +167,7 @@ void GroundLinkBridge::setupRosInterfaces()
 
             const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
-                if (serial_.waitForReadyRead(20)) {
-                    onSerialReadyRead();
-                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                 onRetryTimer();
 
                 auto it = pending_start_task_calls_.find(seq);
@@ -214,9 +210,7 @@ void GroundLinkBridge::setupRosInterfaces()
 
             const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
-                if (serial_.waitForReadyRead(20)) {
-                    onSerialReadyRead();
-                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                 onRetryTimer();
 
                 auto it = pending_stop_push_calls_.find(seq);
@@ -252,6 +246,10 @@ void GroundLinkBridge::setupSerial()
     serial_.setParity(QSerialPort::NoParity);
     serial_.setStopBits(QSerialPort::OneStop);
     serial_.setFlowControl(QSerialPort::NoFlowControl);
+
+    QObject::connect(&serial_, &QSerialPort::readyRead, [this]() {
+        onSerialReadyRead();
+    });
 
     if (!serial_.open(QIODevice::ReadWrite)) {
         RCLCPP_ERROR(this->get_logger(), "failed to open serial port");
