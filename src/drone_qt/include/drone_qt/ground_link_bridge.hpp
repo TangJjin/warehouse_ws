@@ -141,8 +141,6 @@ private:
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
 
-    rclcpp::TimerBase::SharedPtr retry_timer_;
-
     std::unordered_map<uint16_t, PendingUploadMissionSummaryCall> pending_upload_calls_;
     std::unordered_map<uint16_t, PendingStartOffboardCall> pending_start_offboard_calls_;
     std::unordered_map<uint16_t, PendingStartTaskCall> pending_start_task_calls_;
