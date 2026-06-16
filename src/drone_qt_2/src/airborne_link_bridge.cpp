@@ -127,6 +127,11 @@ void AirborneLinkBridge::handlePacket(const Packet &packet)
     //如果收到的帧需要ACK，则先发送ACK帧，通知对方已经收到消息，避免对方继续重试
     if (packet.flags & lp::kFlagNeedAck) {
         sendAck(packet.seq);
+        auto it = completed_requests_.find(packet.seq);//发现重复调用
+        if (it != completed_requests_.end()) {
+            sendResponse(it->second.response_type, packet.seq, it->second.payload);
+            return;
+        }
     }
 
     //根据帧的类型调用不同的处理逻辑，并发送相应的ACK或响应数据
@@ -178,14 +183,18 @@ void AirborneLinkBridge::publishDroneStatus(const drone_msgs::msg::DroneStatus::
     QDataStream stream(&payload, QIODevice::WriteOnly);
     stream.setByteOrder(QDataStream::LittleEndian);
 
+    /*************************消息打包**************************/
+
     stream << static_cast<quint8>(msg->connected ? 1 : 0);
-    stream << msg->battery_percent;
-    stream << static_cast<qint32>(msg->flight_mode);
+    stream << static_cast<float>(msg->battery_percent);
+    stream << static_cast<quint8>(msg->flight_mode);
     stream << static_cast<quint8>(msg->armed ? 1 : 0);
 
     const QByteArray state = QByteArray::fromStdString(msg->state);
     stream << static_cast<quint16>(state.size());
     payload.append(state);
+
+    /**********************************************************/
 
     const QByteArray frame = encodeFrame(lp::kTypeDroneStatus, 0, 0, payload);
     serial_.write(frame);
@@ -193,7 +202,29 @@ void AirborneLinkBridge::publishDroneStatus(const drone_msgs::msg::DroneStatus::
 
 void AirborneLinkBridge::publishTaskStatus(const drone_msgs::msg::TaskStatus::SharedPtr msg)
 {
+    if (!msg) {
+        return;
+    }
 
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    /*************************消息打包**************************/
+
+    stream << static_cast<quint8>(msg->task_running ? 1 : 0);
+
+    const QByteArray action_name = QByteArray::fromStdString(msg->action_name);
+    stream << static_cast<quint16>(action_name.size());
+    payload.append(action_name);
+
+    stream << static_cast<qint32>(msg->action_step);
+    stream << static_cast<quint8>(msg->action_num);
+
+    /**********************************************************/
+
+    const QByteArray frame = encodeFrame(lp::kTypeTaskStatus, 0, 0, payload);
+    serial_.write(frame);
 }
 
 void AirborneLinkBridge::publishPathReady(const drone_msgs::msg::ReadyStatus::SharedPtr msg)
@@ -203,6 +234,7 @@ void AirborneLinkBridge::publishPathReady(const drone_msgs::msg::ReadyStatus::Sh
     }
 
     QByteArray payload;
+    //只有一个字节就不用stream了
     payload.append(static_cast<char>(msg->air_route_ready ? 1 : 0));
     const QByteArray frame = encodeFrame(lp::kTypePathReady, 0, 0, payload);
     serial_.write(frame);
@@ -210,17 +242,78 @@ void AirborneLinkBridge::publishPathReady(const drone_msgs::msg::ReadyStatus::Sh
 
 void AirborneLinkBridge::publishReturnWorldGroup(const drone_msgs::msg::WorldGroup::SharedPtr msg)
 {
+    if (!msg) {
+        return;
+    }
 
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    /*************************消息打包**************************/
+
+    const auto &points = msg->points;
+    stream << static_cast<quint16>(points.size());
+
+    for (const auto &point : points) {
+        stream << static_cast<float>(point.x);
+        stream << static_cast<float>(point.y);
+    }
+
+    /**********************************************************/
+
+    const QByteArray frame = encodeFrame(lp::kTypeReturnWorldGroup, 0, 0, payload);
+    serial_.write(frame);
 }
 
 void AirborneLinkBridge::publishVisionBarcode(const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
 {
+    if (!msg) {
+        return;
+    }
 
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    /*************************消息打包**************************/
+
+    stream << static_cast<qint32>(msg->stamp.sec);
+    stream << static_cast<quint32>(msg->stamp.nanosec);
+
+    const QByteArray barcode = QByteArray::fromStdString(msg->barcode);
+    stream << static_cast<quint16>(barcode.size());
+    payload.append(barcode);
+    const QByteArray image_format = QByteArray::fromStdString(msg->image_format);
+    stream << static_cast<quint16>(image_format.size());
+    payload.append(image_format);
+
+    /**********************************************************/
+
+    const QByteArray frame = encodeFrame(lp::kTypeVisionBarcode, 0, 0, payload);
+    serial_.write(frame);
 }
 
-void AirborneLinkBridge::publishDelta(const drone_msgs::msg::Vector3::SharedPtr msg)
+void AirborneLinkBridge::publishDelta(const geometry_msgs::msg::Vector3::SharedPtr msg)
 {
+    if (!msg) {
+        return;
+    }
 
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    /*************************消息打包**************************/
+
+    stream << static_cast<float>(msg->x);
+    stream << static_cast<float>(msg->y);
+    stream << static_cast<float>(msg->z);
+
+    /**********************************************************/    
+
+    const QByteArray frame = encodeFrame(lp::kTypeDelta, 0, 0, payload);
+    serial_.write(frame);
 }
 
 
@@ -235,7 +328,151 @@ void AirborneLinkBridge::publishDelta(const drone_msgs::msg::Vector3::SharedPtr 
 
 void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const QByteArray &payload)
 {
+    if (!upload_mission_summary_client_ || !upload_mission_summary_client_->service_is_ready()) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
 
+        const QByteArray msg = QByteArray("service /drone/upload_mission_summary not ready");
+        const QByteArray saved_path;
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+        resp_stream << static_cast<quint16>(saved_path.size());
+        resp_payload.append(saved_path);
+        resp_stream << static_cast<quint32>(0);
+
+        cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
+        return;
+    }
+
+    QDataStream stream(payload);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint16 point_count = 0;
+    stream >> point_count;
+
+    const int fixed_summary_size =
+        8 * 8 +   // 8个float64
+        6 * 1 +   // 6个bool按uint8发
+        2;        // frame_len
+
+    if (payload.size() < 2 + static_cast<int>(point_count) * 8 + fixed_summary_size) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+        const QByteArray msg = QByteArray("invalid payload for UploadMissionSummaryReq");
+        const QByteArray saved_path;
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+        resp_stream << static_cast<quint16>(saved_path.size());
+        resp_payload.append(saved_path);
+        resp_stream << static_cast<quint32>(0);
+
+        cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
+        return;
+    }
+
+    auto request = std::make_shared<drone_msgs::srv::UploadMissionSummary::Request>();
+    request->points.reserve(point_count);
+
+    for (quint16 i = 0; i < point_count; ++i) {
+        float x = 0.0f;
+        float y = 0.0f;
+        stream >> x;
+        stream >> y;
+
+        drone_msgs::msg::WorldPoint point;
+        point.x = x;
+        point.y = y;
+        request->points.push_back(point);
+    }
+
+    auto &summary = request->summary;
+    stream >> summary.takeoff_altitude;
+    stream >> summary.move_altitude;
+    stream >> summary.start_altitude;
+    stream >> summary.yaw;
+    stream >> summary.tolerance;
+    stream >> summary.takeoff_hover_duration;
+    stream >> summary.landing_hover_duration;
+    stream >> summary.move_hover_duration;
+
+    quint8 add_hover_between_takeoff = 0;
+    quint8 add_hover_between_landing = 0;
+    quint8 add_hover_between_moves = 0;
+    quint8 use_camera_aim = 0;
+    quint8 auto_start_mission = 0;
+    quint8 compress_straight_segments = 0;
+
+    stream >> add_hover_between_takeoff;
+    stream >> add_hover_between_landing;
+    stream >> add_hover_between_moves;
+    stream >> use_camera_aim;
+    stream >> auto_start_mission;
+    stream >> compress_straight_segments;
+
+    summary.add_hover_between_takeoff = (add_hover_between_takeoff != 0);
+    summary.add_hover_between_landing = (add_hover_between_landing != 0);
+    summary.add_hover_between_moves = (add_hover_between_moves != 0);
+    summary.use_camera_aim = (use_camera_aim != 0);
+    summary.auto_start_mission = (auto_start_mission != 0);
+    summary.compress_straight_segments = (compress_straight_segments != 0);
+
+    quint16 frame_len = 0;
+    stream >> frame_len;
+
+    const int frame_offset =
+        2 + static_cast<int>(point_count) * 8 +
+        8 * 8 +
+        6 * 1 +
+        2;
+
+    if (payload.size() < frame_offset + frame_len) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+        const QByteArray msg = QByteArray("invalid frame in UploadMissionSummaryReq");
+        const QByteArray saved_path;
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+        resp_stream << static_cast<quint16>(saved_path.size());
+        resp_payload.append(saved_path);
+        resp_stream << static_cast<quint32>(0);
+
+        cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
+        return;
+    }
+
+    const QByteArray frame_bytes = payload.mid(frame_offset, frame_len);
+    summary.frame = frame_bytes.toStdString();
+
+    upload_mission_summary_client_->async_send_request(
+        request,
+        [this, seq](rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedFuture future)
+        {
+            const auto response = future.get();
+
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray::fromStdString(response->message);
+            const QByteArray saved_path = QByteArray::fromStdString(response->saved_path);
+
+            resp_stream << static_cast<quint8>(response->success ? 1 : 0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_payload.append(msg);
+            resp_stream << static_cast<quint16>(saved_path.size());
+            resp_payload.append(saved_path);
+            resp_stream << static_cast<quint32>(response->action_count);
+
+            cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
+        });
 }
 
 void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArray &payload)
@@ -250,7 +487,7 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
         resp_stream << static_cast<quint16>(msg.size());
         resp_payload.append(msg);
 
-        sendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
+        cacheAndSendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
         return;
     }
 
@@ -270,7 +507,7 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
         resp_stream << static_cast<quint16>(msg.size());
         resp_payload.append(msg);
 
-        sendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
+        cacheAndSendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
         return;
     }
 
@@ -294,19 +531,131 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
             resp_stream << static_cast<quint8>(response->success ? 1 : 0);
             resp_stream << static_cast<quint16>(msg.size());
             resp_payload.append(msg);
-
-            sendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
+  
+            cacheAndSendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
         });
 }
 
 void AirborneLinkBridge::handleStartTaskRequest(uint16_t seq, const QByteArray &payload)
 {
+    if (!start_task_client_ || !start_task_client_->service_is_ready()) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
 
+        const QByteArray msg = QByteArray("service /drone/start_task not ready");
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+
+        cacheAndSendResponse(lp::kTypeStartTaskResp, seq, resp_payload);
+        return;
+    }
+
+    QDataStream stream(payload);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint16 source_len = 0;
+    stream >> source_len;
+
+    if (payload.size() < 2 + source_len) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+        const QByteArray msg = QByteArray("invalid payload for StartTaskReq");
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+
+        cacheAndSendResponse(lp::kTypeStartTaskResp, seq, resp_payload);
+        return;
+    }
+
+    const QByteArray source_bytes = payload.mid(2, source_len);
+    const std::string request_source = source_bytes.toStdString();
+
+    auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
+    request->request_source = request_source;
+
+    start_task_client_->async_send_request(
+        request,
+        [this, seq](rclcpp::Client<drone_msgs::srv::StartTask>::SharedFuture future)
+        {
+            const auto response = future.get();
+
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray::fromStdString(response->message);
+            resp_stream << static_cast<quint8>(response->success ? 1 : 0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_payload.append(msg);
+
+            cacheAndSendResponse(lp::kTypeStartTaskResp, seq, resp_payload);
+        });
 }
 
 void AirborneLinkBridge::handleStopPushRequest(uint16_t seq, const QByteArray &payload)
 {
+    if (!stop_push_client_ || !stop_push_client_->service_is_ready()) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
 
+        const QByteArray msg = QByteArray("service /drone/stop_push not ready");
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+
+        cacheAndSendResponse(lp::kTypeStopPushResp, seq, resp_payload);
+        return;
+    }
+
+    QDataStream stream(payload);
+    stream.setByteOrder(QDataStream::LittleEndian);
+
+    quint16 source_len = 0;
+    stream >> source_len;
+
+    if (payload.size() < 2 + source_len) {
+        QByteArray resp_payload;
+        QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+        resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+        const QByteArray msg = QByteArray("invalid payload for StopPushReq");
+        resp_stream << static_cast<quint8>(0);
+        resp_stream << static_cast<quint16>(msg.size());
+        resp_payload.append(msg);
+
+        cacheAndSendResponse(lp::kTypeStopPushResp, seq, resp_payload);
+        return;
+    }
+
+    const QByteArray source_bytes = payload.mid(2, source_len);
+    const std::string request_source = source_bytes.toStdString();
+
+    auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
+    request->request_source = request_source;
+
+    stop_push_client_->async_send_request(
+        request,
+        [this, seq](rclcpp::Client<drone_msgs::srv::StartTask>::SharedFuture future)
+        {
+            const auto response = future.get();
+
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray::fromStdString(response->message);
+            resp_stream << static_cast<quint8>(response->success ? 1 : 0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_payload.append(msg);
+
+            cacheAndSendResponse(lp::kTypeStopPushResp, seq, resp_payload);
+        });
 }
 
 
@@ -439,4 +788,19 @@ bool AirborneLinkBridge::validateFrame(const QByteArray &frame) const
 
     //如果帧数据的CRC16校验通过，则认为帧数据合法，可以继续进行后续处理；否则认为帧数据有误，需要丢弃
     return recv_crc == calc_crc;
+}
+
+void AirborneLinkBridge::cacheAndSendResponse(uint8_t type, uint16_t seq, const QByteArray &payload)
+{
+    //保存对应seq的type和payload
+    completed_requests_[seq] = CachedResponse{type, payload};
+    completed_request_order_.push_back(seq);
+
+    while (completed_request_order_.size() > 100) {
+        const uint16_t old_seq = completed_request_order_.front();
+        completed_request_order_.pop_front();
+        completed_requests_.erase(old_seq);
+    }
+
+    sendResponse(type, seq, payload);
 }
