@@ -29,11 +29,6 @@ GroundLinkBridge::GroundLinkBridge()
 {
     setupRosInterfaces();
     setupSerial();
-
-    //启动一个定时器，周期为100毫秒，用于检查待重试的请求是否超时，并进行重试
-    retry_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&GroundLinkBridge::onRetryTimer, this));
 }
 
 void GroundLinkBridge::setupRosInterfaces()
@@ -57,8 +52,6 @@ void GroundLinkBridge::setupRosInterfaces()
     delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
         "/serial/drone/pose_yaw_compare/delta", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
-    
-    
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
         "/serial/drone/upload_mission_summary",
         [this](
@@ -74,14 +67,17 @@ void GroundLinkBridge::setupRosInterfaces()
             }
 
             const QByteArray payload = encodeUploadMissionSummaryRequest(*request, next_msg_id_++);
-            const uint16_t seq = sendPacket(lp::kTypeUploadMissionSummaryReq, kFlagNeedAck, payload, true);
+            const uint16_t seq = sendPacket(lp::kTypeUploadMissionSummaryReq, lp::kFlagNeedAck, payload, true);
 
             pending_upload_calls_[seq] = PendingUploadMissionSummaryCall{};
 
-            const auto start = this->now();
-            rclcpp::WallRate rate(100);
-
+            const auto deadline = this->now() + rclcpp::Duration::from_seconds(8.0);
             while (rclcpp::ok()) {
+                if (serial_.waitForReadyRead(20)) {
+                    onSerialReadyRead();
+                }
+                onRetryTimer();
+
                 auto it = pending_upload_calls_.find(seq);
                 if (it != pending_upload_calls_.end() && it->second.done) {
                     response->success = it->second.success;
@@ -92,7 +88,7 @@ void GroundLinkBridge::setupRosInterfaces()
                     return;
                 }
 
-                if ((this->now() - start) > rclcpp::Duration::from_seconds(8.0)) {
+                if (this->now() > deadline) {
                     response->success = false;
                     response->message = "等待 UploadMissionSummaryResp 超时";
                     response->saved_path = "";
@@ -100,8 +96,6 @@ void GroundLinkBridge::setupRosInterfaces()
                     pending_upload_calls_.erase(seq);
                     return;
                 }
-
-                rate.sleep();
             }
 
             response->success = false;
@@ -128,10 +122,13 @@ void GroundLinkBridge::setupRosInterfaces()
 
             pending_start_offboard_calls_[seq] = PendingStartOffboardCall{};
 
-            const auto start = this->now();
-            rclcpp::WallRate rate(100);
-
+            const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
+                if (serial_.waitForReadyRead(20)) {
+                    onSerialReadyRead();
+                }
+                onRetryTimer();
+
                 auto it = pending_start_offboard_calls_.find(seq);
                 if (it != pending_start_offboard_calls_.end() && it->second.done) {
                     response->success = it->second.success;
@@ -140,14 +137,12 @@ void GroundLinkBridge::setupRosInterfaces()
                     return;
                 }
 
-                if ((this->now() - start) > rclcpp::Duration::from_seconds(5.0)) {
+                if (this->now() > deadline) {
                     response->success = false;
                     response->message = "等待 StartOffboardResp 超时";
                     pending_start_offboard_calls_.erase(seq);
                     return;
                 }
-
-                rate.sleep();
             }
 
             response->success = false;
@@ -172,10 +167,13 @@ void GroundLinkBridge::setupRosInterfaces()
 
             pending_start_task_calls_[seq] = PendingStartTaskCall{};
 
-            const auto start = this->now();
-            rclcpp::WallRate rate(100);
-
+            const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
+                if (serial_.waitForReadyRead(20)) {
+                    onSerialReadyRead();
+                }
+                onRetryTimer();
+
                 auto it = pending_start_task_calls_.find(seq);
                 if (it != pending_start_task_calls_.end() && it->second.done) {
                     response->success = it->second.success;
@@ -184,14 +182,12 @@ void GroundLinkBridge::setupRosInterfaces()
                     return;
                 }
 
-                if ((this->now() - start) > rclcpp::Duration::from_seconds(5.0)) {
+                if (this->now() > deadline) {
                     response->success = false;
                     response->message = "等待 StartTaskResp 超时";
                     pending_start_task_calls_.erase(seq);
                     return;
                 }
-
-                rate.sleep();
             }
 
             response->success = false;
@@ -216,10 +212,13 @@ void GroundLinkBridge::setupRosInterfaces()
 
             pending_stop_push_calls_[seq] = PendingStopPushCall{};
 
-            const auto start = this->now();
-            rclcpp::WallRate rate(100);
-
+            const auto deadline = this->now() + rclcpp::Duration::from_seconds(5.0);
             while (rclcpp::ok()) {
+                if (serial_.waitForReadyRead(20)) {
+                    onSerialReadyRead();
+                }
+                onRetryTimer();
+
                 auto it = pending_stop_push_calls_.find(seq);
                 if (it != pending_stop_push_calls_.end() && it->second.done) {
                     response->success = it->second.success;
@@ -228,14 +227,12 @@ void GroundLinkBridge::setupRosInterfaces()
                     return;
                 }
 
-                if ((this->now() - start) > rclcpp::Duration::from_seconds(5.0)) {
+                if (this->now() > deadline) {
                     response->success = false;
                     response->message = "等待 StopPushResp 超时";
                     pending_stop_push_calls_.erase(seq);
                     return;
                 }
-
-                rate.sleep();
             }
 
             response->success = false;
@@ -255,10 +252,6 @@ void GroundLinkBridge::setupSerial()
     serial_.setParity(QSerialPort::NoParity);
     serial_.setStopBits(QSerialPort::OneStop);
     serial_.setFlowControl(QSerialPort::NoFlowControl);
-
-    QObject::connect(&serial_, &QSerialPort::readyRead, [this]() {
-        onSerialReadyRead();
-    });
 
     if (!serial_.open(QIODevice::ReadWrite)) {
         RCLCPP_ERROR(this->get_logger(), "failed to open serial port");
@@ -708,7 +701,7 @@ void GroundLinkBridge::handleUploadMissionSummaryResponse(uint16_t seq, const QB
         static_cast<unsigned int>(action_count));
 }
 
-void GroundLinkBridge::handleStartOffboardResponse(const QByteArray &payload)
+void GroundLinkBridge::handleStartOffboardResponse(uint16_t seq, const QByteArray &payload)
 {
     QDataStream stream(payload);
     stream.setByteOrder(QDataStream::LittleEndian);
@@ -740,7 +733,7 @@ void GroundLinkBridge::handleStartOffboardResponse(const QByteArray &payload)
         message.toStdString().c_str());
 }
 
-void GroundLinkBridge::handleStartTaskResponse(const QByteArray &payload)
+void GroundLinkBridge::handleStartTaskResponse(uint16_t seq, const QByteArray &payload)
 {
     QDataStream stream(payload);
     stream.setByteOrder(QDataStream::LittleEndian);
@@ -772,7 +765,7 @@ void GroundLinkBridge::handleStartTaskResponse(const QByteArray &payload)
         message.toStdString().c_str());
 }
 
-void GroundLinkBridge::handleStopPushResponse(const QByteArray &payload)
+void GroundLinkBridge::handleStopPushResponse(uint16_t seq, const QByteArray &payload)
 {
     QDataStream stream(payload);
     stream.setByteOrder(QDataStream::LittleEndian);
