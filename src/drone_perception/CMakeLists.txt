@@ -152,26 +152,22 @@ find_library(RDK_DNN_LIBRARY
   PATHS /usr/lib /usr/lib/aarch64-linux-gnu
 )
 
-find_library(RDK_HBRT_LIBRARY
-  NAMES hbrt
-  PATHS /usr/lib /usr/lib/aarch64-linux-gnu
-)
-
-if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY AND RDK_HBRT_LIBRARY)
+if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY)
   add_executable(bpu_model_probe
     src/bpu_model_probe.cpp
+    src/bpu_yolo_detector.cpp
   )
 
   target_compile_features(bpu_model_probe PUBLIC cxx_std_17)
 
   target_include_directories(bpu_model_probe
     PRIVATE
+    include
     ${RDK_DNN_INCLUDE_DIR}
   )
 
   target_link_libraries(bpu_model_probe
     ${RDK_DNN_LIBRARY}
-    ${RDK_HBRT_LIBRARY}
   )
 
   install(TARGETS
@@ -181,7 +177,7 @@ if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY AND RDK_HBRT_LIBRARY)
 else()
   message(STATUS
     "Skipping bpu_model_probe because RDK BPU SDK is unavailable. "
-    "Need dnn/hb_dnn.h, libdnn.so, and libhbrt.so.")
+    "Need dnn/hb_dnn.h and libdnn.so.")
 endif()
 
 install(DIRECTORY include/
