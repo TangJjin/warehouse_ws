@@ -42,17 +42,17 @@ void AirborneNode::setupInterfaces()
     local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/drone/local_position", position_pub_qos);
 
-    auto drone_control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    auto drone_control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
     //创建一个发布者，发布无人机控制状态话题，消息类型为自定义消息
     return_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
         "/drone/task/status", drone_control_status_qos);
 
-    auto drone_control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    auto drone_control_path_ready_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
     //创建一个发布者，发布无人机控制路径就绪话题，消息类型为自定义消息
     return_path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
         "/drone/control/path_ready", drone_control_path_ready_qos);
 
-    auto drone_return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    auto drone_return_world_group_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
     //创建一个发布者，发布无人机回传路线话题，消息类型为自定义消息
     return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
         "/drone/return/world_group", drone_return_world_group_qos);
