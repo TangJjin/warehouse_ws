@@ -572,11 +572,11 @@ void AirborneLinkBridge::handleStartTaskRequest(uint16_t seq, const QByteArray &
         return;
     }
 
-    const QByteArray source_bytes = payload.mid(2, source_len);
-    const std::string request_source = source_bytes.toStdString();
+    const QByteArray task_name_bytes = payload.mid(2, source_len);
+    const std::string task_name = task_name_bytes.toStdString();
 
     auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
-    request->request_source = request_source;
+    request->task_name = task_name;
 
     start_task_client_->async_send_request(
         request,
@@ -633,11 +633,11 @@ void AirborneLinkBridge::handleStopPushRequest(uint16_t seq, const QByteArray &p
         return;
     }
 
-    const QByteArray source_bytes = payload.mid(2, source_len);
-    const std::string request_source = source_bytes.toStdString();
+    const QByteArray task_name_bytes = payload.mid(2, source_len);
+    const std::string task_name = task_name_bytes.toStdString();
 
     auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
-    request->request_source = request_source;
+    request->task_name = task_name;
 
     stop_push_client_->async_send_request(
         request,

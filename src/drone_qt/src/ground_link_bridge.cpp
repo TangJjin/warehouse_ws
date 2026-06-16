@@ -434,9 +434,9 @@ QByteArray GroundLinkBridge::encodeStartTaskRequest(
     stream.setByteOrder(QDataStream::LittleEndian);
 
     //取出请求里的字符串字段
-    const QByteArray source = QByteArray::fromStdString(request.request_source);
-    stream << static_cast<quint16>(source.size());//写入字符长度
-    payload.append(source);//写入本体内容
+    const QByteArray task_name = QByteArray::fromStdString(request.task_name);
+    stream << static_cast<quint16>(task_name.size());//写入字符长度
+    payload.append(task_name);//写入本体内容
     //输出：[字符串长度][字符串原始字节]
     return payload;
 }
@@ -450,9 +450,9 @@ QByteArray GroundLinkBridge::encodeStopPushRequest(
     stream.setByteOrder(QDataStream::LittleEndian);
 
     //取出请求里的字符串字段
-    const QByteArray source = QByteArray::fromStdString(request.request_source);
-    stream << static_cast<quint16>(source.size());//写入字符长度
-    payload.append(source);//写入本体内容
+    const QByteArray task_name = QByteArray::fromStdString(request.task_name);
+    stream << static_cast<quint16>(task_name.size());//写入字符长度
+    payload.append(task_name);//写入本体内容
     //输出：[字符串长度][字符串原始字节]
     return payload;
 }
