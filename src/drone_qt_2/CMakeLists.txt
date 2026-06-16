@@ -16,6 +16,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core SerialPort)
 
 add_executable(airborne_node
@@ -61,6 +62,7 @@ ament_target_dependencies(airborne_node
   std_srvs
   drone_msgs
   mavros_msgs
+  geometry_msgs
 )
 
 ament_target_dependencies(airborne_link_bridge
@@ -68,6 +70,7 @@ ament_target_dependencies(airborne_link_bridge
   std_msgs
   std_srvs
   drone_msgs
+  geometry_msgs
 )
 
 ament_target_dependencies(barcode_test_sender
