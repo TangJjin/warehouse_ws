@@ -95,15 +95,15 @@ void QrVisionNode::declareParameters()
 
 void QrVisionNode::initializeBpuDetector()
 {
-#if DRONE_PERCEP  TION_HAS_BPU
+#if DRONE_PERCEPTION_HAS_BPU
   if (!enable_bpu_) {
     return;
   }
 
   if (bpu_model_path_.empty()) {
     RCLCPP_WARN(
-      get_logger(),
-      "BPU inference is enabled but bpu_model_path is empty");
+        get_logger(),
+        "BPU inference is enabled but bpu_model_path is empty");
     enable_bpu_ = false;
     return;
   }
@@ -120,16 +120,16 @@ void QrVisionNode::initializeBpuDetector()
     enable_bpu_ = false;
 
     RCLCPP_ERROR(
-      get_logger(),
-      "Failed to initalize BPU detector: %s",
-      e.what());
+        get_logger(),
+        "Failed to initialize BPU detector: %s",
+        e.what());
   }
 #else
   if (enable_bpu_) {
     RCLCPP_WARN(
-      get_logger(),
-      "BPU inference requested but this build has no RDK BPU SDK");
-      enable_bpu_ = false;
+        get_logger(),
+        "BPU inference requested but this build has no RDK BPU SDK");
+    enable_bpu_ = false;
   }
 #endif
 }
