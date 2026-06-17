@@ -115,7 +115,7 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
     out.setRealNumberPrecision(2);
 
     if (final_points.size() < 2) {
-        return;
+        return QString();
     }
 
     out << "# Mission configuration\n";
