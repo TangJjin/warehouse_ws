@@ -34,6 +34,7 @@ private:
 	static constexpr uint8_t kPacketTypeRecordResult = 5;
 	static constexpr double kDefaultRecordDeadbandM = 0.1;
 	static constexpr double kDefaultPendingCaptureTimeoutS = 5.0;
+	static constexpr double kRoutePointEpsilonM = 1e-3;
 
 	static speed_t baudrateToSpeed(int baudrate);
 	static uint32_t readU32Be(const uint8_t *p);
@@ -55,6 +56,7 @@ private:
 	void publishHeartbeat();
 
 	void handleRoutePoints(const drone_msgs::msg::WorldGroup::SharedPtr msg);
+	bool routeMatchesScanPoints(const drone_msgs::msg::WorldGroup &msg) const;
 	void handleLocalPose(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 	void handleCaptureReady(const drone_msgs::msg::K230CaptureReady::SharedPtr msg);
 	void handleScanPointDone(const drone_msgs::msg::K230ScanPointDone::SharedPtr msg);
