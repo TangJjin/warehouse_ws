@@ -878,12 +878,27 @@ def stable_tracks(tracks):
 
 
 def assign_label_instance_ids(targets):
-    counts = {}
+    targets_by_label = {}
+
     for target in targets:
         label = str(target.get("label", ""))
-        current = counts.get(label, 0) + 1
-        counts[label] = current
-        target["label_instance_id"] = current
+        if label not in targets_by_label:
+            targets_by_label[label] = []
+        targets_by_label[label].append(target)
+
+    for label, label_targets in targets_by_label.items():
+        sorted_targets = sorted(
+            label_targets,
+            key=lambda t: (
+                int(t.get("track_id", -1)),
+                int(t.get("cx", -1)),
+                int(t.get("cy", -1)),
+            ),
+        )
+
+        for index, target in enumerate(sorted_targets):
+            target["label_instance_id"] = index + 1
+
     return targets
 
 
