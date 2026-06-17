@@ -4,6 +4,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -65,9 +66,11 @@ K230AnimalsUartRos2Node::K230AnimalsUartRos2Node() :
 	_record_result_pub = create_publisher<drone_msgs::msg::K230RecordResult>(
 		_record_result_topic, rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
+	const auto route_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
+
 	_route_points_sub = create_subscription<drone_msgs::msg::WorldGroup>(
 		_route_topic,
-		rclcpp::QoS(10).best_effort(),
+		route_qos,
 		std::bind(&K230AnimalsUartRos2Node::handleRoutePoints, this, std::placeholders::_1));
 
 	_local_pose_sub = create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -652,6 +655,25 @@ void K230AnimalsUartRos2Node::publishHeartbeat()
 	_heartbeat_pub->publish(msg);
 }
 
+bool K230AnimalsUartRos2Node::routeMatchesScanPoints(const drone_msgs::msg::WorldGroup &msg) const
+{
+	if (msg.points.size() != _scan_points.size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < msg.points.size(); ++i) {
+		const auto &point = msg.points[i];
+		const auto &scan_point = _scan_points[i];
+
+		if (std::fabs(point.x - scan_point.x) > kRoutePointEpsilonM ||
+		    std::fabs(point.y - scan_point.y) > kRoutePointEpsilonM) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 void K230AnimalsUartRos2Node::handleRoutePoints(const drone_msgs::msg::WorldGroup::SharedPtr msg)
 {
 	if (msg->points.empty()) {
@@ -659,7 +681,25 @@ void K230AnimalsUartRos2Node::handleRoutePoints(const drone_msgs::msg::WorldGrou
 		return;
 	}
 
+	if (routeMatchesScanPoints(*msg)) {
+		RCLCPP_INFO_THROTTLE(
+			get_logger(),
+			*get_clock(),
+			2000,
+			"handleRoutePoints: duplicate route ignored, keep current scan state");
+		return;
+	}
+
+	if (!_scan_points.empty()) {
+		RCLCPP_INFO(
+			get_logger(),
+			"handleRoutePoints: new route received, reset scan and record state");
+	}
+
 	_scan_points.clear();
+	_recorded_poses.clear();
+	_pending_capture = PendingCapture{};
+
 	_scan_points.reserve(msg->points.size());
 
 	for (size_t i = 0; i < msg->points.size(); ++i) {
