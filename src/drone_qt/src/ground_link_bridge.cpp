@@ -400,9 +400,21 @@ QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
     stream << static_cast<quint8>(summary.auto_start_mission ? 1 : 0);
     stream << static_cast<quint8>(summary.compress_straight_segments ? 1 : 0);
 
+    stream << static_cast<double>(summary.cam_tolerance);
+    stream << static_cast<double>(summary.camera_aim_pid_p);
+    stream << static_cast<double>(summary.camera_aim_pid_i);
+    stream << static_cast<double>(summary.camera_aim_pid_d);
+    stream << static_cast<double>(summary.camera_aim_target_timeout_s);
+    stream << static_cast<quint16>(summary.camera_aim_stable_cycles);
+    stream << static_cast<double>(summary.camera_aim_max_step);
+    stream << static_cast<double>(summary.camera_aim_wait_first_targets_timeout_s);
+    stream << static_cast<double>(summary.camera_aim_no_target_confirm_s);
+    stream << static_cast<double>(summary.camera_aim_record_result_timeout_s);
+    stream << static_cast<double>(summary.camera_aim_scan_point_timeout_s);
+
     const QByteArray frame = QByteArray::fromStdString(summary.frame);
     stream << static_cast<quint16>(frame.size());
-    payload.append(frame);
+    stream.writeRawData(frame.constData(), frame.size());
 
     return payload;
 }

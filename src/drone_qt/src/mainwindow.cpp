@@ -368,6 +368,18 @@ void MainWindow::setupConnections()
         summary.compress_straight_segments = true;//是否压缩直线段
         summary.frame = "world_body";
 
+        summary.cam_tolerance = 10.0;
+        summary.camera_aim_pid_p = 0.001;
+        summary.camera_aim_pid_i = 0.0;
+        summary.camera_aim_pid_d = 0.001;
+        summary.camera_aim_target_timeout_s = 0.5;
+        summary.camera_aim_stable_cycles = 20;
+        summary.camera_aim_max_step = 0.05;
+        summary.camera_aim_wait_first_targets_timeout_s = 2.0;
+        summary.camera_aim_no_target_confirm_s = 2.0;
+        summary.camera_aim_record_result_timeout_s = 5.0;
+        summary.camera_aim_scan_point_timeout_s = 30.0;
+
         run_log_view_->appendPlainText("正在上传路线和 mission 参数摘要到机载端...");
         start_button_->setEnabled(false);
         //发布坐标和参数摘要

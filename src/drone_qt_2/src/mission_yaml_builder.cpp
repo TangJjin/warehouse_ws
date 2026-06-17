@@ -62,6 +62,18 @@ AirborneMissionYamlBuilder::Options AirborneMissionYamlBuilder::fromMissionSumma
     options.auto_start_mission = summary.auto_start_mission;
     options.compress_straight_segments = summary.compress_straight_segments;
     options.frame = summary.frame;
+
+    options.cam_tolerance = summary.cam_tolerance;
+    options.camera_aim_pid_p = summary.camera_aim_pid_p;
+    options.camera_aim_pid_i = summary.camera_aim_pid_i;
+    options.camera_aim_pid_d = summary.camera_aim_pid_d;
+    options.camera_aim_target_timeout_s = summary.camera_aim_target_timeout_s;
+    options.camera_aim_stable_cycles = summary.camera_aim_stable_cycles;
+    options.camera_aim_max_step = summary.camera_aim_max_step;
+    options.camera_aim_wait_first_targets_timeout_s = summary.camera_aim_wait_first_targets_timeout_s;
+    options.camera_aim_no_target_confirm_s = summary.camera_aim_no_target_confirm_s;
+    options.camera_aim_record_result_timeout_s = summary.camera_aim_record_result_timeout_s;
+    options.camera_aim_scan_point_timeout_s = summary.camera_aim_scan_point_timeout_s;
     return options;
 }
 
@@ -102,6 +114,10 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
     out.setRealNumberNotation(QTextStream::FixedNotation);
     out.setRealNumberPrecision(2);
 
+    if (final_points.size() < 2) {
+        return;
+    }
+
     out << "# Mission configuration\n";
     out << "mission:\n";
     out << "  takeoff_altitude: " << options.takeoff_altitude << "\n";
@@ -114,7 +130,9 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
         out << "      duration: " << options.takeoff_hover_duration << "\n\n";
     }
 
-    for (const auto &point : final_points) {
+    for (size_t i = 0; i < final_points.size() - 1; ++i) {
+        const auto &point = final_points[i];
+
         out << "    - type: \"move\"\n";
         out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
         out << "      position: [" << point.x << ", " << point.y << ", " << options.move_altitude << "]\n";
@@ -125,7 +143,28 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
             out << "    - type: \"hover\"\n";
             out << "      duration: " << options.move_hover_duration << "\n\n";
         }
+
+        out << "    - type: \"camera_aim\"\n";
+        out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
+        out << "      position: [" << point.x << ", " << point.y << ", " << options.move_altitude << "]\n";
+        out << "      axis: \"z\"\n";
+        out << "      tolerance: " << options.cam_tolerance << "\n\n";
     }
+
+    out << "    - type: \"move\"\n";
+    out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
+    out << "      position: [0.00, 0.50, 0.50]\n";
+    out << "      yaw: " << options.yaw << "\n";
+    out << "      tolerance: " << options.tolerance << "\n\n";
+
+    out << "    - type: \"hover\"\n";
+    out << "      duration: " << options.move_hover_duration << "\n\n";
+
+    out << "    - type: \"move\"\n";
+    out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
+    out << "      position: [0.00, 0.00, 0.00]\n";
+    out << "      yaw: " << options.yaw << "\n";
+    out << "      tolerance: " << options.tolerance << "\n\n";
 
     if (options.add_hover_between_landing) {
         out << "    - type: \"hover\"\n";
@@ -135,6 +174,18 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
     out << "    - type: \"land\"\n\n";
     out << "system:\n";
     out << "  use_camera_aim: " << (options.use_camera_aim ? "true" : "false") << "\n";
+
+    out << "  camera_aim_pid_p: " << options.camera_aim_pid_p << "\n";
+    out << "  camera_aim_pid_i: " << options.camera_aim_pid_i << "\n";
+    out << "  camera_aim_pid_d: " << options.camera_aim_pid_d << "\n";
+    out << "  camera_aim_target_timeout_s: " << options.camera_aim_target_timeout_s << "\n";
+    out << "  camera_aim_stable_cycles: " << options.camera_aim_stable_cycles << "\n";
+    out << "  camera_aim_max_step: " << options.camera_aim_max_step << "\n";
+    out << "  camera_aim_wait_first_targets_timeout_s: " << options.camera_aim_wait_first_targets_timeout_s << "\n";
+    out << "  camera_aim_no_target_confirm_s: " << options.camera_aim_no_target_confirm_s << "\n";
+    out << "  camera_aim_record_result_timeout_s: " << options.camera_aim_record_result_timeout_s << "\n";
+    out << "  camera_aim_scan_point_timeout_s: " << options.camera_aim_scan_point_timeout_s << "\n";
+
     out << "  auto_start_mission: " << (options.auto_start_mission ? "true" : "false") << "\n";
 
     return yaml;

@@ -13,3 +13,15 @@ bool use_camera_aim
 bool auto_start_mission
 bool compress_straight_segments
 string frame
+
+float64 cam_tolerance
+float64 camera_aim_pid_p
+float64 camera_aim_pid_i
+float64 camera_aim_pid_d
+float64 camera_aim_target_timeout_s
+uint16 camera_aim_stable_cycles
+float64 camera_aim_max_step
+float64 camera_aim_wait_first_targets_timeout_s
+float64 camera_aim_no_target_confirm_s
+float64 camera_aim_record_result_timeout_s
+float64 camera_aim_scan_point_timeout_s
