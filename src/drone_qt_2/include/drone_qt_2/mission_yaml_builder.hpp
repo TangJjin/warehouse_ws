@@ -33,6 +33,18 @@ public:
         bool auto_start_mission{false};
         bool compress_straight_segments{false};
         std::string frame{"world_body"};
+
+        double cam_tolerance{0.0};
+        double camera_aim_pid_p{0.0};
+        double camera_aim_pid_i{0.0};
+        double camera_aim_pid_d{0.0};
+        double camera_aim_target_timeout_s{0.0};
+        int camera_aim_stable_cycles{0};
+        double camera_aim_max_step{0.0};
+        double camera_aim_wait_first_targets_timeout_s{0.0};
+        double camera_aim_no_target_confirm_s{0.0};
+        double camera_aim_record_result_timeout_s{0.0};
+        double camera_aim_scan_point_timeout_s{0.0};
     };
 
     //压缩路径中的直线段，返回一个新的路径点列表，其中连续共线的点被压缩为起点和终点两个点

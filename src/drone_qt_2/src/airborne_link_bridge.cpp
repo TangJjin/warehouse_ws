@@ -355,6 +355,8 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
     const int fixed_summary_size =
         8 * 8 +   // 8个float64
         6 * 1 +   // 6个bool按uint8发
+        10 * 8 +  // 10个新增float64
+        2 +       // camera_aim_stable_cycles(uint16)
         2;        // frame_len
 
     if (payload.size() < 2 + static_cast<int>(point_count) * 8 + fixed_summary_size) {
@@ -421,6 +423,18 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
     summary.auto_start_mission = (auto_start_mission != 0);
     summary.compress_straight_segments = (compress_straight_segments != 0);
 
+    stream >> summary.cam_tolerance;
+    stream >> summary.camera_aim_pid_p;
+    stream >> summary.camera_aim_pid_i;
+    stream >> summary.camera_aim_pid_d;
+    stream >> summary.camera_aim_target_timeout_s;
+    stream >> summary.camera_aim_stable_cycles;
+    stream >> summary.camera_aim_max_step;
+    stream >> summary.camera_aim_wait_first_targets_timeout_s;
+    stream >> summary.camera_aim_no_target_confirm_s;
+    stream >> summary.camera_aim_record_result_timeout_s;
+    stream >> summary.camera_aim_scan_point_timeout_s;
+
     quint16 frame_len = 0;
     stream >> frame_len;
 
@@ -428,6 +442,8 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         2 + static_cast<int>(point_count) * 8 +
         8 * 8 +
         6 * 1 +
+        10 * 8 +
+        2 +
         2;
 
     if (payload.size() < frame_offset + frame_len) {
