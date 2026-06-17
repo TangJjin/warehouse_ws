@@ -1,7 +1,9 @@
 #include "drone_perception/qr_vision_node.hpp"
 
 #include <chrono>
+#include <exception>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include <cv_bridge/cv_bridge.h>
@@ -24,7 +26,7 @@ QrVisionNode::QrVisionNode()
     : Node("qr_vision_node")
 {
   declareParameters();
-
+  initializeBpuDetector();
   initializeSubscriptions();
 
   if (debug_view_)
@@ -70,6 +72,9 @@ void QrVisionNode::declareParameters()
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
   sample_radius_px_ = this->declare_parameter<int>("sample_radius_px", 3);
+  
+  enable_bpu_ = this->declare_parameter<bool>("enable_bpu", false);
+  bpu_model_path_ = this->declare_parameter<std::string>("bpu_model_path", "");
 
   if (log_throttle_ms_ <= 0)
   {
@@ -86,6 +91,47 @@ void QrVisionNode::declareParameters()
         "sample_radius_px must be greater than or equal to 0, reset to 3");
     sample_radius_px_ = 3;
   }
+}
+
+void QrVisionNode::initializeBpuDetector()
+{
+#if DRONE_PERCEP  TION_HAS_BPU
+  if (!enable_bpu_) {
+    return;
+  }
+
+  if (bpu_model_path_.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "BPU inference is enabled but bpu_model_path is empty");
+    enable_bpu_ = false;
+    return;
+  }
+
+  try {
+    bpu_detector_ = std::make_unique<BpuYoloDetector>(bpu_model_path_);
+
+    RCLCPP_INFO(
+        get_logger(),
+        "BPU detector initialized. model=%s",
+        bpu_model_path_.c_str());
+  } catch (const std::exception &e) {
+    bpu_detector_.reset();
+    enable_bpu_ = false;
+
+    RCLCPP_ERROR(
+      get_logger(),
+      "Failed to initalize BPU detector: %s",
+      e.what());
+  }
+#else
+  if (enable_bpu_) {
+    RCLCPP_WARN(
+      get_logger(),
+      "BPU inference requested but this build has no RDK BPU SDK");
+      enable_bpu_ = false;
+  }
+#endif
 }
 
 void QrVisionNode::initializeSubscriptions()

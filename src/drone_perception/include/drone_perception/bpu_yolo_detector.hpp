@@ -2,6 +2,7 @@
 
 #include <dnn/hb_dnn.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@ public:
   BpuYoloDetector &operator=(const BpuYoloDetector &) = delete;
 
   void printModelInfo() const;
+  void inferNv12(const uint8_t *nv12_data, std::size_t nv12_size);
 
 private:
   void loadModel(const std::string &model_path);

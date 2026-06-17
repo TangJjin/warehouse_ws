@@ -30,14 +30,29 @@ DISPLAY_MODE = "lcd"  # "lcd" or "hdmi"
 
 DISPLAY_WIDTH = ALIGN_UP(800, 16)
 DISPLAY_HEIGHT = 480
-RGB888P_WIDTH = ALIGN_UP(640, 16)
-RGB888P_HEIGHT = 480
+YOLO_SOURCE_WIDTH = ALIGN_UP(640, 16)
+YOLO_SOURCE_HEIGHT = 480
+YOLO_CROP_ENABLED = False
+YOLO_CROP_WIDTH = YOLO_SOURCE_WIDTH
+YOLO_CROP_HEIGHT = YOLO_SOURCE_HEIGHT
+YOLO_CROP_X = 0
+YOLO_CROP_Y = 0
+RGB888P_WIDTH = YOLO_CROP_WIDTH if YOLO_CROP_ENABLED else YOLO_SOURCE_WIDTH
+RGB888P_HEIGHT = YOLO_CROP_HEIGHT if YOLO_CROP_ENABLED else YOLO_SOURCE_HEIGHT
+SNAPSHOT_SOURCE_WIDTH = YOLO_SOURCE_WIDTH
+SNAPSHOT_SOURCE_HEIGHT = YOLO_SOURCE_HEIGHT
 SNAPSHOT_WIDTH = RGB888P_WIDTH
 SNAPSHOT_HEIGHT = RGB888P_HEIGHT
-CONTROL_WIDTH = DISPLAY_WIDTH
-CONTROL_HEIGHT = DISPLAY_HEIGHT
+CONTROL_WIDTH = RGB888P_WIDTH if YOLO_CROP_ENABLED else DISPLAY_WIDTH
+CONTROL_HEIGHT = RGB888P_HEIGHT if YOLO_CROP_ENABLED else DISPLAY_HEIGHT
 MODEL_INPUT_SIZE = [640, 640]
 CAMERA_FPS = 30
+
+VALID_AREA_ENABLED = True
+VALID_AREA_X = (DISPLAY_WIDTH - 360) // 2
+VALID_AREA_Y = 60
+VALID_AREA_W = 360
+VALID_AREA_H = 360
 
 KMODEL_PATH = "/sdcard/best.kmodel"
 LABELS = ["大象", "老虎", "狼", "孔雀", "猴子"]
@@ -53,6 +68,7 @@ UART_LOG_INTERVAL_MS = 1000
 RES_DEBUG_INTERVAL_MS = 1000
 RES_DEBUG_MAX_ITEMS = 5
 UART_PACKET_MAGIC = b"K230"
+UART_PACKET_MAGIC_VALUES = [0x4B, 0x32, 0x33, 0x30]
 UART_PACKET_TYPE_DETECTION = 1
 UART_PACKET_TYPE_JPEG = 2
 UART_PACKET_TYPE_TARGETS = 3
@@ -98,6 +114,8 @@ OSD_COLOR_TEXT = (255, 255, 255)
 OSD_COLOR_GREEN = (0, 220, 120)
 OSD_COLOR_AMBER = (255, 180, 0)
 OSD_COLOR_CYAN = (0, 210, 255)
+OSD_COLOR_BOX = (0, 220, 120)
+OSD_COLOR_VALID_AREA = (255, 180, 0)
 
 
 def print_exception(exc):
@@ -175,10 +193,10 @@ def read_u16_be(data, offset):
 
 
 def find_magic(buffer):
-    magic_len = len(UART_PACKET_MAGIC)
+    magic_len = len(UART_PACKET_MAGIC_VALUES)
     limit = len(buffer) - magic_len + 1
     for i in range(limit):
-        if buffer[i:i + magic_len] == UART_PACKET_MAGIC:
+        if buffer[i:i + magic_len] == UART_PACKET_MAGIC_VALUES:
             return i
     return -1
 
@@ -240,6 +258,8 @@ def poll_uart_packets(uart, rx_buffer):
 def make_detection_uart_payload(payload):
     compact = {
         "valid": bool(payload.get("valid", False)),
+        "img_w": payload.get("img_w", active_data_width()),
+        "img_h": payload.get("img_h", active_data_height()),
         "label": str(payload.get("label", "")),
         "score": payload.get("score", 0.0),
         "track_id": payload.get("track_id", -1),
@@ -313,25 +333,364 @@ def image_width(img):
     try:
         return img.width()
     except Exception:
-        return RGB888P_WIDTH
+        return SNAPSHOT_WIDTH
 
 
 def image_height(img):
     try:
         return img.height()
     except Exception:
-        return RGB888P_HEIGHT
+        return SNAPSHOT_HEIGHT
+
+
+def validate_yolo_crop_config():
+    if not YOLO_CROP_ENABLED:
+        return
+    if YOLO_CROP_WIDTH <= 0 or YOLO_CROP_HEIGHT <= 0:
+        raise ValueError("invalid yolo crop size")
+    if YOLO_CROP_X < 0 or YOLO_CROP_Y < 0:
+        raise ValueError("invalid yolo crop offset")
+    if YOLO_CROP_X + YOLO_CROP_WIDTH > YOLO_SOURCE_WIDTH:
+        raise ValueError("yolo crop width exceeds source frame")
+    if YOLO_CROP_Y + YOLO_CROP_HEIGHT > YOLO_SOURCE_HEIGHT:
+        raise ValueError("yolo crop height exceeds source frame")
+
+
+def yolo_crop_roi():
+    if not YOLO_CROP_ENABLED:
+        return None
+    return [YOLO_CROP_X, YOLO_CROP_Y, YOLO_CROP_WIDTH, YOLO_CROP_HEIGHT]
+
+
+def make_cropped_image(img):
+    roi = yolo_crop_roi()
+    if roi is None:
+        return img
+    try:
+        return img.copy(roi=roi, copy_to_fb=False)
+    except TypeError:
+        return img.copy(roi=roi)
+
+
+def make_yolo_image(img):
+    return make_cropped_image(img)
+
+
+def lcd_source_x():
+    return 0
+
+
+def lcd_source_y():
+    return 0
+
+
+def lcd_scale_x():
+    return DISPLAY_WIDTH / YOLO_SOURCE_WIDTH
+
+
+def lcd_scale_y():
+    return DISPLAY_HEIGHT / YOLO_SOURCE_HEIGHT
+
+
+def source_to_lcd_x(x):
+    return lcd_source_x() + iround(x * lcd_scale_x())
+
+
+def source_to_lcd_y(y):
+    return lcd_source_y() + iround(y * lcd_scale_y())
+
+
+def make_clipped_square(x, y, w, h, max_w, max_h):
+    x = int(x)
+    y = int(y)
+    w = int(w)
+    h = int(h)
+    side = w if w < h else h
+    if side <= 0 or max_w <= 0 or max_h <= 0:
+        return None
+
+    if x < 0:
+        side += x
+        x = 0
+    if y < 0:
+        side += y
+        y = 0
+    if x >= max_w or y >= max_h:
+        return None
+
+    max_side = max_w - x
+    if max_h - y < max_side:
+        max_side = max_h - y
+    if side > max_side:
+        side = max_side
+    if side <= 0:
+        return None
+    return [x, y, side, side]
+
+
+def make_clipped_rect(x, y, w, h, max_w, max_h):
+    x = int(x)
+    y = int(y)
+    w = int(w)
+    h = int(h)
+    if w <= 0 or h <= 0 or max_w <= 0 or max_h <= 0:
+        return None
+
+    if x < 0:
+        w += x
+        x = 0
+    if y < 0:
+        h += y
+        y = 0
+    if x >= max_w or y >= max_h:
+        return None
+
+    if x + w > max_w:
+        w = max_w - x
+    if y + h > max_h:
+        h = max_h - y
+    if w <= 0 or h <= 0:
+        return None
+    return [x, y, w, h]
+
+
+def valid_area_rect():
+    if not VALID_AREA_ENABLED:
+        return None
+    return make_clipped_square(
+        VALID_AREA_X,
+        VALID_AREA_Y,
+        VALID_AREA_W,
+        VALID_AREA_H,
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+    )
+
+
+def active_data_width():
+    rect = valid_area_rect()
+    if rect is not None:
+        return rect[2]
+    return CONTROL_WIDTH
+
+
+def active_data_height():
+    rect = valid_area_rect()
+    if rect is not None:
+        return rect[3]
+    return CONTROL_HEIGHT
+
+
+def valid_area_source_roi():
+    rect = valid_area_rect()
+    if rect is None:
+        return None
+
+    x = iround(rect[0] * YOLO_SOURCE_WIDTH / DISPLAY_WIDTH)
+    y = iround(rect[1] * YOLO_SOURCE_HEIGHT / DISPLAY_HEIGHT)
+    w = iround(rect[2] * YOLO_SOURCE_WIDTH / DISPLAY_WIDTH)
+    h = iround(rect[3] * YOLO_SOURCE_HEIGHT / DISPLAY_HEIGHT)
+    return make_clipped_rect(x, y, w, h, YOLO_SOURCE_WIDTH, YOLO_SOURCE_HEIGHT)
+
+
+def make_valid_area_image(img):
+    roi = valid_area_source_roi()
+    if roi is None:
+        return img
+
+    x_scale = active_data_width() / roi[2]
+    y_scale = active_data_height() / roi[3]
+    try:
+        return img.to_rgb888(x_scale=x_scale, y_scale=y_scale, roi=roi)
+    except TypeError:
+        return img.to_rgb888(x_scale, y_scale, roi)
+    except Exception:
+        try:
+            cropped = img.copy(roi=roi, copy_to_fb=False)
+        except TypeError:
+            cropped = img.copy(roi=roi)
+        try:
+            return cropped.to_rgb888(x_scale=x_scale, y_scale=y_scale)
+        except TypeError:
+            return cropped.to_rgb888(x_scale, y_scale)
+
+
+def draw_valid_area(osd_img):
+    rect = valid_area_rect()
+    if rect is None:
+        return
+
+    osd_img.draw_rectangle(
+        rect[0],
+        rect[1],
+        rect[2],
+        rect[3],
+        color=OSD_COLOR_VALID_AREA,
+        thickness=2,
+        fill=False,
+    )
+
+
+def detection_lcd_center(det):
+    cx = int(det.get("cx", -1))
+    cy = int(det.get("cy", -1))
+    if YOLO_CROP_ENABLED:
+        cx = source_to_lcd_x(YOLO_CROP_X + cx)
+        cy = source_to_lcd_y(YOLO_CROP_Y + cy)
+    return cx, cy
+
+
+def detection_in_valid_area(det):
+    rect = valid_area_rect()
+    if rect is None:
+        return True
+
+    cx, cy = detection_lcd_center(det)
+    return (
+        cx >= rect[0] and
+        cy >= rect[1] and
+        cx < rect[0] + rect[2] and
+        cy < rect[1] + rect[3]
+    )
+
+
+def make_valid_area_detection(det):
+    rect = valid_area_rect()
+    if rect is None:
+        return det
+    if not detection_in_valid_area(det):
+        return None
+
+    x1 = clamp(int(det.get("x1", 0)), rect[0], rect[0] + rect[2] - 1) - rect[0]
+    y1 = clamp(int(det.get("y1", 0)), rect[1], rect[1] + rect[3] - 1) - rect[1]
+    x2 = clamp(int(det.get("x2", 0)), rect[0], rect[0] + rect[2] - 1) - rect[0]
+    y2 = clamp(int(det.get("y2", 0)), rect[1], rect[1] + rect[3] - 1) - rect[1]
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    img_w = rect[2]
+    img_h = rect[3]
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
+    err_x = cx - (img_w // 2)
+    err_y = cy - (img_h // 2)
+
+    out = det.copy()
+    out["img_w"] = img_w
+    out["img_h"] = img_h
+    out["cx"] = cx
+    out["cy"] = cy
+    out["err_x"] = err_x
+    out["err_y"] = err_y
+    out["norm_x"] = float("%.4f" % (err_x / (img_w / 2)))
+    out["norm_y"] = float("%.4f" % (err_y / (img_h / 2)))
+    out["x1"] = x1
+    out["y1"] = y1
+    out["x2"] = x2
+    out["y2"] = y2
+    out["bbox_w"] = x2 - x1
+    out["bbox_h"] = y2 - y1
+    out["bbox_area"] = out["bbox_w"] * out["bbox_h"]
+    return out
+
+
+def filter_detections_by_valid_area(detections):
+    filtered = []
+    for det in detections:
+        local_det = make_valid_area_detection(det)
+        if local_det is not None:
+            filtered.append(local_det)
+    return filtered
+
+
+def lcd_crop_x():
+    if YOLO_CROP_ENABLED:
+        return source_to_lcd_x(YOLO_CROP_X)
+    return lcd_source_x()
+
+
+def lcd_crop_y():
+    if YOLO_CROP_ENABLED:
+        return source_to_lcd_y(YOLO_CROP_Y)
+    return lcd_source_y()
+
+
+def lcd_crop_w():
+    return iround(CONTROL_WIDTH * lcd_scale_x())
+
+
+def lcd_crop_h():
+    return iround(CONTROL_HEIGHT * lcd_scale_y())
+
+
+def draw_lcd_effective_mask(osd_img):
+    crop_x = lcd_crop_x()
+    crop_y = lcd_crop_y()
+    crop_w = lcd_crop_w()
+    crop_h = lcd_crop_h()
+
+    if crop_y > 0:
+        osd_img.draw_rectangle(0, 0, DISPLAY_WIDTH, crop_y, color=OSD_COLOR_BG, thickness=1, fill=True)
+    bottom_y = crop_y + crop_h
+    if bottom_y < DISPLAY_HEIGHT:
+        osd_img.draw_rectangle(0, bottom_y, DISPLAY_WIDTH, DISPLAY_HEIGHT - bottom_y, color=OSD_COLOR_BG, thickness=1, fill=True)
+    if crop_x > 0:
+        osd_img.draw_rectangle(0, crop_y, crop_x, crop_h, color=OSD_COLOR_BG, thickness=1, fill=True)
+    right_x = crop_x + crop_w
+    if right_x < DISPLAY_WIDTH:
+        osd_img.draw_rectangle(right_x, crop_y, DISPLAY_WIDTH - right_x, crop_h, color=OSD_COLOR_BG, thickness=1, fill=True)
+
+
+def draw_detection_boxes(osd_img, detections):
+    rect = valid_area_rect()
+    for det in detections:
+        if rect is not None:
+            x1 = rect[0] + int(det.get("x1", 0))
+            y1 = rect[1] + int(det.get("y1", 0))
+            x2 = rect[0] + int(det.get("x2", 0))
+            y2 = rect[1] + int(det.get("y2", 0))
+        elif YOLO_CROP_ENABLED:
+            source_x1 = YOLO_CROP_X + int(det.get("x1", 0))
+            source_y1 = YOLO_CROP_Y + int(det.get("y1", 0))
+            source_x2 = YOLO_CROP_X + int(det.get("x2", 0))
+            source_y2 = YOLO_CROP_Y + int(det.get("y2", 0))
+            x1 = source_to_lcd_x(source_x1)
+            y1 = source_to_lcd_y(source_y1)
+            x2 = source_to_lcd_x(source_x2)
+            y2 = source_to_lcd_y(source_y2)
+        else:
+            x1 = int(det.get("x1", 0))
+            y1 = int(det.get("y1", 0))
+            x2 = int(det.get("x2", 0))
+            y2 = int(det.get("y2", 0))
+        w = x2 - x1
+        h = y2 - y1
+        if w <= 0 or h <= 0:
+            continue
+
+        label = str(det.get("label", ""))
+        score = det.get("score", 0.0)
+        osd_img.draw_rectangle(x1, y1, w, h, color=OSD_COLOR_BOX, thickness=2, fill=False)
+        osd_img.draw_string_advanced(
+            x1,
+            y1 - 18 if y1 >= 18 else y1 + 2,
+            16,
+            "%s %.2f" % (label, score),
+            color=OSD_COLOR_BOX,
+        )
 
 
 def make_snapshot_roi(img, payload):
     img_w = image_width(img)
     img_h = image_height(img)
     max_side = img_w if img_w < img_h else img_h
+    data_w = int(payload.get("img_w", active_data_width()))
+    data_h = int(payload.get("img_h", active_data_height()))
 
-    scale_x = img_w / CONTROL_WIDTH
-    scale_y = img_h / CONTROL_HEIGHT
-    cx = iround(payload.get("cx", CONTROL_WIDTH // 2) * scale_x)
-    cy = iround(payload.get("cy", CONTROL_HEIGHT // 2) * scale_y)
+    scale_x = img_w / data_w
+    scale_y = img_h / data_h
+    cx = iround(payload.get("cx", data_w // 2) * scale_x)
+    cy = iround(payload.get("cy", data_h // 2) * scale_y)
     bbox_w = iround(payload.get("bbox_w", SNAPSHOT_MIN_ROI_SIZE) * scale_x)
     bbox_h = iround(payload.get("bbox_h", SNAPSHOT_MIN_ROI_SIZE) * scale_y)
 
@@ -385,7 +744,7 @@ def send_snapshot_uart(uart, seq, img, payload):
     )
 
 
-def draw_status_osd(osd_img, payload, raw_detection, detection_count):
+def draw_status_osd(osd_img, payload, raw_detection, detection_count, origin_x=0, origin_y=0):
     is_valid = bool(payload.get("valid", False))
     is_confirmed = bool(payload.get("confirmed", False))
     stable_frames = payload.get("stable_frames", 0)
@@ -411,27 +770,32 @@ def draw_status_osd(osd_img, payload, raw_detection, detection_count):
         norm_x = target.get("norm_x", 0.0)
         norm_y = target.get("norm_y", 0.0)
 
+    status_w = OSD_STATUS_W
+    max_status_w = CONTROL_WIDTH - OSD_STATUS_X
+    if status_w > max_status_w:
+        status_w = max_status_w
+
     osd_img.draw_rectangle(
-        OSD_STATUS_X,
-        OSD_STATUS_Y,
-        OSD_STATUS_W,
+        origin_x + OSD_STATUS_X,
+        origin_y + OSD_STATUS_Y,
+        status_w,
         OSD_STATUS_H,
         color=OSD_COLOR_BG,
         thickness=1,
         fill=True,
     )
     osd_img.draw_rectangle(
-        OSD_STATUS_X,
-        OSD_STATUS_Y,
-        OSD_STATUS_W,
+        origin_x + OSD_STATUS_X,
+        origin_y + OSD_STATUS_Y,
+        status_w,
         OSD_STATUS_H,
         color=status_color,
         thickness=2,
         fill=False,
     )
     osd_img.draw_string_advanced(
-        OSD_STATUS_X + 12,
-        OSD_STATUS_Y + 8,
+        origin_x + OSD_STATUS_X + 12,
+        origin_y + OSD_STATUS_Y + 8,
         18,
         "%s valid=%d confirmed=%d stable=%d/%d count=%d"
         % (
@@ -445,15 +809,15 @@ def draw_status_osd(osd_img, payload, raw_detection, detection_count):
         color=status_color,
     )
     osd_img.draw_string_advanced(
-        OSD_STATUS_X + 12,
-        OSD_STATUS_Y + 36,
+        origin_x + OSD_STATUS_X + 12,
+        origin_y + OSD_STATUS_Y + 36,
         17,
         "label=%s score=%.3f cx=%d cy=%d" % (label, score, cx, cy),
         color=OSD_COLOR_TEXT,
     )
     osd_img.draw_string_advanced(
-        OSD_STATUS_X + 12,
-        OSD_STATUS_Y + 62,
+        origin_x + OSD_STATUS_X + 12,
+        origin_y + OSD_STATUS_Y + 62,
         17,
         "norm_x=%.3f norm_y=%.3f" % (norm_x, norm_y),
         color=OSD_COLOR_CYAN,
@@ -673,6 +1037,8 @@ def best_detection(detections):
 def detection_is_complete(det):
     if det is None:
         return False
+    img_w = int(det.get("img_w", active_data_width()))
+    img_h = int(det.get("img_h", active_data_height()))
     x1 = int(det.get("x1", 0))
     y1 = int(det.get("y1", 0))
     x2 = int(det.get("x2", 0))
@@ -683,9 +1049,9 @@ def detection_is_complete(det):
 
     if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
         return False
-    if x2 >= CONTROL_WIDTH - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+    if x2 >= img_w - 1 - SNAPSHOT_EDGE_MARGIN_PX:
         return False
-    if y2 >= CONTROL_HEIGHT - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+    if y2 >= img_h - 1 - SNAPSHOT_EDGE_MARGIN_PX:
         return False
     if bbox_w < SNAPSHOT_MIN_BBOX_W or bbox_h < SNAPSHOT_MIN_BBOX_H:
         return False
@@ -935,8 +1301,8 @@ def make_targets_payload(frame_seq, detections, ready_tracks):
         "frame_seq": frame_seq,
         "seq": frame_seq,
         "timestamp_ms": time.ticks_ms(),
-        "img_w": CONTROL_WIDTH,
-        "img_h": CONTROL_HEIGHT,
+        "img_w": active_data_width(),
+        "img_h": active_data_height(),
         "raw_count": len(detections),
         "target_count": len(targets),
         "targets": [compact_target(track) for track in targets],
@@ -1022,8 +1388,8 @@ def make_empty_payload(seq):
         "seq": seq,
         "timestamp_ms": time.ticks_ms(),
         "valid": False,
-        "img_w": CONTROL_WIDTH,
-        "img_h": CONTROL_HEIGHT,
+        "img_w": active_data_width(),
+        "img_h": active_data_height(),
         "count": 0,
         "label": "",
         "score": 0.0,
@@ -1053,8 +1419,8 @@ def make_payload(seq, detections, stable_detection, stable_frames):
         "seq": seq,
         "timestamp_ms": time.ticks_ms(),
         "valid": True,
-        "img_w": CONTROL_WIDTH,
-        "img_h": CONTROL_HEIGHT,
+        "img_w": active_data_width(),
+        "img_h": active_data_height(),
         "count": len(detections),
         "confirmed": True,
         "stable_frames": stable_frames,
@@ -1066,8 +1432,8 @@ def make_payload(seq, detections, stable_detection, stable_frames):
 def init_sensor():
     sensor = Sensor(
         id=CSI_ID,
-        width=RGB888P_WIDTH,
-        height=RGB888P_HEIGHT,
+        width=YOLO_SOURCE_WIDTH,
+        height=YOLO_SOURCE_HEIGHT,
         fps=CAMERA_FPS,
     )
     sensor.reset()
@@ -1075,10 +1441,10 @@ def init_sensor():
     sensor.set_framesize(width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT, chn=CAM_CHN_ID_0)
     sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
 
-    sensor.set_framesize(width=SNAPSHOT_WIDTH, height=SNAPSHOT_HEIGHT, chn=CAM_CHN_ID_1)
+    sensor.set_framesize(width=SNAPSHOT_SOURCE_WIDTH, height=SNAPSHOT_SOURCE_HEIGHT, chn=CAM_CHN_ID_1)
     sensor.set_pixformat(Sensor.RGB565, chn=CAM_CHN_ID_1)
 
-    sensor.set_framesize(width=RGB888P_WIDTH, height=RGB888P_HEIGHT, chn=CAM_CHN_ID_2)
+    sensor.set_framesize(width=YOLO_SOURCE_WIDTH, height=YOLO_SOURCE_HEIGHT, chn=CAM_CHN_ID_2)
     sensor.set_pixformat(PIXEL_FORMAT_RGB_888_PLANAR, chn=CAM_CHN_ID_2)
 
     return sensor
@@ -1107,12 +1473,13 @@ def main():
     snapshot_history = []
     frame_history = []
     processed_captures = []
-    uart_rx_buffer = bytearray()
+    uart_rx_buffer = []
     snapshot_seq = 0
     seq = 0
 
     try:
         print("CSI1 GC2093 YOLO11 animal detection UART starting")
+        validate_yolo_crop_config()
         uart = init_uart2()
         print("UART2 ready: tx=gpio5 rx=gpio6 baud=%d" % UART_BAUDRATE)
 
@@ -1130,7 +1497,7 @@ def main():
             labels=LABELS,
             rgb888p_size=[RGB888P_WIDTH, RGB888P_HEIGHT],
             model_input_size=MODEL_INPUT_SIZE,
-            display_size=display_size,
+            display_size=[CONTROL_WIDTH, CONTROL_HEIGHT] if YOLO_CROP_ENABLED else display_size,
             conf_thresh=CONF_THRESH,
             nms_thresh=NMS_THRESH,
             max_boxes_num=MAX_BOXES_NUM,
@@ -1140,29 +1507,54 @@ def main():
 
         print("Labels:", LABELS)
         print("Model:", KMODEL_PATH)
+        print(
+            "YOLO source=%dx%d crop_enabled=%d crop=[%d,%d,%d,%d] control=%dx%d"
+            % (
+                YOLO_SOURCE_WIDTH,
+                YOLO_SOURCE_HEIGHT,
+                1 if YOLO_CROP_ENABLED else 0,
+                YOLO_CROP_X,
+                YOLO_CROP_Y,
+                RGB888P_WIDTH,
+                RGB888P_HEIGHT,
+                CONTROL_WIDTH,
+                CONTROL_HEIGHT,
+            )
+        )
 
         while True:
             os.exitpoint()
 
             with ScopedTiming("total", DEBUG_MODE > 0):
                 rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)
-                if rgb888p_img.format() == image.RGBP888:
-                    frame = rgb888p_img.to_numpy_ref()
+                yolo_img = make_yolo_image(rgb888p_img)
+                if yolo_img.format() == image.RGBP888:
+                    frame = yolo_img.to_numpy_ref()
                     res = yolo.run(frame)
                     now_ms = time.ticks_ms()
                     if time.ticks_diff(now_ms, last_res_debug_ms) >= RES_DEBUG_INTERVAL_MS:
                         last_res_debug_ms = now_ms
                         print_res_debug(res)
 
-                    detections = parse_detections(res)
+                    raw_detections = parse_detections(res)
+                    detections = filter_detections_by_valid_area(raw_detections)
                     tracks, next_track_id = update_tracks(tracks, detections, next_track_id)
                     ready_tracks = assign_label_instance_ids(stable_tracks(tracks))
                     display_payload = make_payload(seq, detections, ready_tracks[0], ready_tracks[0].get("stable_frames", 0)) if ready_tracks else make_payload(seq, detections, None, 0)
                     raw_detection = best_detection(detections)
 
                     osd_img.clear()
-                    yolo.draw_result(res, osd_img)
-                    draw_status_osd(osd_img, display_payload, raw_detection, len(detections))
+                    if YOLO_CROP_ENABLED:
+                        draw_lcd_effective_mask(osd_img)
+                        draw_valid_area(osd_img)
+                        crop_x = lcd_crop_x()
+                        crop_y = lcd_crop_y()
+                        draw_detection_boxes(osd_img, detections)
+                        draw_status_osd(osd_img, display_payload, raw_detection, len(detections), crop_x, crop_y)
+                    else:
+                        draw_detection_boxes(osd_img, detections)
+                        draw_valid_area(osd_img)
+                        draw_status_osd(osd_img, display_payload, raw_detection, len(detections))
                     Display.show_image(osd_img, 0, 0, Display.LAYER_OSD3)
 
                     snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
@@ -1172,7 +1564,7 @@ def main():
                                 continue
                             snapshot_seq += 1
                             try:
-                                photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
+                                photo_img = make_valid_area_image(sensor.snapshot(chn=CAM_CHN_ID_1))
                                 send_snapshot_uart(uart, snapshot_seq, photo_img, track)
                                 snapshot_history.append(make_snapshot_record(track, now_ms))
                                 snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
@@ -1200,7 +1592,7 @@ def main():
                         snapshot_seq += 1
                         image_name = "%s.jpg" % target.get("label", "animal")
                         try:
-                            photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
+                            photo_img = make_valid_area_image(sensor.snapshot(chn=CAM_CHN_ID_1))
                             send_snapshot_uart(uart, snapshot_seq, photo_img, target)
                             snapshot_history.append(make_snapshot_record(target, now_ms))
                             snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
