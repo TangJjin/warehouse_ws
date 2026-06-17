@@ -23,7 +23,7 @@ using Json = nlohmann::json;
 K230AnimalsUartRos2Node::K230AnimalsUartRos2Node() :
 	Node("k230_animals_uart_ros2_node")
 {
-	_serial_port = declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
+	_serial_port = declare_parameter<std::string>("serial_port", "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0");
 	_baudrate = declare_parameter<int>("baudrate", 460800);
 	_image_topic = declare_parameter<std::string>("image_topic", "/drone/image");
 	_detect_topic = declare_parameter<std::string>("detect_topic", "/k230/animals/detect");
