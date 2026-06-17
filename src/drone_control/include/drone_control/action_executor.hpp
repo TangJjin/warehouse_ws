@@ -223,7 +223,7 @@ public:
 
         record_result_sub_ = node_->create_subscription<drone_msgs::msg::K230RecordResult>(
             "/k230/animals/record_result",
-            rclcpp::SensorDataQoS(),
+            rclcpp::QoS(10).reliable(),
             std::bind(&ActionExecutor::recordResultCallback, this, std::placeholders::_1));
 
         arming_client_ = node_->create_client<mavros_msgs::srv::CommandBool>("/mavros/cmd/arming");
