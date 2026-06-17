@@ -144,11 +144,14 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
             out << "      duration: " << options.move_hover_duration << "\n\n";
         }
 
-        out << "    - type: \"camera_aim\"\n";
-        out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
-        out << "      position: [" << point.x << ", " << point.y << ", " << options.move_altitude << "]\n";
-        out << "      axis: \"z\"\n";
-        out << "      tolerance: " << options.cam_tolerance << "\n\n";
+        if(options.use_camera_aim)
+        {
+          out << "    - type: \"camera_aim\"\n";
+          out << "      frame: \"" << QString::fromStdString(options.frame) << "\"\n";
+          out << "      position: [" << point.x << ", " << point.y << ", " << options.move_altitude << "]\n";
+          out << "      axis: \"z\"\n";
+          out << "      tolerance: " << options.cam_tolerance << "\n\n";
+        }
     }
 
     out << "    - type: \"move\"\n";
