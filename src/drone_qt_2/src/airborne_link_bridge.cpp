@@ -438,15 +438,8 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
     quint16 frame_len = 0;
     stream >> frame_len;
 
-    const int frame_offset =
-        2 + static_cast<int>(point_count) * 8 +
-        8 * 8 +
-        6 * 1 +
-        10 * 8 +
-        2 +
-        2;
-
-    if (payload.size() < frame_offset + frame_len) {
+    const qint64 frame_offset = stream.device() ? stream.device()->pos() : -1;
+    if (frame_offset < 0 || payload.size() < frame_offset + frame_len) {
         QByteArray resp_payload;
         QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
         resp_stream.setByteOrder(QDataStream::LittleEndian);
@@ -464,7 +457,27 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         return;
     }
 
-    const QByteArray frame_bytes = payload.mid(frame_offset, frame_len);
+    QByteArray frame_bytes(frame_len, Qt::Uninitialized);
+    if (frame_len > 0) {
+        const int read_size = stream.readRawData(frame_bytes.data(), frame_len);
+        if (read_size != frame_len) {
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray("invalid frame in UploadMissionSummaryReq");
+            const QByteArray saved_path;
+            resp_stream << static_cast<quint8>(0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_stream.writeRawData(msg.constData(), msg.size());
+            resp_stream << static_cast<quint16>(saved_path.size());
+            resp_stream.writeRawData(saved_path.constData(), saved_path.size());
+            resp_stream << static_cast<quint32>(0);
+
+            cacheAndSendResponse(lp::kTypeUploadMissionSummaryResp, seq, resp_payload);
+            return;
+        }
+    }
     summary.frame = frame_bytes.toStdString();
 
     upload_mission_summary_client_->async_send_request(
@@ -527,7 +540,23 @@ void AirborneLinkBridge::handleStartOffboardRequest(uint16_t seq, const QByteArr
         return;
     }
 
-    const QByteArray source_bytes = payload.mid(2, source_len);
+    QByteArray source_bytes(source_len, Qt::Uninitialized);
+    if (source_len > 0) {
+        const int read_size = stream.readRawData(source_bytes.data(), source_len);
+        if (read_size != source_len) {
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray("invalid payload for StartOffboardReq");
+            resp_stream << static_cast<quint8>(0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_stream.writeRawData(msg.constData(), msg.size());
+
+            cacheAndSendResponse(lp::kTypeStartOffboardResp, seq, resp_payload);
+            return;
+        }
+    }
     const std::string request_source = source_bytes.toStdString();
 
     auto request = std::make_shared<drone_msgs::srv::StartOffboard::Request>();
@@ -588,7 +617,23 @@ void AirborneLinkBridge::handleStartTaskRequest(uint16_t seq, const QByteArray &
         return;
     }
 
-    const QByteArray task_name_bytes = payload.mid(2, source_len);
+    QByteArray task_name_bytes(source_len, Qt::Uninitialized);
+    if (source_len > 0) {
+        const int read_size = stream.readRawData(task_name_bytes.data(), source_len);
+        if (read_size != source_len) {
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray("invalid payload for StartTaskReq");
+            resp_stream << static_cast<quint8>(0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_stream.writeRawData(msg.constData(), msg.size());
+
+            cacheAndSendResponse(lp::kTypeStartTaskResp, seq, resp_payload);
+            return;
+        }
+    }
     const std::string task_name = task_name_bytes.toStdString();
 
     auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
@@ -649,7 +694,23 @@ void AirborneLinkBridge::handleStopPushRequest(uint16_t seq, const QByteArray &p
         return;
     }
 
-    const QByteArray task_name_bytes = payload.mid(2, source_len);
+    QByteArray task_name_bytes(source_len, Qt::Uninitialized);
+    if (source_len > 0) {
+        const int read_size = stream.readRawData(task_name_bytes.data(), source_len);
+        if (read_size != source_len) {
+            QByteArray resp_payload;
+            QDataStream resp_stream(&resp_payload, QIODevice::WriteOnly);
+            resp_stream.setByteOrder(QDataStream::LittleEndian);
+
+            const QByteArray msg = QByteArray("invalid payload for StopPushReq");
+            resp_stream << static_cast<quint8>(0);
+            resp_stream << static_cast<quint16>(msg.size());
+            resp_stream.writeRawData(msg.constData(), msg.size());
+
+            cacheAndSendResponse(lp::kTypeStopPushResp, seq, resp_payload);
+            return;
+        }
+    }
     const std::string task_name = task_name_bytes.toStdString();
 
     auto request = std::make_shared<drone_msgs::srv::StartTask::Request>();
