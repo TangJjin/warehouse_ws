@@ -49,10 +49,10 @@ MODEL_INPUT_SIZE = [640, 640]
 CAMERA_FPS = 30
 
 VALID_AREA_ENABLED = True
-VALID_AREA_X = (DISPLAY_WIDTH - 360) // 2
-VALID_AREA_Y = 60
-VALID_AREA_W = 360
-VALID_AREA_H = 360
+VALID_AREA_W = 380
+VALID_AREA_H = 380
+VALID_AREA_X = (DISPLAY_WIDTH - VALID_AREA_W) // 2
+VALID_AREA_Y = (DISPLAY_HEIGHT - VALID_AREA_H) // 2
 
 KMODEL_PATH = "/sdcard/best.kmodel"
 LABELS = ["大象", "老虎", "狼", "孔雀", "猴子"]
@@ -81,7 +81,7 @@ UART_RX_MAX_BYTES = 8192
 TARGET_FRAME_HISTORY_MAX = 60
 PROCESSED_CAPTURE_HISTORY_MAX = 50
 
-SNAPSHOT_REQUIRED_FRAMES = 3
+SNAPSHOT_REQUIRED_FRAMES = 2
 SNAPSHOT_CENTER_STABLE_PX = 40
 SNAPSHOT_LOST_RESET_FRAMES = 5
 SNAPSHOT_MIN_SCORE = 0.60
@@ -90,9 +90,9 @@ SNAPSHOT_OUTPUT_SIZE = 160
 SNAPSHOT_ROI_SCALE = 1.5
 SNAPSHOT_MIN_ROI_SIZE = 160
 SNAPSHOT_EDGE_MARGIN_PX = 20
-SNAPSHOT_MIN_BBOX_W = 80
-SNAPSHOT_MIN_BBOX_H = 100
-SNAPSHOT_MIN_BBOX_AREA = 10000
+SNAPSHOT_MIN_BBOX_W = 60
+SNAPSHOT_MIN_BBOX_H = 70
+SNAPSHOT_MIN_BBOX_AREA = 5000
 SNAPSHOT_HISTORY_MAX = 20
 SNAPSHOT_HISTORY_KEEP_MS = 30000
 SNAPSHOT_DUP_IOU = 0.35
@@ -101,7 +101,7 @@ SNAPSHOT_DUP_AREA_RATIO_MIN = 0.60
 SNAPSHOT_DUP_AREA_RATIO_MAX = 1.60
 SNAPSHOT_BETTER_AREA_RATIO = 1.45
 TRACK_MATCH_IOU = 0.25
-TRACK_MATCH_CENTER_PX = 80
+TRACK_MATCH_CENTER_PX = 100
 TRACK_MAX_LOST_FRAMES = 5
 TRACK_MAX_COUNT = 10
 
@@ -540,17 +540,32 @@ def detection_lcd_center(det):
     return cx, cy
 
 
+def detection_lcd_box(det):
+    x1 = int(det.get("x1", 0))
+    y1 = int(det.get("y1", 0))
+    x2 = int(det.get("x2", 0))
+    y2 = int(det.get("y2", 0))
+
+    if YOLO_CROP_ENABLED:
+        x1 = source_to_lcd_x(YOLO_CROP_X + x1)
+        y1 = source_to_lcd_y(YOLO_CROP_Y + y1)
+        x2 = source_to_lcd_x(YOLO_CROP_X + x2)
+        y2 = source_to_lcd_y(YOLO_CROP_Y + y2)
+
+    return [x1, y1, x2, y2]
+
+
 def detection_in_valid_area(det):
     rect = valid_area_rect()
     if rect is None:
         return True
 
-    cx, cy = detection_lcd_center(det)
+    x1, y1, x2, y2 = detection_lcd_box(det)
     return (
-        cx >= rect[0] and
-        cy >= rect[1] and
-        cx < rect[0] + rect[2] and
-        cy < rect[1] + rect[3]
+        x2 > rect[0] and
+        y2 > rect[1] and
+        x1 < rect[0] + rect[2] and
+        y1 < rect[1] + rect[3]
     )
 
 
@@ -561,10 +576,11 @@ def make_valid_area_detection(det):
     if not detection_in_valid_area(det):
         return None
 
-    x1 = clamp(int(det.get("x1", 0)), rect[0], rect[0] + rect[2] - 1) - rect[0]
-    y1 = clamp(int(det.get("y1", 0)), rect[1], rect[1] + rect[3] - 1) - rect[1]
-    x2 = clamp(int(det.get("x2", 0)), rect[0], rect[0] + rect[2] - 1) - rect[0]
-    y2 = clamp(int(det.get("y2", 0)), rect[1], rect[1] + rect[3] - 1) - rect[1]
+    lcd_x1, lcd_y1, lcd_x2, lcd_y2 = detection_lcd_box(det)
+    x1 = clamp(lcd_x1, rect[0], rect[0] + rect[2] - 1) - rect[0]
+    y1 = clamp(lcd_y1, rect[1], rect[1] + rect[3] - 1) - rect[1]
+    x2 = clamp(lcd_x2, rect[0], rect[0] + rect[2] - 1) - rect[0]
+    y2 = clamp(lcd_y2, rect[1], rect[1] + rect[3] - 1) - rect[1]
     if x2 <= x1 or y2 <= y1:
         return None
 
@@ -1047,12 +1063,13 @@ def detection_is_complete(det):
     bbox_h = int(det.get("bbox_h", 0))
     bbox_area = int(det.get("bbox_area", 0))
 
-    if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
-        return False
-    if x2 >= img_w - 1 - SNAPSHOT_EDGE_MARGIN_PX:
-        return False
-    if y2 >= img_h - 1 - SNAPSHOT_EDGE_MARGIN_PX:
-        return False
+    if valid_area_rect() is None:
+        if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
+            return False
+        if x2 >= img_w - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+            return False
+        if y2 >= img_h - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+            return False
     if bbox_w < SNAPSHOT_MIN_BBOX_W or bbox_h < SNAPSHOT_MIN_BBOX_H:
         return False
     if bbox_area < SNAPSHOT_MIN_BBOX_AREA:

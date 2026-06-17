@@ -29,7 +29,7 @@ private:
 	static constexpr size_t kHeaderSize = 13;
 	static constexpr size_t kCrcSize = 2;
 	static constexpr size_t kMaxPayloadSize = 2 * 1024 * 1024;
-	static constexpr double kDefaultScanRadiusM = 0.2;
+	static constexpr double kDefaultScanRadiusM = 0.28;
 	static constexpr uint8_t kPacketTypeCaptureCommand = 4;
 	static constexpr uint8_t kPacketTypeRecordResult = 5;
 	static constexpr double kDefaultRecordDeadbandM = 0.1;
