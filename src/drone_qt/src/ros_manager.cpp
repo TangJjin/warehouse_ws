@@ -24,7 +24,7 @@ void RosManager::setupRosInterfaces()
     auto status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机状态话题，消息类型为自定义消息
     status_sub_ = node_->create_subscription<drone_msgs::msg::DroneStatus>(
-        "/serial/drone/status", 
+        "/drone/status", 
         status_qos, 
         [this](const drone_msgs::msg::DroneStatus::SharedPtr msg)//回调
         {
@@ -192,7 +192,7 @@ void RosManager::setupRosInterfaces()
 
 auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     delta_sub_ = node_->create_subscription<geometry_msgs::msg::Vector3>(
-        "/serial/drone/pose_yaw_compare/delta",
+        "/drone/pose_yaw_compare/delta",
         delta_qos,
         [this](const geometry_msgs::msg::Vector3::SharedPtr msg)
         {
@@ -214,11 +214,11 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
 
     //创建一个服务客户端，用于调用offboard启动服务
     start_offboard_client_ = node_->create_client<drone_msgs::srv::StartOffboard>(
-    "/serial/drone/start_offboard");
+        "/serial/drone/start_offboard");
 
     //创建一个服务客户端，用于调用任务路线与参数上传服务
     upload_mission_summary_client_ = node_->create_client<drone_msgs::srv::UploadMissionSummary>(
-    "/serial/drone/upload_mission_summary");
+        "/serial/drone/upload_mission_summary");
 
     using namespace std::chrono_literals;
     timer_ = node_->create_wall_timer(
