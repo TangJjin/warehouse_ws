@@ -33,7 +33,7 @@ AirborneLinkBridge::AirborneLinkBridge()
 void AirborneLinkBridge::setupRosInterfaces()
 {
     status_sub_ = this->create_subscription<drone_msgs::msg::DroneStatus>(
-        "/drone/status",
+        "/serial/drone/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const drone_msgs::msg::DroneStatus::SharedPtr msg) {
             publishDroneStatus(msg);
@@ -68,7 +68,7 @@ void AirborneLinkBridge::setupRosInterfaces()
         });
 
     delta_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-        "/drone/pose_yaw_compare/delta",
+        "/serial/drone/pose_yaw_compare/delta",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const geometry_msgs::msg::Vector3::SharedPtr msg) {
             publishDelta(msg);
