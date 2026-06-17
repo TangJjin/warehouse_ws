@@ -405,6 +405,9 @@ mission:
 
 system:
   use_camera_aim: false
+  camera_aim_pid_p: 0.001
+  camera_aim_pid_i: 0.0
+  camera_aim_pid_d: 0.001
   camera_aim_target_timeout_s: 0.5
   camera_aim_stable_cycles: 20
   camera_aim_max_step: 0.05

@@ -478,3 +478,165 @@
 - [x] 已确认 `capture_ready`、`record_result`、`scan_point_done` 消息与闭环流程
 - [x] 已确认当前对准使用 `err_x/err_y`
 - [x] 已确认当前 `camera_aim` 动作语义是“处理一个 `scan_point` 内的全部目标”
+
+## 13. 调试命令
+
+### 13.1 编译与环境加载
+
+```bash
+cd ~/drone_ws
+colcon build --packages-select drone_msgs drone_control drone_mission drone_bringup
+source /opt/ros/humble/setup.bash
+source ~/drone_ws/install/setup.bash
+```
+
+### 13.2 启动 Gazebo 联调环境
+
+```bash
+ros2 launch drone_bringup run_offboard.launch.py enable_offboard_control:=true
+```
+
+### 13.3 启动任务
+
+```bash
+ros2 topic pub --once /start_mission std_msgs/msg/Empty "{}"
+```
+
+### 13.4 常用观察命令
+
+查看控制端拍照请求：
+
+```bash
+ros2 topic echo /k230/animals/capture_ready
+```
+
+查看控制端扫描点完成通知：
+
+```bash
+ros2 topic echo /k230/animals/scan_point_done
+```
+
+查看控制端任务状态：
+
+```bash
+ros2 topic echo /mission_status
+```
+
+查看任务执行摘要：
+
+```bash
+ros2 topic echo /task/status
+```
+
+查看视觉输入：
+
+```bash
+ros2 topic echo /k230/animals/targets
+```
+
+查看视觉结果回流：
+
+```bash
+ros2 topic echo /k230/animals/record_result
+```
+
+查看接口是否已正确加载：
+
+```bash
+ros2 interface list | grep K230
+ros2 interface show drone_msgs/msg/K230CaptureReady
+ros2 interface show drone_msgs/msg/K230RecordResult
+ros2 interface show drone_msgs/msg/K230ScanPointDone
+```
+
+### 13.5 空网格测试命令
+
+```bash
+ros2 topic pub -r 5 /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 1, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 0, targets: []}"
+```
+
+预期：
+
+- 不发布 `/k230/animals/capture_ready`
+- 连续空帧超过 `camera_aim_no_target_confirm_s` 后发布 `/k230/animals/scan_point_done`
+
+### 13.6 单目标成功测试命令
+
+先持续发布一个偏差较大的目标：
+
+```bash
+ros2 topic pub -r 10 /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 2, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 1, targets: [{label: 'tiger', label_instance_id: 1, score: 0.95, confirmed: true, stable_frames: 10, cx: 420, cy: 300, err_x: 100, err_y: 60, norm_x: 0.20, norm_y: 0.12, x1: 360, y1: 240, x2: 480, y2: 360, bbox_w: 120, bbox_h: 120, bbox_area: 14400}]}"
+```
+
+再切换成接近中心的目标：
+
+```bash
+ros2 topic pub -r 10 /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 3, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 1, targets: [{label: 'tiger', label_instance_id: 1, score: 0.95, confirmed: true, stable_frames: 20, cx: 322, cy: 242, err_x: 2, err_y: 2, norm_x: 0.004, norm_y: 0.004, x1: 280, y1: 200, x2: 364, y2: 284, bbox_w: 84, bbox_h: 84, bbox_area: 7056}]}"
+```
+
+当控制端发出 `capture_ready` 后，回传成功结果：
+
+```bash
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 3, scan_point_index: 0, label: 'tiger', label_instance_id: 1, record_success: true, result_state: 'captured', image_name: 'tiger_001.jpg'}"
+```
+
+### 13.7 单目标失败测试命令
+
+```bash
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 3, scan_point_index: 0, label: 'tiger', label_instance_id: 1, record_success: false, result_state: 'failed', image_name: 'tiger_failed.jpg'}"
+```
+
+### 13.8 单目标跳过测试命令
+
+```bash
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 3, scan_point_index: 0, label: 'tiger', label_instance_id: 1, record_success: false, result_state: 'skipped', image_name: ''}"
+```
+
+### 13.9 多目标测试命令
+
+```bash
+ros2 topic pub -r 10 /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 10, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 3, targets: [{label: 'wolf', label_instance_id: 1, score: 0.92, confirmed: true, stable_frames: 12, cx: 322, cy: 242, err_x: 2, err_y: 2, norm_x: 0.004, norm_y: 0.004, x1: 280, y1: 200, x2: 364, y2: 284, bbox_w: 84, bbox_h: 84, bbox_area: 7056}, {label: 'wolf', label_instance_id: 2, score: 0.91, confirmed: true, stable_frames: 12, cx: 380, cy: 250, err_x: 60, err_y: 10, norm_x: 0.12, norm_y: 0.02, x1: 340, y1: 210, x2: 420, y2: 290, bbox_w: 80, bbox_h: 80, bbox_area: 6400}, {label: 'wolf', label_instance_id: 3, score: 0.90, confirmed: true, stable_frames: 12, cx: 260, cy: 220, err_x: -60, err_y: -20, norm_x: -0.12, norm_y: -0.04, x1: 220, y1: 180, x2: 300, y2: 260, bbox_w: 80, bbox_h: 80, bbox_area: 6400}]}"
+```
+
+依次回传结果：
+
+```bash
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 10, scan_point_index: 0, label: 'wolf', label_instance_id: 1, record_success: true, result_state: 'captured', image_name: 'wolf_1.jpg'}"
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 10, scan_point_index: 0, label: 'wolf', label_instance_id: 2, record_success: false, result_state: 'failed', image_name: 'wolf_2.jpg'}"
+ros2 topic pub --once /k230/animals/record_result drone_msgs/msg/K230RecordResult "{stamp: {sec: 0, nanosec: 0}, frame_seq: 10, scan_point_index: 0, label: 'wolf', label_instance_id: 3, record_success: false, result_state: 'skipped', image_name: ''}"
+```
+
+### 13.10 `record_result` 超时测试
+
+操作：
+
+- 先按“单目标成功测试命令”让控制端发布一次 `/k230/animals/capture_ready`
+- 然后不要发送 `/k230/animals/record_result`
+
+预期：
+
+- 超过 `camera_aim_record_result_timeout_s` 后，当前目标进入 `SKIPPED`
+
+### 13.11 scan point 总超时测试
+
+持续发布目标，但不让所有目标收口：
+
+```bash
+ros2 topic pub -r 10 /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 20, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 2, targets: [{label: 'elephant', label_instance_id: 1, score: 0.95, confirmed: true, stable_frames: 10, cx: 322, cy: 242, err_x: 2, err_y: 2, norm_x: 0.004, norm_y: 0.004, x1: 250, y1: 160, x2: 390, y2: 320, bbox_w: 140, bbox_h: 160, bbox_area: 22400}, {label: 'tiger', label_instance_id: 1, score: 0.94, confirmed: true, stable_frames: 10, cx: 360, cy: 260, err_x: 40, err_y: 20, norm_x: 0.08, norm_y: 0.04, x1: 320, y1: 220, x2: 400, y2: 300, bbox_w: 80, bbox_h: 80, bbox_area: 6400}]}"
+```
+
+然后不回完整结果，等待超过 `camera_aim_scan_point_timeout_s`。
+
+### 13.12 非法帧测试命令
+
+`target_count` 与 `targets.size()` 不一致：
+
+```bash
+ros2 topic pub --once /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 30, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 2, targets: [{label: 'wolf', label_instance_id: 1, score: 0.9, confirmed: true, stable_frames: 8, cx: 320, cy: 240, err_x: 0, err_y: 0, norm_x: 0.0, norm_y: 0.0, x1: 280, y1: 200, x2: 360, y2: 280, bbox_w: 80, bbox_h: 80, bbox_area: 6400}]}"
+```
+
+`label_instance_id` 不连续：
+
+```bash
+ros2 topic pub --once /k230/animals/targets drone_msgs/msg/K230AnimalTargets "{stamp: {sec: 0, nanosec: 0}, frame_seq: 31, scan_point_index: 0, scan_point_x: 0.0, scan_point_y: 0.0, target_count: 2, targets: [{label: 'wolf', label_instance_id: 1, score: 0.9, confirmed: true, stable_frames: 8, cx: 320, cy: 240, err_x: 0, err_y: 0, norm_x: 0.0, norm_y: 0.0, x1: 280, y1: 200, x2: 360, y2: 280, bbox_w: 80, bbox_h: 80, bbox_area: 6400}, {label: 'wolf', label_instance_id: 3, score: 0.88, confirmed: true, stable_frames: 8, cx: 360, cy: 240, err_x: 40, err_y: 0, norm_x: 0.08, norm_y: 0.0, x1: 320, y1: 200, x2: 400, y2: 280, bbox_w: 80, bbox_h: 80, bbox_area: 6400}]}"
+```

@@ -75,6 +75,13 @@ public:
         return update(error, dt);
     }
 
+    void reset()
+    {
+        last_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        integral_.setZero();
+        last_error_.setZero();
+    }
+
 private:
     double p_gain_;
     double i_gain_;
@@ -158,7 +165,13 @@ class ActionExecutor
 {
 public:
     ActionExecutor(const rclcpp::Node::SharedPtr &node,
-                   tf2_ros::Buffer &tf_buffer) : node_(node), tf_buffer_(tf_buffer)
+                   tf2_ros::Buffer &tf_buffer)
+        : node_(node),
+          tf_buffer_(tf_buffer),
+          camera_aim_pid_p_(node_->declare_parameter<double>("camera_aim_pid_p", 0.001)),
+          camera_aim_pid_i_(node_->declare_parameter<double>("camera_aim_pid_i", 0.0)),
+          camera_aim_pid_d_(node_->declare_parameter<double>("camera_aim_pid_d", 0.001)),
+          pid_cam_aim_(camera_aim_pid_p_, camera_aim_pid_i_, camera_aim_pid_d_)
     {
         camera_aim_target_timeout_s_ =
             node_->declare_parameter<double>("camera_aim_target_timeout_s", 0.5);
@@ -223,10 +236,13 @@ public:
         last_camera_aim_time_ = node_->now();
 
         RCLCPP_INFO(node_->get_logger(),
-                    "动作执行器初始化完成，已准备执行任务。camera_aim_timeout=%.2f s, stable_cycles=%d, max_step=%.3f m",
+                    "动作执行器初始化完成，已准备执行任务。camera_aim_timeout=%.2f s, stable_cycles=%d, max_step=%.3f m, pid=(%.6f, %.6f, %.6f)",
                     camera_aim_target_timeout_s_,
                     camera_aim_stable_cycles_,
-                    camera_aim_max_step_);
+                    camera_aim_max_step_,
+                    camera_aim_pid_p_,
+                    camera_aim_pid_i_,
+                    camera_aim_pid_d_);
     }
 
     void addAction(const std::shared_ptr<DroneAction> &action)
@@ -376,6 +392,7 @@ private:
         }
 
         active_scan_point_.current_target_key.clear();
+        resetCameraAimTrackingState();
         completeCurrentAction(reason);
         tryFinishActiveScanPoint();
     }
@@ -392,9 +409,15 @@ private:
 
     void resetActionRuntimeState()
     {
-        aim_close_count_ = 0;
+        resetCameraAimTrackingState();
         land_mode_request_sent_ = false;
         land_low_altitude_count_ = 0;
+    }
+
+    void resetCameraAimTrackingState()
+    {
+        aim_close_count_ = 0;
+        pid_cam_aim_.reset();
     }
 
     void completeCurrentAction(const std::string &message)
@@ -723,11 +746,12 @@ private:
                     current_target->key.c_str(),
                     current_target->scan_point_index,
                     current_target->label.c_str(),
-                    current_target->label_instance_id,
-                    camera_aim_record_result_timeout_s_);
+                current_target->label_instance_id,
+                camera_aim_record_result_timeout_s_);
 
                 current_target->state = VisionTargetState::SKIPPED;
                 active_scan_point_.current_target_key.clear();
+                resetCameraAimTrackingState();
                 tryFinishActiveScanPoint();
             }
             return;
@@ -752,11 +776,12 @@ private:
             }
             active_scan_point_.current_target_key = next->key;
             next->state = VisionTargetState::TRACKING;
+            resetCameraAimTrackingState();
             current_target = next;
 
             RCLCPP_INFO(
                 node_->get_logger(),
-                "camera_aim 选择新目标进入 TRACKING：scan_point=%d, key=%s, label=%s, instance_id=%u。",
+                "camera_aim 选择新目标进入 TRACKING：scan_point=%d, key=%s, label=%s, instance_id=%u。已重置稳定计数和 PID 状态。",
                 current_target->scan_point_index,
                 current_target->key.c_str(),
                 current_target->label.c_str(),
@@ -775,6 +800,7 @@ private:
                 current_target->label.c_str(),
                 current_target->label_instance_id);
             active_scan_point_.current_target_key.clear();
+            resetCameraAimTrackingState();
             tryFinishActiveScanPoint();
             return;
         }
@@ -1166,11 +1192,12 @@ private:
                 // 后续 executeCameraAim() 会基于这个目标的误差做对准控制。
                 active_scan_point_.current_target_key = next->key;
                 next->state = VisionTargetState::TRACKING;
+                resetCameraAimTrackingState();
 
                 // 输出目标切换日志，便于联调时确认 scan point 和目标选择是否正确。
                 RCLCPP_INFO(
                     node_->get_logger(),
-                    "已选择当前目标：scan_point=%d, key=%s, label=%s, instance_id=%u。",
+                    "已选择当前目标：scan_point=%d, key=%s, label=%s, instance_id=%u。已重置稳定计数和 PID 状态。",
                     next->scan_point_index,
                     next->key.c_str(),
                     next->label.c_str(),
@@ -1327,6 +1354,7 @@ private:
             isTerminalState(target->state))
         {
             active_scan_point_.current_target_key.clear();
+            resetCameraAimTrackingState();
         }
 
         tryFinishActiveScanPoint();
@@ -1366,6 +1394,7 @@ private:
         active_scan_point_.targets_by_key.clear();
         active_scan_point_.target_order.clear();
         active_scan_point_.current_target_key.clear();
+        resetCameraAimTrackingState();
         active_scan_point_.last_targets_msg_time =
             rclcpp::Time(0, 0, node_->get_clock()->get_clock_type());
         active_scan_point_.scan_point_start_time =
@@ -1423,8 +1452,6 @@ private:
     rclcpp::Node::SharedPtr node_;
     tf2_ros::Buffer &tf_buffer_;
 
-    Vec3dPID pid_cam_aim_{0.001, 0.0, 0.001};
-
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr setpoint_pub_;
     rclcpp::Publisher<drone_msgs::msg::K230CaptureReady>::SharedPtr capture_ready_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr step_pub_;
@@ -1447,6 +1474,9 @@ private:
     rclcpp::Time last_status_publish_time_;
     bool force_status_publish_ = true;
     double status_publish_period_s_ = 1.0;
+    double camera_aim_pid_p_ = 0.001;
+    double camera_aim_pid_i_ = 0.0;
+    double camera_aim_pid_d_ = 0.001;
     double camera_aim_target_timeout_s_ = 0.5;
     int camera_aim_stable_cycles_ = 20;
     double camera_aim_max_step_ = 0.05;
@@ -1454,6 +1484,7 @@ private:
     double camera_aim_no_target_confirm_s_ = 2.0;
     double camera_aim_record_result_timeout_s_ = 5.0;
     double camera_aim_scan_point_timeout_s_ = 30.0;
+    Vec3dPID pid_cam_aim_;
 
     int aim_close_count_ = 0;
     bool land_mode_request_sent_ = false;
