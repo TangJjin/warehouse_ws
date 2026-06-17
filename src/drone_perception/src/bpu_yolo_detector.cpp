@@ -3,6 +3,7 @@
 #include <dnn/hb_sys.h>
 
 #include <cstddef>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 
@@ -111,6 +112,59 @@ void BpuYoloDetector::allocateTensors()
   } catch (...) {
     releaseTensors();
     throw;
+  }
+}
+
+void BpuYoloDetector::inferNv12(const uint8_t *nv12_data, std::size_t nv12_size)
+{
+  if (_dnn_handle == nullptr) {
+    throw std::runtime_error("BPU model is not loaded");
+  }
+
+  if (!_input_tensor_allocated || _output_tensors.empty()) {
+    throw std::runtime_error("BPU tensors are not allocated");
+  }
+
+  if (nv12_data == nullptr) {
+    throw std::runtime_error("NV12 input data is null");
+  }
+
+  const std::size_t expected_size =
+      static_cast<std::size_t>(_input_properties.alignedByteSize);
+
+  if (nv12_size != expected_size) {
+    throw std::runtime_error(
+        "unexpected NV12 input size, expected=" + std::to_string(expected_size) +
+        ", actual=" + std::to_string(nv12_size));
+  }
+
+  std::memcpy(_input_tensor.sysMem[0].virAddr, nv12_data, nv12_size);
+
+  checkRet(
+      hbSysFlushMem(&_input_tensor.sysMem[0], HB_SYS_MEM_CACHE_CLEAN),
+      "hbSysFlushMem input clean");
+
+  hbDNNTaskHandle_t task_handle = nullptr;
+  hbDNNInferCtrlParam infer_ctrl_param;
+  HB_DNN_INITIALIZE_INFER_CTRL_PARAM(&infer_ctrl_param);
+
+  hbDNNTensor *input_tensor = &_input_tensor;
+  hbDNNTensor *output_tensors = _output_tensors.data();
+
+  checkRet(
+      hbDNNInfer(&task_handle, &output_tensors, input_tensor, _dnn_handle, &infer_ctrl_param),
+      "hbDNNInfer");
+
+  const int wait_ret = hbDNNWaitTaskDone(task_handle, 0);
+  const int release_ret = hbDNNReleaseTask(task_handle);
+
+  checkRet(wait_ret, "hbDNNWaitTaskDone");
+  checkRet(release_ret, "hbDNNReleaseTask");
+
+  for (std::size_t i = 0; i < _output_tensors.size(); ++i) {
+    checkRet(
+        hbSysFlushMem(&_output_tensors[i].sysMem[0], HB_SYS_MEM_CACHE_INVALIDATE),
+        "hbSysFlushMem output[" + std::to_string(i) + "] invalidate");
   }
 }
 

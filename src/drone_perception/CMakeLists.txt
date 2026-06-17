@@ -153,6 +153,25 @@ find_library(RDK_DNN_LIBRARY
 )
 
 if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY)
+  target_sources(qr_vision_node
+    PRIVATE
+    src/bpu_yolo_detector.cpp
+  )
+
+  target_include_directories(qr_vision_node
+    PRIVATE
+    ${RDK_DNN_INCLUDE_DIR}
+  )
+
+  target_link_libraries(qr_vision_node
+    ${RDK_DNN_LIBRARY}
+  )
+
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_BPU=1
+  )
+
   add_executable(bpu_model_probe
     src/bpu_model_probe.cpp
     src/bpu_yolo_detector.cpp
@@ -175,6 +194,11 @@ if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY)
     DESTINATION lib/${PROJECT_NAME}
   )
 else()
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_BPU=0
+  )
+
   message(STATUS
     "Skipping bpu_model_probe because RDK BPU SDK is unavailable. "
     "Need dnn/hb_dnn.h and libdnn.so.")

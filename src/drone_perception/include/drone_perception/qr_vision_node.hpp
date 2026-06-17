@@ -16,6 +16,14 @@
 
 #include "drone_perception/depth_processor.hpp"
 
+#ifndef DRONE_PERCEPTION_HAS_BPU
+#define DRONE_PERCEPTION_HAS_BPU 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+#include "drone_perception/bpu_yolo_detector.hpp"
+#endif
+
 class QrVisionNode : public rclcpp::Node
 {
 public:
@@ -32,6 +40,8 @@ private:
   void declareParameters();
 
   void initializeSubscriptions();
+
+  void initializeBpuDetector();
 
   void handleSyncedFrame(
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
@@ -51,7 +61,10 @@ private:
   std::string camera_info_topic_;
   std::string window_name_;
 
+  std::string bpu_model_path_;
+
   bool debug_view_ = true;
+  bool enable_bpu_ = false;
   mutable bool debug_window_created_ = false;
   int log_throttle_ms_ = 500;
   int sample_radius_px_ = 3;
@@ -60,6 +73,11 @@ private:
   double smoothed_fps_ = 0.0;
 
   DepthProcessor depth_processor_;
+
+#if DRONE_PERCEPTION_HAS_BPU
+  std::unique_ptr<BpuYoloDetector> bpu_detector_;
+#endif
+
   bool has_camera_info_ = false;
 
   message_filters::Subscriber<sensor_msgs::msg::Image> color_sub_;
