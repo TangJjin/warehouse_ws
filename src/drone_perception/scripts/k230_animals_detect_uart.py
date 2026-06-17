@@ -2,8 +2,7 @@
 #
 # UART packet format:
 #   magic(4) + type(1) + seq(4) + length(4) + payload + crc16(2)
-#   type: 1 = legacy detection JSON, 2 = JPEG image bytes
-#   type: 3 = stable targets JSON, 4 = capture command JSON, 5 = record result JSON
+#   type: 1 = detection JSON, 2 = JPEG image bytes
 
 import os
 import sys
@@ -30,29 +29,14 @@ DISPLAY_MODE = "lcd"  # "lcd" or "hdmi"
 
 DISPLAY_WIDTH = ALIGN_UP(800, 16)
 DISPLAY_HEIGHT = 480
-YOLO_SOURCE_WIDTH = ALIGN_UP(640, 16)
-YOLO_SOURCE_HEIGHT = 480
-YOLO_CROP_ENABLED = False
-YOLO_CROP_WIDTH = YOLO_SOURCE_WIDTH
-YOLO_CROP_HEIGHT = YOLO_SOURCE_HEIGHT
-YOLO_CROP_X = 0
-YOLO_CROP_Y = 0
-RGB888P_WIDTH = YOLO_CROP_WIDTH if YOLO_CROP_ENABLED else YOLO_SOURCE_WIDTH
-RGB888P_HEIGHT = YOLO_CROP_HEIGHT if YOLO_CROP_ENABLED else YOLO_SOURCE_HEIGHT
-SNAPSHOT_SOURCE_WIDTH = YOLO_SOURCE_WIDTH
-SNAPSHOT_SOURCE_HEIGHT = YOLO_SOURCE_HEIGHT
+RGB888P_WIDTH = ALIGN_UP(640, 16)
+RGB888P_HEIGHT = 480
 SNAPSHOT_WIDTH = RGB888P_WIDTH
 SNAPSHOT_HEIGHT = RGB888P_HEIGHT
-CONTROL_WIDTH = RGB888P_WIDTH if YOLO_CROP_ENABLED else DISPLAY_WIDTH
-CONTROL_HEIGHT = RGB888P_HEIGHT if YOLO_CROP_ENABLED else DISPLAY_HEIGHT
+CONTROL_WIDTH = DISPLAY_WIDTH
+CONTROL_HEIGHT = DISPLAY_HEIGHT
 MODEL_INPUT_SIZE = [640, 640]
 CAMERA_FPS = 30
-
-VALID_AREA_ENABLED = True
-VALID_AREA_W = 380
-VALID_AREA_H = 380
-VALID_AREA_X = (DISPLAY_WIDTH - VALID_AREA_W) // 2
-VALID_AREA_Y = (DISPLAY_HEIGHT - VALID_AREA_H) // 2
 
 KMODEL_PATH = "/sdcard/best.kmodel"
 LABELS = ["大象", "老虎", "狼", "孔雀", "猴子"]
@@ -62,37 +46,28 @@ NMS_THRESH = 0.50
 MAX_BOXES_NUM = 20
 DEBUG_MODE = 0
 
-UART_BAUDRATE = 460800 # Adjust as needed, e.g. 115200, 230400, 460800, 921600
-UART_SEND_INTERVAL_MS = 66  # ~15 FPS max, adjust as needed
+UART_BAUDRATE = 460800
+UART_SEND_INTERVAL_MS = 100
 UART_LOG_INTERVAL_MS = 1000
 RES_DEBUG_INTERVAL_MS = 1000
 RES_DEBUG_MAX_ITEMS = 5
 UART_PACKET_MAGIC = b"K230"
-UART_PACKET_MAGIC_VALUES = [0x4B, 0x32, 0x33, 0x30]
 UART_PACKET_TYPE_DETECTION = 1
 UART_PACKET_TYPE_JPEG = 2
-UART_PACKET_TYPE_TARGETS = 3
-UART_PACKET_TYPE_CAPTURE_COMMAND = 4
-UART_PACKET_TYPE_RECORD_RESULT = 5
 SEND_EMPTY_RESULT = True
-SEND_LEGACY_DETECTION = True
-AUTO_SNAPSHOT_ENABLED = False
-UART_RX_MAX_BYTES = 8192
-TARGET_FRAME_HISTORY_MAX = 60
-PROCESSED_CAPTURE_HISTORY_MAX = 50
 
-SNAPSHOT_REQUIRED_FRAMES = 2
+SNAPSHOT_REQUIRED_FRAMES = 3
 SNAPSHOT_CENTER_STABLE_PX = 40
 SNAPSHOT_LOST_RESET_FRAMES = 5
 SNAPSHOT_MIN_SCORE = 0.60
-SNAPSHOT_JPEG_QUALITY = 50
-SNAPSHOT_OUTPUT_SIZE = 160
+SNAPSHOT_JPEG_QUALITY = 40
+SNAPSHOT_OUTPUT_SIZE = 128
 SNAPSHOT_ROI_SCALE = 1.5
 SNAPSHOT_MIN_ROI_SIZE = 160
 SNAPSHOT_EDGE_MARGIN_PX = 20
-SNAPSHOT_MIN_BBOX_W = 60
-SNAPSHOT_MIN_BBOX_H = 70
-SNAPSHOT_MIN_BBOX_AREA = 5000
+SNAPSHOT_MIN_BBOX_W = 80
+SNAPSHOT_MIN_BBOX_H = 100
+SNAPSHOT_MIN_BBOX_AREA = 10000
 SNAPSHOT_HISTORY_MAX = 20
 SNAPSHOT_HISTORY_KEEP_MS = 30000
 SNAPSHOT_DUP_IOU = 0.35
@@ -101,7 +76,7 @@ SNAPSHOT_DUP_AREA_RATIO_MIN = 0.60
 SNAPSHOT_DUP_AREA_RATIO_MAX = 1.60
 SNAPSHOT_BETTER_AREA_RATIO = 1.45
 TRACK_MATCH_IOU = 0.25
-TRACK_MATCH_CENTER_PX = 100
+TRACK_MATCH_CENTER_PX = 80
 TRACK_MAX_LOST_FRAMES = 5
 TRACK_MAX_COUNT = 10
 
@@ -114,8 +89,6 @@ OSD_COLOR_TEXT = (255, 255, 255)
 OSD_COLOR_GREEN = (0, 220, 120)
 OSD_COLOR_AMBER = (255, 180, 0)
 OSD_COLOR_CYAN = (0, 210, 255)
-OSD_COLOR_BOX = (0, 220, 120)
-OSD_COLOR_VALID_AREA = (255, 180, 0)
 
 
 def print_exception(exc):
@@ -179,91 +152,12 @@ def send_uart_packet(uart, packet_type, seq, payload):
     uart_write_all(uart, packet)
 
 
-def read_u32_be(data, offset):
-    return (
-        (data[offset] << 24) |
-        (data[offset + 1] << 16) |
-        (data[offset + 2] << 8) |
-        data[offset + 3]
-    )
-
-
-def read_u16_be(data, offset):
-    return (data[offset] << 8) | data[offset + 1]
-
-
-def find_magic(buffer):
-    magic_len = len(UART_PACKET_MAGIC_VALUES)
-    limit = len(buffer) - magic_len + 1
-    for i in range(limit):
-        if buffer[i:i + magic_len] == UART_PACKET_MAGIC_VALUES:
-            return i
-    return -1
-
-
-def parse_uart_rx_buffer(rx_buffer):
-    packets = []
-    header_len = 13
-    crc_len = 2
-
-    while len(rx_buffer) >= header_len + crc_len:
-        magic_index = find_magic(rx_buffer)
-        if magic_index < 0:
-            keep = len(UART_PACKET_MAGIC) - 1
-            if len(rx_buffer) > keep:
-                del rx_buffer[:-keep]
-            break
-        if magic_index > 0:
-            del rx_buffer[:magic_index]
-        if len(rx_buffer) < header_len + crc_len:
-            break
-
-        packet_type = rx_buffer[4]
-        seq = read_u32_be(rx_buffer, 5)
-        payload_len = read_u32_be(rx_buffer, 9)
-        if payload_len > UART_RX_MAX_BYTES:
-            print("uart rx payload too large:", payload_len)
-            del rx_buffer[0]
-            continue
-
-        packet_len = header_len + payload_len + crc_len
-        if len(rx_buffer) < packet_len:
-            break
-
-        rx_crc = read_u16_be(rx_buffer, header_len + payload_len)
-        calc_crc = crc16_ccitt(rx_buffer[:header_len + payload_len])
-        if rx_crc != calc_crc:
-            print("uart rx crc mismatch type=%d seq=%d len=%d" % (packet_type, seq, payload_len))
-            del rx_buffer[0]
-            continue
-
-        payload = bytes(rx_buffer[header_len:header_len + payload_len])
-        packets.append((packet_type, seq, payload))
-        del rx_buffer[:packet_len]
-
-    return packets
-
-
-def poll_uart_packets(uart, rx_buffer):
-    try:
-        data = uart.read()
-    except Exception as e:
-        print("uart read failed:", e)
-        return []
-    if data:
-        rx_buffer.extend(data)
-    return parse_uart_rx_buffer(rx_buffer)
-
-
 def make_detection_uart_payload(payload):
     compact = {
         "valid": bool(payload.get("valid", False)),
-        "img_w": payload.get("img_w", active_data_width()),
-        "img_h": payload.get("img_h", active_data_height()),
         "label": str(payload.get("label", "")),
         "score": payload.get("score", 0.0),
         "track_id": payload.get("track_id", -1),
-        "label_instance_id": payload.get("label_instance_id", 0),
         "cx": payload.get("cx", -1),
         "cy": payload.get("cy", -1),
         "err_x": payload.get("err_x", 0),
@@ -278,14 +172,6 @@ def make_detection_uart_payload(payload):
 
 def send_detection_uart(uart, seq, payload):
     send_uart_packet(uart, UART_PACKET_TYPE_DETECTION, seq, make_detection_uart_payload(payload))
-
-
-def send_targets_uart(uart, frame_seq, payload):
-    send_uart_packet(uart, UART_PACKET_TYPE_TARGETS, frame_seq, json.dumps(payload))
-
-
-def send_record_result_uart(uart, seq, payload):
-    send_uart_packet(uart, UART_PACKET_TYPE_RECORD_RESULT, seq, json.dumps(payload))
 
 
 def send_jpeg_uart(uart, seq, jpeg_bytes):
@@ -333,380 +219,25 @@ def image_width(img):
     try:
         return img.width()
     except Exception:
-        return SNAPSHOT_WIDTH
+        return RGB888P_WIDTH
 
 
 def image_height(img):
     try:
         return img.height()
     except Exception:
-        return SNAPSHOT_HEIGHT
-
-
-def validate_yolo_crop_config():
-    if not YOLO_CROP_ENABLED:
-        return
-    if YOLO_CROP_WIDTH <= 0 or YOLO_CROP_HEIGHT <= 0:
-        raise ValueError("invalid yolo crop size")
-    if YOLO_CROP_X < 0 or YOLO_CROP_Y < 0:
-        raise ValueError("invalid yolo crop offset")
-    if YOLO_CROP_X + YOLO_CROP_WIDTH > YOLO_SOURCE_WIDTH:
-        raise ValueError("yolo crop width exceeds source frame")
-    if YOLO_CROP_Y + YOLO_CROP_HEIGHT > YOLO_SOURCE_HEIGHT:
-        raise ValueError("yolo crop height exceeds source frame")
-
-
-def yolo_crop_roi():
-    if not YOLO_CROP_ENABLED:
-        return None
-    return [YOLO_CROP_X, YOLO_CROP_Y, YOLO_CROP_WIDTH, YOLO_CROP_HEIGHT]
-
-
-def make_cropped_image(img):
-    roi = yolo_crop_roi()
-    if roi is None:
-        return img
-    try:
-        return img.copy(roi=roi, copy_to_fb=False)
-    except TypeError:
-        return img.copy(roi=roi)
-
-
-def make_yolo_image(img):
-    return make_cropped_image(img)
-
-
-def lcd_source_x():
-    return 0
-
-
-def lcd_source_y():
-    return 0
-
-
-def lcd_scale_x():
-    return DISPLAY_WIDTH / YOLO_SOURCE_WIDTH
-
-
-def lcd_scale_y():
-    return DISPLAY_HEIGHT / YOLO_SOURCE_HEIGHT
-
-
-def source_to_lcd_x(x):
-    return lcd_source_x() + iround(x * lcd_scale_x())
-
-
-def source_to_lcd_y(y):
-    return lcd_source_y() + iround(y * lcd_scale_y())
-
-
-def make_clipped_square(x, y, w, h, max_w, max_h):
-    x = int(x)
-    y = int(y)
-    w = int(w)
-    h = int(h)
-    side = w if w < h else h
-    if side <= 0 or max_w <= 0 or max_h <= 0:
-        return None
-
-    if x < 0:
-        side += x
-        x = 0
-    if y < 0:
-        side += y
-        y = 0
-    if x >= max_w or y >= max_h:
-        return None
-
-    max_side = max_w - x
-    if max_h - y < max_side:
-        max_side = max_h - y
-    if side > max_side:
-        side = max_side
-    if side <= 0:
-        return None
-    return [x, y, side, side]
-
-
-def make_clipped_rect(x, y, w, h, max_w, max_h):
-    x = int(x)
-    y = int(y)
-    w = int(w)
-    h = int(h)
-    if w <= 0 or h <= 0 or max_w <= 0 or max_h <= 0:
-        return None
-
-    if x < 0:
-        w += x
-        x = 0
-    if y < 0:
-        h += y
-        y = 0
-    if x >= max_w or y >= max_h:
-        return None
-
-    if x + w > max_w:
-        w = max_w - x
-    if y + h > max_h:
-        h = max_h - y
-    if w <= 0 or h <= 0:
-        return None
-    return [x, y, w, h]
-
-
-def valid_area_rect():
-    if not VALID_AREA_ENABLED:
-        return None
-    return make_clipped_square(
-        VALID_AREA_X,
-        VALID_AREA_Y,
-        VALID_AREA_W,
-        VALID_AREA_H,
-        DISPLAY_WIDTH,
-        DISPLAY_HEIGHT,
-    )
-
-
-def active_data_width():
-    rect = valid_area_rect()
-    if rect is not None:
-        return rect[2]
-    return CONTROL_WIDTH
-
-
-def active_data_height():
-    rect = valid_area_rect()
-    if rect is not None:
-        return rect[3]
-    return CONTROL_HEIGHT
-
-
-def valid_area_source_roi():
-    rect = valid_area_rect()
-    if rect is None:
-        return None
-
-    x = iround(rect[0] * YOLO_SOURCE_WIDTH / DISPLAY_WIDTH)
-    y = iround(rect[1] * YOLO_SOURCE_HEIGHT / DISPLAY_HEIGHT)
-    w = iround(rect[2] * YOLO_SOURCE_WIDTH / DISPLAY_WIDTH)
-    h = iround(rect[3] * YOLO_SOURCE_HEIGHT / DISPLAY_HEIGHT)
-    return make_clipped_rect(x, y, w, h, YOLO_SOURCE_WIDTH, YOLO_SOURCE_HEIGHT)
-
-
-def make_valid_area_image(img):
-    roi = valid_area_source_roi()
-    if roi is None:
-        return img
-
-    x_scale = active_data_width() / roi[2]
-    y_scale = active_data_height() / roi[3]
-    try:
-        return img.to_rgb888(x_scale=x_scale, y_scale=y_scale, roi=roi)
-    except TypeError:
-        return img.to_rgb888(x_scale, y_scale, roi)
-    except Exception:
-        try:
-            cropped = img.copy(roi=roi, copy_to_fb=False)
-        except TypeError:
-            cropped = img.copy(roi=roi)
-        try:
-            return cropped.to_rgb888(x_scale=x_scale, y_scale=y_scale)
-        except TypeError:
-            return cropped.to_rgb888(x_scale, y_scale)
-
-
-def draw_valid_area(osd_img):
-    rect = valid_area_rect()
-    if rect is None:
-        return
-
-    osd_img.draw_rectangle(
-        rect[0],
-        rect[1],
-        rect[2],
-        rect[3],
-        color=OSD_COLOR_VALID_AREA,
-        thickness=2,
-        fill=False,
-    )
-
-
-def detection_lcd_center(det):
-    cx = int(det.get("cx", -1))
-    cy = int(det.get("cy", -1))
-    if YOLO_CROP_ENABLED:
-        cx = source_to_lcd_x(YOLO_CROP_X + cx)
-        cy = source_to_lcd_y(YOLO_CROP_Y + cy)
-    return cx, cy
-
-
-def detection_lcd_box(det):
-    x1 = int(det.get("x1", 0))
-    y1 = int(det.get("y1", 0))
-    x2 = int(det.get("x2", 0))
-    y2 = int(det.get("y2", 0))
-
-    if YOLO_CROP_ENABLED:
-        x1 = source_to_lcd_x(YOLO_CROP_X + x1)
-        y1 = source_to_lcd_y(YOLO_CROP_Y + y1)
-        x2 = source_to_lcd_x(YOLO_CROP_X + x2)
-        y2 = source_to_lcd_y(YOLO_CROP_Y + y2)
-
-    return [x1, y1, x2, y2]
-
-
-def detection_in_valid_area(det):
-    rect = valid_area_rect()
-    if rect is None:
-        return True
-
-    x1, y1, x2, y2 = detection_lcd_box(det)
-    return (
-        x2 > rect[0] and
-        y2 > rect[1] and
-        x1 < rect[0] + rect[2] and
-        y1 < rect[1] + rect[3]
-    )
-
-
-def make_valid_area_detection(det):
-    rect = valid_area_rect()
-    if rect is None:
-        return det
-    if not detection_in_valid_area(det):
-        return None
-
-    lcd_x1, lcd_y1, lcd_x2, lcd_y2 = detection_lcd_box(det)
-    x1 = clamp(lcd_x1, rect[0], rect[0] + rect[2] - 1) - rect[0]
-    y1 = clamp(lcd_y1, rect[1], rect[1] + rect[3] - 1) - rect[1]
-    x2 = clamp(lcd_x2, rect[0], rect[0] + rect[2] - 1) - rect[0]
-    y2 = clamp(lcd_y2, rect[1], rect[1] + rect[3] - 1) - rect[1]
-    if x2 <= x1 or y2 <= y1:
-        return None
-
-    img_w = rect[2]
-    img_h = rect[3]
-    cx = (x1 + x2) // 2
-    cy = (y1 + y2) // 2
-    err_x = cx - (img_w // 2)
-    err_y = cy - (img_h // 2)
-
-    out = det.copy()
-    out["img_w"] = img_w
-    out["img_h"] = img_h
-    out["cx"] = cx
-    out["cy"] = cy
-    out["err_x"] = err_x
-    out["err_y"] = err_y
-    out["norm_x"] = float("%.4f" % (err_x / (img_w / 2)))
-    out["norm_y"] = float("%.4f" % (err_y / (img_h / 2)))
-    out["x1"] = x1
-    out["y1"] = y1
-    out["x2"] = x2
-    out["y2"] = y2
-    out["bbox_w"] = x2 - x1
-    out["bbox_h"] = y2 - y1
-    out["bbox_area"] = out["bbox_w"] * out["bbox_h"]
-    return out
-
-
-def filter_detections_by_valid_area(detections):
-    filtered = []
-    for det in detections:
-        local_det = make_valid_area_detection(det)
-        if local_det is not None:
-            filtered.append(local_det)
-    return filtered
-
-
-def lcd_crop_x():
-    if YOLO_CROP_ENABLED:
-        return source_to_lcd_x(YOLO_CROP_X)
-    return lcd_source_x()
-
-
-def lcd_crop_y():
-    if YOLO_CROP_ENABLED:
-        return source_to_lcd_y(YOLO_CROP_Y)
-    return lcd_source_y()
-
-
-def lcd_crop_w():
-    return iround(CONTROL_WIDTH * lcd_scale_x())
-
-
-def lcd_crop_h():
-    return iround(CONTROL_HEIGHT * lcd_scale_y())
-
-
-def draw_lcd_effective_mask(osd_img):
-    crop_x = lcd_crop_x()
-    crop_y = lcd_crop_y()
-    crop_w = lcd_crop_w()
-    crop_h = lcd_crop_h()
-
-    if crop_y > 0:
-        osd_img.draw_rectangle(0, 0, DISPLAY_WIDTH, crop_y, color=OSD_COLOR_BG, thickness=1, fill=True)
-    bottom_y = crop_y + crop_h
-    if bottom_y < DISPLAY_HEIGHT:
-        osd_img.draw_rectangle(0, bottom_y, DISPLAY_WIDTH, DISPLAY_HEIGHT - bottom_y, color=OSD_COLOR_BG, thickness=1, fill=True)
-    if crop_x > 0:
-        osd_img.draw_rectangle(0, crop_y, crop_x, crop_h, color=OSD_COLOR_BG, thickness=1, fill=True)
-    right_x = crop_x + crop_w
-    if right_x < DISPLAY_WIDTH:
-        osd_img.draw_rectangle(right_x, crop_y, DISPLAY_WIDTH - right_x, crop_h, color=OSD_COLOR_BG, thickness=1, fill=True)
-
-
-def draw_detection_boxes(osd_img, detections):
-    rect = valid_area_rect()
-    for det in detections:
-        if rect is not None:
-            x1 = rect[0] + int(det.get("x1", 0))
-            y1 = rect[1] + int(det.get("y1", 0))
-            x2 = rect[0] + int(det.get("x2", 0))
-            y2 = rect[1] + int(det.get("y2", 0))
-        elif YOLO_CROP_ENABLED:
-            source_x1 = YOLO_CROP_X + int(det.get("x1", 0))
-            source_y1 = YOLO_CROP_Y + int(det.get("y1", 0))
-            source_x2 = YOLO_CROP_X + int(det.get("x2", 0))
-            source_y2 = YOLO_CROP_Y + int(det.get("y2", 0))
-            x1 = source_to_lcd_x(source_x1)
-            y1 = source_to_lcd_y(source_y1)
-            x2 = source_to_lcd_x(source_x2)
-            y2 = source_to_lcd_y(source_y2)
-        else:
-            x1 = int(det.get("x1", 0))
-            y1 = int(det.get("y1", 0))
-            x2 = int(det.get("x2", 0))
-            y2 = int(det.get("y2", 0))
-        w = x2 - x1
-        h = y2 - y1
-        if w <= 0 or h <= 0:
-            continue
-
-        label = str(det.get("label", ""))
-        score = det.get("score", 0.0)
-        osd_img.draw_rectangle(x1, y1, w, h, color=OSD_COLOR_BOX, thickness=2, fill=False)
-        osd_img.draw_string_advanced(
-            x1,
-            y1 - 18 if y1 >= 18 else y1 + 2,
-            16,
-            "%s %.2f" % (label, score),
-            color=OSD_COLOR_BOX,
-        )
+        return RGB888P_HEIGHT
 
 
 def make_snapshot_roi(img, payload):
     img_w = image_width(img)
     img_h = image_height(img)
     max_side = img_w if img_w < img_h else img_h
-    data_w = int(payload.get("img_w", active_data_width()))
-    data_h = int(payload.get("img_h", active_data_height()))
 
-    scale_x = img_w / data_w
-    scale_y = img_h / data_h
-    cx = iround(payload.get("cx", data_w // 2) * scale_x)
-    cy = iround(payload.get("cy", data_h // 2) * scale_y)
+    scale_x = img_w / CONTROL_WIDTH
+    scale_y = img_h / CONTROL_HEIGHT
+    cx = iround(payload.get("cx", CONTROL_WIDTH // 2) * scale_x)
+    cy = iround(payload.get("cy", CONTROL_HEIGHT // 2) * scale_y)
     bbox_w = iround(payload.get("bbox_w", SNAPSHOT_MIN_ROI_SIZE) * scale_x)
     bbox_h = iround(payload.get("bbox_h", SNAPSHOT_MIN_ROI_SIZE) * scale_y)
 
@@ -760,7 +291,7 @@ def send_snapshot_uart(uart, seq, img, payload):
     )
 
 
-def draw_status_osd(osd_img, payload, raw_detection, detection_count, origin_x=0, origin_y=0):
+def draw_status_osd(osd_img, payload, raw_detection, detection_count):
     is_valid = bool(payload.get("valid", False))
     is_confirmed = bool(payload.get("confirmed", False))
     stable_frames = payload.get("stable_frames", 0)
@@ -786,32 +317,27 @@ def draw_status_osd(osd_img, payload, raw_detection, detection_count, origin_x=0
         norm_x = target.get("norm_x", 0.0)
         norm_y = target.get("norm_y", 0.0)
 
-    status_w = OSD_STATUS_W
-    max_status_w = CONTROL_WIDTH - OSD_STATUS_X
-    if status_w > max_status_w:
-        status_w = max_status_w
-
     osd_img.draw_rectangle(
-        origin_x + OSD_STATUS_X,
-        origin_y + OSD_STATUS_Y,
-        status_w,
+        OSD_STATUS_X,
+        OSD_STATUS_Y,
+        OSD_STATUS_W,
         OSD_STATUS_H,
         color=OSD_COLOR_BG,
         thickness=1,
         fill=True,
     )
     osd_img.draw_rectangle(
-        origin_x + OSD_STATUS_X,
-        origin_y + OSD_STATUS_Y,
-        status_w,
+        OSD_STATUS_X,
+        OSD_STATUS_Y,
+        OSD_STATUS_W,
         OSD_STATUS_H,
         color=status_color,
         thickness=2,
         fill=False,
     )
     osd_img.draw_string_advanced(
-        origin_x + OSD_STATUS_X + 12,
-        origin_y + OSD_STATUS_Y + 8,
+        OSD_STATUS_X + 12,
+        OSD_STATUS_Y + 8,
         18,
         "%s valid=%d confirmed=%d stable=%d/%d count=%d"
         % (
@@ -825,15 +351,15 @@ def draw_status_osd(osd_img, payload, raw_detection, detection_count, origin_x=0
         color=status_color,
     )
     osd_img.draw_string_advanced(
-        origin_x + OSD_STATUS_X + 12,
-        origin_y + OSD_STATUS_Y + 36,
+        OSD_STATUS_X + 12,
+        OSD_STATUS_Y + 36,
         17,
         "label=%s score=%.3f cx=%d cy=%d" % (label, score, cx, cy),
         color=OSD_COLOR_TEXT,
     )
     osd_img.draw_string_advanced(
-        origin_x + OSD_STATUS_X + 12,
-        origin_y + OSD_STATUS_Y + 62,
+        OSD_STATUS_X + 12,
+        OSD_STATUS_Y + 62,
         17,
         "norm_x=%.3f norm_y=%.3f" % (norm_x, norm_y),
         color=OSD_COLOR_CYAN,
@@ -1053,8 +579,6 @@ def best_detection(detections):
 def detection_is_complete(det):
     if det is None:
         return False
-    img_w = int(det.get("img_w", active_data_width()))
-    img_h = int(det.get("img_h", active_data_height()))
     x1 = int(det.get("x1", 0))
     y1 = int(det.get("y1", 0))
     x2 = int(det.get("x2", 0))
@@ -1063,13 +587,12 @@ def detection_is_complete(det):
     bbox_h = int(det.get("bbox_h", 0))
     bbox_area = int(det.get("bbox_area", 0))
 
-    if valid_area_rect() is None:
-        if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
-            return False
-        if x2 >= img_w - 1 - SNAPSHOT_EDGE_MARGIN_PX:
-            return False
-        if y2 >= img_h - 1 - SNAPSHOT_EDGE_MARGIN_PX:
-            return False
+    if x1 <= SNAPSHOT_EDGE_MARGIN_PX or y1 <= SNAPSHOT_EDGE_MARGIN_PX:
+        return False
+    if x2 >= CONTROL_WIDTH - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+        return False
+    if y2 >= CONTROL_HEIGHT - 1 - SNAPSHOT_EDGE_MARGIN_PX:
+        return False
     if bbox_w < SNAPSHOT_MIN_BBOX_W or bbox_h < SNAPSHOT_MIN_BBOX_H:
         return False
     if bbox_area < SNAPSHOT_MIN_BBOX_AREA:
@@ -1260,143 +783,6 @@ def stable_tracks(tracks):
     return out
 
 
-def assign_label_instance_ids(targets):
-    targets_by_label = {}
-
-    for target in targets:
-        label = str(target.get("label", ""))
-        if label not in targets_by_label:
-            targets_by_label[label] = []
-        targets_by_label[label].append(target)
-
-    for label, label_targets in targets_by_label.items():
-        sorted_targets = sorted(
-            label_targets,
-            key=lambda t: (
-                int(t.get("track_id", -1)),
-                int(t.get("cx", -1)),
-                int(t.get("cy", -1)),
-            ),
-        )
-
-        for index, target in enumerate(sorted_targets):
-            target["label_instance_id"] = index + 1
-
-    return targets
-
-
-def compact_target(track):
-    return {
-        "label": str(track.get("label", "")),
-        "label_instance_id": int(track.get("label_instance_id", 0)),
-        "track_id": int(track.get("track_id", -1)),
-        "score": track.get("score", 0.0),
-        "confirmed": True,
-        "stable_frames": int(track.get("stable_frames", 0)),
-        "cx": int(track.get("cx", -1)),
-        "cy": int(track.get("cy", -1)),
-        "err_x": int(track.get("err_x", 0)),
-        "err_y": int(track.get("err_y", 0)),
-        "norm_x": track.get("norm_x", 0.0),
-        "norm_y": track.get("norm_y", 0.0),
-        "x1": int(track.get("x1", 0)),
-        "y1": int(track.get("y1", 0)),
-        "x2": int(track.get("x2", 0)),
-        "y2": int(track.get("y2", 0)),
-        "bbox_w": int(track.get("bbox_w", 0)),
-        "bbox_h": int(track.get("bbox_h", 0)),
-        "bbox_area": int(track.get("bbox_area", 0)),
-    }
-
-
-def make_targets_payload(frame_seq, detections, ready_tracks):
-    targets = assign_label_instance_ids([track.copy() for track in ready_tracks])
-    return {
-        "type": "k230_animal_targets",
-        "schema": 2,
-        "source": "k230_animals_detect_uart",
-        "frame_seq": frame_seq,
-        "seq": frame_seq,
-        "timestamp_ms": time.ticks_ms(),
-        "img_w": active_data_width(),
-        "img_h": active_data_height(),
-        "raw_count": len(detections),
-        "target_count": len(targets),
-        "targets": [compact_target(track) for track in targets],
-    }
-
-
-def remember_frame_targets(frame_history, frame_seq, ready_tracks):
-    frame_history.append({
-        "frame_seq": frame_seq,
-        "targets": [track.copy() for track in ready_tracks],
-    })
-    if len(frame_history) > TARGET_FRAME_HISTORY_MAX:
-        del frame_history[0]
-
-
-def find_target_for_capture(frame_history, command):
-    frame_seq = int(command.get("frame_seq", -1))
-    label = str(command.get("label", ""))
-    label_instance_id = int(command.get("label_instance_id", 0))
-
-    for frame in frame_history:
-        if int(frame.get("frame_seq", -2)) != frame_seq:
-            continue
-        for target in frame.get("targets", []):
-            if str(target.get("label", "")) != label:
-                continue
-            if int(target.get("label_instance_id", 0)) != label_instance_id:
-                continue
-            return target
-    return None
-
-
-def capture_key(command):
-    return "%d:%s:%d" % (
-        int(command.get("frame_seq", -1)),
-        str(command.get("label", "")),
-        int(command.get("label_instance_id", 0)),
-    )
-
-
-def remember_processed_capture(history, key):
-    history.append(key)
-    if len(history) > PROCESSED_CAPTURE_HISTORY_MAX:
-        del history[0]
-
-
-def make_record_result(command, success, result_state, image_name=""):
-    return {
-        "type": "k230_record_result",
-        "schema": 1,
-        "source": "k230_animals_detect_uart",
-        "timestamp_ms": time.ticks_ms(),
-        "frame_seq": int(command.get("frame_seq", -1)),
-        "scan_point_index": int(command.get("scan_point_index", -1)),
-        "label": str(command.get("label", "")),
-        "label_instance_id": int(command.get("label_instance_id", 0)),
-        "record_success": bool(success),
-        "result_state": str(result_state),
-        "image_name": str(image_name),
-    }
-
-
-def decode_capture_command(payload):
-    try:
-        text = payload.decode("utf-8")
-    except Exception:
-        text = str(payload)
-    try:
-        command = json.loads(text)
-    except Exception as e:
-        print("capture command json parse failed:", e, text)
-        return None
-    if not bool(command.get("capture_ready", False)):
-        return None
-    return command
-
-
 def make_empty_payload(seq):
     return {
         "type": "animals_control",
@@ -1405,8 +791,8 @@ def make_empty_payload(seq):
         "seq": seq,
         "timestamp_ms": time.ticks_ms(),
         "valid": False,
-        "img_w": active_data_width(),
-        "img_h": active_data_height(),
+        "img_w": CONTROL_WIDTH,
+        "img_h": CONTROL_HEIGHT,
         "count": 0,
         "label": "",
         "score": 0.0,
@@ -1436,8 +822,8 @@ def make_payload(seq, detections, stable_detection, stable_frames):
         "seq": seq,
         "timestamp_ms": time.ticks_ms(),
         "valid": True,
-        "img_w": active_data_width(),
-        "img_h": active_data_height(),
+        "img_w": CONTROL_WIDTH,
+        "img_h": CONTROL_HEIGHT,
         "count": len(detections),
         "confirmed": True,
         "stable_frames": stable_frames,
@@ -1449,8 +835,8 @@ def make_payload(seq, detections, stable_detection, stable_frames):
 def init_sensor():
     sensor = Sensor(
         id=CSI_ID,
-        width=YOLO_SOURCE_WIDTH,
-        height=YOLO_SOURCE_HEIGHT,
+        width=RGB888P_WIDTH,
+        height=RGB888P_HEIGHT,
         fps=CAMERA_FPS,
     )
     sensor.reset()
@@ -1458,10 +844,10 @@ def init_sensor():
     sensor.set_framesize(width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT, chn=CAM_CHN_ID_0)
     sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
 
-    sensor.set_framesize(width=SNAPSHOT_SOURCE_WIDTH, height=SNAPSHOT_SOURCE_HEIGHT, chn=CAM_CHN_ID_1)
+    sensor.set_framesize(width=SNAPSHOT_WIDTH, height=SNAPSHOT_HEIGHT, chn=CAM_CHN_ID_1)
     sensor.set_pixformat(Sensor.RGB565, chn=CAM_CHN_ID_1)
 
-    sensor.set_framesize(width=YOLO_SOURCE_WIDTH, height=YOLO_SOURCE_HEIGHT, chn=CAM_CHN_ID_2)
+    sensor.set_framesize(width=RGB888P_WIDTH, height=RGB888P_HEIGHT, chn=CAM_CHN_ID_2)
     sensor.set_pixformat(PIXEL_FORMAT_RGB_888_PLANAR, chn=CAM_CHN_ID_2)
 
     return sensor
@@ -1488,15 +874,11 @@ def main():
     tracks = []
     next_track_id = 1
     snapshot_history = []
-    frame_history = []
-    processed_captures = []
-    uart_rx_buffer = []
     snapshot_seq = 0
     seq = 0
 
     try:
         print("CSI1 GC2093 YOLO11 animal detection UART starting")
-        validate_yolo_crop_config()
         uart = init_uart2()
         print("UART2 ready: tx=gpio5 rx=gpio6 baud=%d" % UART_BAUDRATE)
 
@@ -1514,7 +896,7 @@ def main():
             labels=LABELS,
             rgb888p_size=[RGB888P_WIDTH, RGB888P_HEIGHT],
             model_input_size=MODEL_INPUT_SIZE,
-            display_size=[CONTROL_WIDTH, CONTROL_HEIGHT] if YOLO_CROP_ENABLED else display_size,
+            display_size=display_size,
             conf_thresh=CONF_THRESH,
             nms_thresh=NMS_THRESH,
             max_boxes_num=MAX_BOXES_NUM,
@@ -1524,131 +906,65 @@ def main():
 
         print("Labels:", LABELS)
         print("Model:", KMODEL_PATH)
-        print(
-            "YOLO source=%dx%d crop_enabled=%d crop=[%d,%d,%d,%d] control=%dx%d"
-            % (
-                YOLO_SOURCE_WIDTH,
-                YOLO_SOURCE_HEIGHT,
-                1 if YOLO_CROP_ENABLED else 0,
-                YOLO_CROP_X,
-                YOLO_CROP_Y,
-                RGB888P_WIDTH,
-                RGB888P_HEIGHT,
-                CONTROL_WIDTH,
-                CONTROL_HEIGHT,
-            )
-        )
 
         while True:
             os.exitpoint()
 
             with ScopedTiming("total", DEBUG_MODE > 0):
                 rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)
-                yolo_img = make_yolo_image(rgb888p_img)
-                if yolo_img.format() == image.RGBP888:
-                    frame = yolo_img.to_numpy_ref()
+                if rgb888p_img.format() == image.RGBP888:
+                    frame = rgb888p_img.to_numpy_ref()
                     res = yolo.run(frame)
                     now_ms = time.ticks_ms()
                     if time.ticks_diff(now_ms, last_res_debug_ms) >= RES_DEBUG_INTERVAL_MS:
                         last_res_debug_ms = now_ms
                         print_res_debug(res)
 
-                    raw_detections = parse_detections(res)
-                    detections = filter_detections_by_valid_area(raw_detections)
+                    detections = parse_detections(res)
                     tracks, next_track_id = update_tracks(tracks, detections, next_track_id)
-                    ready_tracks = assign_label_instance_ids(stable_tracks(tracks))
+                    ready_tracks = stable_tracks(tracks)
                     display_payload = make_payload(seq, detections, ready_tracks[0], ready_tracks[0].get("stable_frames", 0)) if ready_tracks else make_payload(seq, detections, None, 0)
                     raw_detection = best_detection(detections)
 
                     osd_img.clear()
-                    if YOLO_CROP_ENABLED:
-                        draw_lcd_effective_mask(osd_img)
-                        draw_valid_area(osd_img)
-                        crop_x = lcd_crop_x()
-                        crop_y = lcd_crop_y()
-                        draw_detection_boxes(osd_img, detections)
-                        draw_status_osd(osd_img, display_payload, raw_detection, len(detections), crop_x, crop_y)
-                    else:
-                        draw_detection_boxes(osd_img, detections)
-                        draw_valid_area(osd_img)
-                        draw_status_osd(osd_img, display_payload, raw_detection, len(detections))
+                    yolo.draw_result(res, osd_img)
+                    draw_status_osd(osd_img, display_payload, raw_detection, len(detections))
                     Display.show_image(osd_img, 0, 0, Display.LAYER_OSD3)
 
                     snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
-                    if AUTO_SNAPSHOT_ENABLED:
-                        for track in ready_tracks:
-                            if snapshot_is_duplicate(snapshot_history, track):
-                                continue
-                            snapshot_seq += 1
-                            try:
-                                photo_img = make_valid_area_image(sensor.snapshot(chn=CAM_CHN_ID_1))
-                                send_snapshot_uart(uart, snapshot_seq, photo_img, track)
-                                snapshot_history.append(make_snapshot_record(track, now_ms))
-                                snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
-                            except Exception as e:
-                                print("snapshot uart send failed:", e)
-
-                    for packet_type, packet_seq, packet_payload in poll_uart_packets(uart, uart_rx_buffer):
-                        if packet_type != UART_PACKET_TYPE_CAPTURE_COMMAND:
-                            print("uart rx ignored type=%d seq=%d bytes=%d" % (packet_type, packet_seq, len(packet_payload)))
-                            continue
-                        command = decode_capture_command(packet_payload)
-                        if command is None:
-                            continue
-                        key = capture_key(command)
-                        if key in processed_captures:
-                            result = make_record_result(command, False, "skipped", "")
-                            send_record_result_uart(uart, packet_seq, result)
-                            continue
-                        target = find_target_for_capture(frame_history, command)
-                        if target is None:
-                            result = make_record_result(command, False, "skipped", "")
-                            send_record_result_uart(uart, packet_seq, result)
-                            print("capture target not found:", key)
+                    for track in ready_tracks:
+                        if snapshot_is_duplicate(snapshot_history, track):
                             continue
                         snapshot_seq += 1
-                        image_name = "%s.jpg" % target.get("label", "animal")
                         try:
-                            photo_img = make_valid_area_image(sensor.snapshot(chn=CAM_CHN_ID_1))
-                            send_snapshot_uart(uart, snapshot_seq, photo_img, target)
-                            snapshot_history.append(make_snapshot_record(target, now_ms))
+                            photo_img = sensor.snapshot(chn=CAM_CHN_ID_1)
+                            send_snapshot_uart(uart, snapshot_seq, photo_img, track)
+                            snapshot_history.append(make_snapshot_record(track, now_ms))
                             snapshot_history = prune_snapshot_history(snapshot_history, now_ms)
-                            remember_processed_capture(processed_captures, key)
-                            result = make_record_result(command, True, "captured", image_name)
-                            send_record_result_uart(uart, packet_seq, result)
-                            print("capture done:", key, image_name)
                         except Exception as e:
-                            result = make_record_result(command, False, "failed", image_name)
-                            send_record_result_uart(uart, packet_seq, result)
-                            print("capture failed:", key, e)
+                            print("snapshot uart send failed:", e)
 
                     should_send = len(detections) > 0 or SEND_EMPTY_RESULT
                     if should_send:
                         if time.ticks_diff(now_ms, last_send_ms) >= UART_SEND_INTERVAL_MS:
                             last_send_ms = now_ms
-                            seq += 1
-                            targets_payload = make_targets_payload(seq, detections, ready_tracks)
+                            payloads = []
+                            if ready_tracks:
+                                for track in ready_tracks:
+                                    seq += 1
+                                    payloads.append(make_payload(seq, detections, track, track.get("stable_frames", 0)))
+                            else:
+                                seq += 1
+                                payloads.append(make_payload(seq, detections, None, 0))
                             try:
-                                send_targets_uart(uart, seq, targets_payload)
-                                remember_frame_targets(frame_history, seq, ready_tracks)
-                                if SEND_LEGACY_DETECTION:
-                                    payloads = []
-                                    if ready_tracks:
-                                        for track in ready_tracks:
-                                            payloads.append(make_payload(seq, detections, track, track.get("stable_frames", 0)))
-                                    else:
-                                        payloads.append(make_payload(seq, detections, None, 0))
-                                else:
-                                    payloads = []
                                 for payload in payloads:
-                                    send_detection_uart(uart, seq, payload)
+                                    send_detection_uart(uart, payload.get("seq", seq), payload)
                                     if payload["valid"] and time.ticks_diff(now_ms, last_uart_log_ms) >= UART_LOG_INTERVAL_MS:
                                         last_uart_log_ms = now_ms
                                         print(
-                                            "uart sent seq=%d target=%d track=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
+                                            "uart sent seq=%d track=%d stable=%d %s norm=(%.3f,%.3f) center=(%d,%d)"
                                             % (
-                                                seq,
-                                                payload.get("label_instance_id", 0),
+                                                payload["seq"],
                                                 payload.get("track_id", -1),
                                                 payload["stable_frames"],
                                                 payload["label"],
