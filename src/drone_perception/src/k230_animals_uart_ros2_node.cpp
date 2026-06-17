@@ -31,7 +31,15 @@ K230AnimalsUartRos2Node::K230AnimalsUartRos2Node() :
 	_targets_topic = declare_parameter<std::string>("targets_topic", "/k230/animals/targets");
 	_route_topic = declare_parameter<std::string>("route_topic", "/return/drone/world_group");
 	_local_pose_topic = declare_parameter<std::string>("local_pose_topic", "/mavros/local_position/pose");
+	_capture_ready_topic = declare_parameter<std::string>("capture_ready_topic", "/k230/animals/capture_ready");
+	_record_result_topic = declare_parameter<std::string>("record_result_topic", "/k230/animals/record_result");
+	_scan_point_done_topic = declare_parameter<std::string>("scan_point_done_topic", "/k230/animals/scan_point_done");
+
 	_scan_radius_m = declare_parameter<double>("scan_radius_m", kDefaultScanRadiusM);
+	_record_deadband_m = declare_parameter<double>("record_deadband_m", kDefaultRecordDeadbandM);
+	_pending_capture_timeout_s = declare_parameter<double>(
+		"pending_capture_timeout_s",
+		kDefaultPendingCaptureTimeoutS);
 
 	RCLCPP_INFO(get_logger(), "K230 animals UART ROS2 node started");
 	RCLCPP_INFO(get_logger(), "serial_port=%s baudrate=%d", _serial_port.c_str(), _baudrate);
@@ -40,6 +48,9 @@ K230AnimalsUartRos2Node::K230AnimalsUartRos2Node() :
 	RCLCPP_INFO(get_logger(), "center_topic=%s", _center_topic.c_str());
 	RCLCPP_INFO(get_logger(), "heartbeat_topic=%s", _heartbeat_topic.c_str());
 	RCLCPP_INFO(get_logger(), "targets_topic=%s", _targets_topic.c_str());
+	RCLCPP_INFO(get_logger(), "record_deadband_m=%f", _record_deadband_m);
+	RCLCPP_INFO(get_logger(), "pending_capture_timeout_s=%f", _pending_capture_timeout_s);
+
 
 	_image_pub = create_publisher<drone_msgs::msg::BarcodeCapture>(
 		_image_topic, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
@@ -51,16 +62,26 @@ K230AnimalsUartRos2Node::K230AnimalsUartRos2Node() :
 		_heartbeat_topic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
 	_targets_pub = create_publisher<drone_msgs::msg::K230AnimalTargets>(
 		_targets_topic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
+	_record_result_pub = create_publisher<drone_msgs::msg::K230RecordResult>(
+		_record_result_topic, rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
 	_route_points_sub = create_subscription<drone_msgs::msg::WorldGroup>(
 		_route_topic,
-		10,
+		rclcpp::QoS(10).best_effort(),
 		std::bind(&K230AnimalsUartRos2Node::handleRoutePoints, this, std::placeholders::_1));
 
 	_local_pose_sub = create_subscription<geometry_msgs::msg::PoseStamped>(
 		_local_pose_topic,
-		10,
+		rclcpp::QoS(10).best_effort(),
 		std::bind(&K230AnimalsUartRos2Node::handleLocalPose, this, std::placeholders::_1));
+	_capture_ready_sub = create_subscription<drone_msgs::msg::K230CaptureReady>(
+		_capture_ready_topic,
+		rclcpp::QoS(10).reliable(),
+		std::bind(&K230AnimalsUartRos2Node::handleCaptureReady, this, std::placeholders::_1));
+	_scan_point_done_sub = create_subscription<drone_msgs::msg::K230ScanPointDone>(
+		_scan_point_done_topic,
+		rclcpp::QoS(10).reliable(),
+		std::bind(&K230AnimalsUartRos2Node::handleScanPointDone, this, std::placeholders::_1));
 
 	openSerial();
 
@@ -485,6 +506,12 @@ void K230AnimalsUartRos2Node::handlePacket(uint8_t type, uint32_t seq, const std
 		return;
 	}
 
+	if (type == kPacketTypeRecordResult) {
+		const std::string json_text(payload.begin(), payload.end());
+		publishRecordResultFromPacket(seq, json_text);
+		return;
+	}
+
 	RCLCPP_WARN(
 		get_logger(),
 		"unknown packet type=%u seq=%u bytes=%zu",
@@ -661,6 +688,361 @@ void K230AnimalsUartRos2Node::handleLocalPose(const geometry_msgs::msg::PoseStam
 	_has_local_pose = true;
 
 	RCLCPP_DEBUG(get_logger(), "handleLocalPose: (%.2f, %.2f)", _current_x, _current_y);
+}
+
+void K230AnimalsUartRos2Node::handleCaptureReady(const drone_msgs::msg::K230CaptureReady::SharedPtr msg)
+{
+	if (!msg->capture_ready) {
+		return;
+	}
+
+	if (!_has_local_pose) {
+		publishSkippedRecordResult(*msg, "no local pose");
+		return;
+	}
+
+	const int32_t scan_point_offset = findScanPointOffsetByIndex(msg->scan_point_index);
+
+	if (scan_point_offset < 0) {
+		publishSkippedRecordResult(*msg, "unknown scan point");
+		return;
+	}
+
+	const auto &scan_point = _scan_points[static_cast<size_t>(scan_point_offset)];
+
+	if (scan_point.scanned) {
+		publishSkippedRecordResult(*msg, "scan point already scanned");
+		return;
+	}
+
+	const double dx = scan_point.x - _current_x;
+	const double dy = scan_point.y - _current_y;
+	const double scan_radius_sq = _scan_radius_m * _scan_radius_m;
+
+	if (dx * dx + dy * dy > scan_radius_sq) {
+		publishSkippedRecordResult(*msg, "not inside scan radius");
+		return;
+	}
+
+	if (isCaptureTargetRecorded(*msg)) {
+		publishSkippedRecordResult(*msg, "target already recorded");
+		return;
+	}
+
+	clearTimedOutPendingCapture();
+
+	if (_pending_capture.active) {
+		publishSkippedRecordResult(*msg, "capture already pending");
+		return;
+	}
+
+	rememberPendingCapture(*msg);
+
+	if (!sendCaptureCommand(*msg)) {
+		_pending_capture = PendingCapture{};
+		publishSkippedRecordResult(*msg, "failed to send capture command");
+		return;
+	}
+
+	RCLCPP_INFO(
+		get_logger(),
+		"capture_ready received: scan_point=%d frame_seq=%u label=%s instance_id=%u",
+		msg->scan_point_index,
+		msg->frame_seq,
+		msg->label.c_str(),
+		msg->label_instance_id);
+}
+
+void K230AnimalsUartRos2Node::handleScanPointDone(const drone_msgs::msg::K230ScanPointDone::SharedPtr msg)
+{
+	if (!msg->scan_point_done) {
+		return;
+	}
+
+	const int32_t scan_point_offset = findScanPointOffsetByIndex(msg->scan_point_index);
+
+	if (scan_point_offset < 0) {
+		RCLCPP_WARN(
+			get_logger(),
+			"scan_point_done ignored: unknown scan_point=%d",
+			msg->scan_point_index);
+		return;
+	}
+
+	auto &scan_point = _scan_points[static_cast<size_t>(scan_point_offset)];
+	scan_point.scanned = true;
+
+	if (_pending_capture.active &&
+	    _pending_capture.scan_point_index == msg->scan_point_index) {
+		_pending_capture = PendingCapture{};
+	}
+
+	RCLCPP_INFO(
+		get_logger(),
+		"scan_point_done accepted: scan_point=%d marked scanned",
+		msg->scan_point_index);
+}
+
+bool K230AnimalsUartRos2Node::isCaptureTargetRecorded(
+	const drone_msgs::msg::K230CaptureReady &msg) const
+{
+	for (const auto &recorded_pose : _recorded_poses) {
+		if (recorded_pose.scan_point_index == msg.scan_point_index &&
+		    recorded_pose.label == msg.label &&
+		    recorded_pose.label_instance_id == msg.label_instance_id) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool K230AnimalsUartRos2Node::pendingCaptureTimedOut()
+{
+	if (!_pending_capture.active || _pending_capture.request_time.nanoseconds() == 0) {
+		return false;
+	}
+
+	return (now() - _pending_capture.request_time).seconds() > _pending_capture_timeout_s;
+}
+
+void K230AnimalsUartRos2Node::clearTimedOutPendingCapture()
+{
+	if (!pendingCaptureTimedOut()) {
+		return;
+	}
+
+	const double elapsed_s = (now() - _pending_capture.request_time).seconds();
+
+	RCLCPP_WARN(
+		get_logger(),
+		"clear timed out pending capture: scan_point=%d frame_seq=%u label=%s instance_id=%u elapsed=%.2f timeout=%.2f",
+		_pending_capture.scan_point_index,
+		_pending_capture.frame_seq,
+		_pending_capture.label.c_str(),
+		_pending_capture.label_instance_id,
+		elapsed_s,
+		_pending_capture_timeout_s);
+
+	_pending_capture = PendingCapture{};
+}
+
+void K230AnimalsUartRos2Node::rememberPendingCapture(const drone_msgs::msg::K230CaptureReady &msg)
+{
+	_pending_capture.active = true;
+	_pending_capture.frame_seq = msg.frame_seq;
+	_pending_capture.scan_point_index = msg.scan_point_index;
+	_pending_capture.label = msg.label;
+	_pending_capture.label_instance_id = msg.label_instance_id;
+	_pending_capture.x = _current_x;
+	_pending_capture.y = _current_y;
+	_pending_capture.request_time = now();
+}
+
+void K230AnimalsUartRos2Node::commitPendingCaptureIfMatched(const drone_msgs::msg::K230RecordResult &msg)
+{
+	if (!_pending_capture.active) {
+		return;
+	}
+
+	if (msg.frame_seq != _pending_capture.frame_seq ||
+	    msg.scan_point_index != _pending_capture.scan_point_index ||
+	    msg.label != _pending_capture.label ||
+	    msg.label_instance_id != _pending_capture.label_instance_id) {
+		return;
+	}
+
+	if (msg.record_success && msg.result_state == "captured") {
+		RecordedPose recorded_pose;
+		recorded_pose.x = _pending_capture.x;
+		recorded_pose.y = _pending_capture.y;
+		recorded_pose.scan_point_index = _pending_capture.scan_point_index;
+		recorded_pose.label = _pending_capture.label;
+		recorded_pose.label_instance_id = _pending_capture.label_instance_id;
+
+		_recorded_poses.push_back(recorded_pose);
+
+		RCLCPP_INFO(
+			get_logger(),
+			"recorded capture pose: scan_point=%d label=%s instance_id=%u x=%.3f y=%.3f",
+			recorded_pose.scan_point_index,
+			recorded_pose.label.c_str(),
+			recorded_pose.label_instance_id,
+			recorded_pose.x,
+			recorded_pose.y);
+	}
+
+	_pending_capture = PendingCapture{};
+}
+
+void K230AnimalsUartRos2Node::publishRecordResultFromPacket(uint32_t seq, const std::string &json_text)
+{
+	try {
+		const Json payload = Json::parse(json_text);
+
+		drone_msgs::msg::K230RecordResult msg;
+		msg.stamp = now();
+		msg.frame_seq = payload.value("frame_seq", seq);
+		msg.scan_point_index = payload.value("scan_point_index", -1);
+		msg.label = payload.value("label", "");
+		msg.label_instance_id = payload.value("label_instance_id", 0U);
+		msg.record_success = payload.value("record_success", false);
+		msg.result_state = payload.value("result_state", "failed");
+		msg.image_name = payload.value("image_name", "");
+
+		commitPendingCaptureIfMatched(msg);
+		_record_result_pub->publish(msg);
+
+		RCLCPP_INFO(
+			get_logger(),
+			"published record_result: scan_point=%d frame_seq=%u label=%s instance_id=%u state=%s success=%s",
+			msg.scan_point_index,
+			msg.frame_seq,
+			msg.label.c_str(),
+			msg.label_instance_id,
+			msg.result_state.c_str(),
+			msg.record_success ? "true" : "false");
+	} catch (const Json::exception &e) {
+		RCLCPP_WARN(
+			get_logger(),
+			"failed to parse record_result json: %s",
+			e.what());
+	}
+}
+
+void K230AnimalsUartRos2Node::publishSkippedRecordResult(
+	const drone_msgs::msg::K230CaptureReady &msg,
+	const std::string &reason)
+{
+	drone_msgs::msg::K230RecordResult result_msg;
+	result_msg.stamp = now();
+	result_msg.frame_seq = msg.frame_seq;
+	result_msg.scan_point_index = msg.scan_point_index;
+	result_msg.label = msg.label;
+	result_msg.label_instance_id = msg.label_instance_id;
+	result_msg.record_success = false;
+	result_msg.result_state = "skipped";
+	result_msg.image_name = "";
+
+	_record_result_pub->publish(result_msg);
+
+	RCLCPP_INFO(
+		get_logger(),
+		"published skipped record_result: scan_point=%d frame_seq=%u label=%s instance_id=%u reason=%s",
+		msg.scan_point_index,
+		msg.frame_seq,
+		msg.label.c_str(),
+		msg.label_instance_id,
+		reason.c_str());
+}
+
+bool K230AnimalsUartRos2Node::writePacket(uint8_t type, uint32_t seq, const std::string &payload)
+{
+	if (_serial_fd < 0) {
+		RCLCPP_WARN(get_logger(), "write packet failed: serial is not open");
+		return false;
+	}
+
+	const uint32_t payload_len = static_cast<uint32_t>(payload.size());
+
+	std::vector<uint8_t> packet;
+	packet.reserve(kHeaderSize + payload.size() + kCrcSize);
+
+	packet.push_back('K');
+	packet.push_back('2');
+	packet.push_back('3');
+	packet.push_back('0');
+	packet.push_back(type);
+
+	packet.push_back(static_cast<uint8_t>((seq >> 24) & 0xFF));
+	packet.push_back(static_cast<uint8_t>((seq >> 16) & 0xFF));
+	packet.push_back(static_cast<uint8_t>((seq >> 8) & 0xFF));
+	packet.push_back(static_cast<uint8_t>(seq & 0xFF));
+
+	packet.push_back(static_cast<uint8_t>((payload_len >> 24) & 0xFF));
+	packet.push_back(static_cast<uint8_t>((payload_len >> 16) & 0xFF));
+	packet.push_back(static_cast<uint8_t>((payload_len >> 8) & 0xFF));
+	packet.push_back(static_cast<uint8_t>(payload_len & 0xFF));
+
+	packet.insert(packet.end(), payload.begin(), payload.end());
+
+	const uint16_t crc = crc16Ccitt(packet.data(), packet.size());
+	packet.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+	packet.push_back(static_cast<uint8_t>(crc & 0xFF));
+
+	size_t written_total = 0;
+
+	while (written_total < packet.size()) {
+		const ssize_t written = write(
+			_serial_fd,
+			packet.data() + written_total,
+			packet.size() - written_total);
+
+		if (written > 0) {
+			written_total += static_cast<size_t>(written);
+			continue;
+		}
+
+		if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			RCLCPP_WARN(get_logger(), "write packet would block");
+			return false;
+		}
+
+		RCLCPP_WARN(
+			get_logger(),
+			"write packet failed: %s",
+			std::strerror(errno));
+		return false;
+	}
+
+	return true;
+}
+
+bool K230AnimalsUartRos2Node::sendCaptureCommand(const drone_msgs::msg::K230CaptureReady &msg)
+{
+	Json payload;
+	payload["type"] = "capture_command";
+	payload["schema"] = 1;
+	payload["source"] = "k230_animals_uart_ros2_node";
+	payload["frame_seq"] = msg.frame_seq;
+	payload["scan_point_index"] = msg.scan_point_index;
+	payload["label"] = msg.label;
+	payload["label_instance_id"] = msg.label_instance_id;
+	payload["capture_ready"] = msg.capture_ready;
+
+	const bool ok = writePacket(kPacketTypeCaptureCommand, msg.frame_seq, payload.dump());
+
+	if (!ok) {
+		RCLCPP_WARN(
+			get_logger(),
+			"failed to send capture command: scan_point=%d frame_seq=%u label=%s instance_id=%u",
+			msg.scan_point_index,
+			msg.frame_seq,
+			msg.label.c_str(),
+			msg.label_instance_id);
+		return false;
+	}
+
+	RCLCPP_INFO(
+		get_logger(),
+		"capture command sent: scan_point=%d frame_seq=%u label=%s instance_id=%u",
+		msg.scan_point_index,
+		msg.frame_seq,
+		msg.label.c_str(),
+		msg.label_instance_id);
+
+	return true;
+}
+
+int32_t K230AnimalsUartRos2Node::findScanPointOffsetByIndex(int32_t scan_point_index) const
+{
+	for (size_t i = 0; i < _scan_points.size(); ++i) {
+		if (_scan_points[i].index == scan_point_index) {
+			return static_cast<int32_t>(i);
+		}
+	}
+
+	return -1;
 }
 
 int32_t K230AnimalsUartRos2Node::findActiveScanPointOffset()
