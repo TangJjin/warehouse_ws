@@ -66,8 +66,8 @@ class StartupSupervisor:
             StartupStep(
                 name='k230_animals_uart_ros2_node',
                 command=['ros2', 'run', 'drone_perception', 'k230_animals_uart_ros2_node'],
-                ready_topic='/k230/animals/heartbeat',
-                ready_type='std_msgs/msg/String',
+                ready_topic='/mavros/local_position/pose',
+                ready_type='geometry_msgs/msg/PoseStamped',
                 timeout_sec=15,
                 ready_qos_reliability='best_effort',
             ),
