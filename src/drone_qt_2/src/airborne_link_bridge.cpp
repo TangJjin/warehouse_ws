@@ -47,7 +47,7 @@ void AirborneLinkBridge::setupRosInterfaces()
         });
 
     task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
-        "/drone/task/status",
+        "/serial/drone/task/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
             publishTaskStatus(msg);
@@ -61,7 +61,7 @@ void AirborneLinkBridge::setupRosInterfaces()
         });
 
     vision_barcode_sub_ = this->create_subscription<drone_msgs::msg::BarcodeCapture>(
-        "/drone/vision/barcode",
+        "/serial/drone/vision/barcode",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg) {
             publishVisionBarcode(msg);

@@ -51,7 +51,7 @@ void RosManager::setupRosInterfaces()
     auto control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序状态话题，消息类型为自定义消息
     task_status_sub_ = node_->create_subscription<drone_msgs::msg::TaskStatus>(
-        "/serial/drone/task/status", 
+        "/drone/task/status", 
         control_status_qos, 
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg)//回调
         {
@@ -149,7 +149,7 @@ void RosManager::setupRosInterfaces()
     auto barcode_sub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅条形码捕获话题，消息类型为自定义消息
     vision_barcode_sub_ = node_->create_subscription<drone_msgs::msg::BarcodeCapture>(
-        "/serial/drone/vision/barcode",
+        "/drone/vision/barcode",
         barcode_sub_qos,
         [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
         {
