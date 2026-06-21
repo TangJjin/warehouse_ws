@@ -2,6 +2,8 @@
 
 #include <dnn/hb_sys.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <iostream>
@@ -12,6 +14,305 @@ namespace
 
 static constexpr int32_t kSingleModelFileCount = 1;
 static constexpr int32_t kMinModelCount = 1;
+
+static constexpr int32_t kExpectedOutputCount = 6;
+static constexpr int32_t kClassCount = 2;
+static constexpr int32_t kDflBinCount = 16;
+static constexpr int32_t kBoxSideCount = 4;
+static constexpr int32_t kModelInputSizePx = 640;
+static constexpr float kModelInputSizePxFloat = 640.0F;
+
+struct BpuYoloOutputGroup
+{
+  int32_t cls_output_index;
+  int32_t box_output_index;
+  int32_t stride_px;
+  int32_t grid_size;
+};
+
+static constexpr BpuYoloOutputGroup kOutputGroups[] = {
+  {0, 1, 8, 80},
+  {2, 3, 16, 40},
+  {4, 5, 32, 20},
+};
+
+static constexpr float kScoreThreshold = 0.25F;
+static constexpr float kNmsThreshold = 0.45F;
+
+struct BpuYoloCandidate
+{
+  int32_t box_output_index;
+  int32_t stride_px;
+  int32_t grid_x;
+  int32_t grid_y;
+  int32_t class_id;
+  float score;
+};
+
+float sigmoid(float value)
+{
+  return 1.0F / (1.0F + std::exp(-value));
+}
+
+float decodeDflDistance(const float *dfl_data)
+{
+  float max_value = dfl_data[0];
+
+  for (int32_t i = 1; i < kDflBinCount; ++i) {
+    if (dfl_data[i] > max_value) {
+      max_value = dfl_data[i];
+    }
+  }
+
+  float exp_sum = 0.0F;
+  float weighted_sum = 0.0F;
+
+  for (int32_t i = 0; i < kDflBinCount; ++i) {
+    const float probability = std::exp(dfl_data[i] - max_value);
+
+    exp_sum += probability;
+    weighted_sum += static_cast<float>(i) * probability;
+  }
+
+  if (exp_sum <= 0.0F) {
+    return 0.0F;
+  }
+
+  return weighted_sum / exp_sum;
+}
+
+float clampFloat(float value, float min_value, float max_value)
+{
+  if (value < min_value) {
+    return min_value;
+  }
+
+  if (value > max_value) {
+    return max_value;
+  }
+
+  return value;
+}
+
+BpuYoloDetection decodeCandidateBox(
+    const BpuYoloCandidate &candidate,
+    const std::vector<hbDNNTensor> &output_tensors)
+{
+  const hbDNNTensor &box_tensor =
+      output_tensors[static_cast<std::size_t>(candidate.box_output_index)];
+  const float *box_data = static_cast<const float *>(box_tensor.sysMem[0].virAddr);
+
+  const int32_t grid_size = kModelInputSizePx / candidate.stride_px;
+  const std::size_t grid_index =
+      static_cast<std::size_t>(candidate.grid_y) *
+          static_cast<std::size_t>(grid_size) +
+      static_cast<std::size_t>(candidate.grid_x);
+
+  const std::size_t cell_offset =
+      grid_index * static_cast<std::size_t>(kBoxSideCount * kDflBinCount);
+
+  const float left = decodeDflDistance(&box_data[cell_offset + 0 * kDflBinCount]);
+  const float top = decodeDflDistance(&box_data[cell_offset + 1 * kDflBinCount]);
+  const float right = decodeDflDistance(&box_data[cell_offset + 2 * kDflBinCount]);
+  const float bottom = decodeDflDistance(&box_data[cell_offset + 3 * kDflBinCount]);
+
+  const float stride_px = static_cast<float>(candidate.stride_px);
+  const float center_x = (static_cast<float>(candidate.grid_x) + 0.5F) * stride_px;
+  const float center_y = (static_cast<float>(candidate.grid_y) + 0.5F) * stride_px;
+
+  BpuYoloDetection detection{};
+  detection.x_min_px =
+      clampFloat(center_x - left * stride_px, 0.0F, kModelInputSizePxFloat);
+  detection.y_min_px =
+      clampFloat(center_y - top * stride_px, 0.0F, kModelInputSizePxFloat);
+  detection.x_max_px =
+      clampFloat(center_x + right * stride_px, 0.0F, kModelInputSizePxFloat);
+  detection.y_max_px =
+      clampFloat(center_y + bottom * stride_px, 0.0F, kModelInputSizePxFloat);
+
+  detection.score = candidate.score;
+  detection.class_id = candidate.class_id;
+
+  return detection;
+}
+
+std::vector<BpuYoloDetection> decodeCandidates(
+    const std::vector<BpuYoloCandidate> &candidates,
+    const std::vector<hbDNNTensor> &output_tensors)
+{
+  std::vector<BpuYoloDetection> detections;
+  detections.reserve(candidates.size());
+
+  for (const BpuYoloCandidate &candidate : candidates) {
+    detections.push_back(decodeCandidateBox(candidate, output_tensors));
+  }
+
+  return detections;
+}
+
+float calculateBoxArea(const BpuYoloDetection &detection)
+{
+  const float width = detection.x_max_px - detection.x_min_px;
+  const float height = detection.y_max_px - detection.y_min_px;
+
+  if (width <= 0.0F || height <= 0.0F) {
+    return 0.0F;
+  }
+
+  return width * height;
+}
+
+float calculateIou(const BpuYoloDetection &a, const BpuYoloDetection &b)
+{
+  const float inter_x_min = a.x_min_px > b.x_min_px ? a.x_min_px : b.x_min_px;
+  const float inter_y_min = a.y_min_px > b.y_min_px ? a.y_min_px : b.y_min_px;
+  const float inter_x_max = a.x_max_px < b.x_max_px ? a.x_max_px : b.x_max_px;
+  const float inter_y_max = a.y_max_px < b.y_max_px ? a.y_max_px : b.y_max_px;
+
+  const float inter_width = inter_x_max - inter_x_min;
+  const float inter_height = inter_y_max - inter_y_min;
+
+  if (inter_width <= 0.0F || inter_height <= 0.0F) {
+    return 0.0F;
+  }
+
+  const float inter_area = inter_width * inter_height;
+  const float union_area = calculateBoxArea(a) + calculateBoxArea(b) - inter_area;
+
+  if (union_area <= 0.0F) {
+    return 0.0F;
+  }
+
+  return inter_area / union_area;
+}
+
+std::vector<BpuYoloDetection> runNms(
+    const std::vector<BpuYoloDetection> &detections)
+{
+  std::vector<BpuYoloDetection> sorted_detections = detections;
+
+  std::sort(
+      sorted_detections.begin(),
+      sorted_detections.end(),
+      [](const BpuYoloDetection &a, const BpuYoloDetection &b) {
+        return a.score > b.score;
+      });
+
+  std::vector<BpuYoloDetection> kept_detections;
+  std::vector<uint8_t> removed(sorted_detections.size(), 0U);
+
+  for (std::size_t i = 0; i < sorted_detections.size(); ++i) {
+    if (removed[i] != 0U) {
+      continue;
+    }
+
+    kept_detections.push_back(sorted_detections[i]);
+
+    for (std::size_t j = i + 1; j < sorted_detections.size(); ++j) {
+      if (removed[j] != 0U) {
+        continue;
+      }
+
+      if (sorted_detections[i].class_id != sorted_detections[j].class_id) {
+        continue;
+      }
+
+      if (calculateIou(sorted_detections[i], sorted_detections[j]) > kNmsThreshold) {
+        removed[j] = 1U;
+      }
+    }
+  }
+
+  return kept_detections;
+}
+
+void printClassOutputRange(const std::vector<hbDNNTensor> &output_tensors)
+{
+  static int32_t debug_frame_count = 0;
+  ++debug_frame_count;
+
+  if (debug_frame_count % 30 != 0) {
+    return;
+  }
+
+  std::cout << "[BPU_DEBUG] class output raw ranges:";
+
+  for (const BpuYoloOutputGroup &group : kOutputGroups) {
+    const hbDNNTensor &cls_tensor =
+        output_tensors[static_cast<std::size_t>(group.cls_output_index)];
+    const float *cls_data = static_cast<const float *>(cls_tensor.sysMem[0].virAddr);
+
+    const std::size_t value_count =
+        static_cast<std::size_t>(group.grid_size) *
+        static_cast<std::size_t>(group.grid_size) *
+        static_cast<std::size_t>(kClassCount);
+
+    if (value_count == 0) {
+      continue;
+    }
+
+    float min_value = cls_data[0];
+    float max_value = cls_data[0];
+
+    for (std::size_t i = 0; i < value_count; ++i) {
+      if (cls_data[i] < min_value) {
+        min_value = cls_data[i];
+      }
+
+      if (cls_data[i] > max_value) {
+        max_value = cls_data[i];
+      }
+    }
+
+    std::cout << " output" << group.cls_output_index
+              << "_min=" << min_value
+              << "_max=" << max_value
+              << "_sigmoid_max=" << sigmoid(max_value);
+  }
+
+  std::cout << std::endl;
+}
+
+std::vector<BpuYoloCandidate> collectCandidates(const std::vector<hbDNNTensor> &output_tensors)
+{
+  std::vector<BpuYoloCandidate> candidates;
+
+  for (const BpuYoloOutputGroup &group : kOutputGroups) {
+    const hbDNNTensor &cls_tensor =
+        output_tensors[static_cast<std::size_t>(group.cls_output_index)];
+    const float *cls_data = static_cast<const float *>(cls_tensor.sysMem[0].virAddr);
+
+    for (int32_t grid_y = 0; grid_y < group.grid_size; ++grid_y) {
+      for (int32_t grid_x = 0; grid_x < group.grid_size; ++grid_x) {
+        const std::size_t grid_index =
+            static_cast<std::size_t>(grid_y) *
+                static_cast<std::size_t>(group.grid_size) +
+            static_cast<std::size_t>(grid_x);
+        const std::size_t cell_offset =
+            grid_index * static_cast<std::size_t>(kClassCount);
+
+        for (int32_t class_id = 0; class_id < kClassCount; ++class_id) {
+          const float score =
+              sigmoid(cls_data[cell_offset + static_cast<std::size_t>(class_id)]);
+
+          if (score < kScoreThreshold) {
+            continue;
+          }
+
+          candidates.push_back({
+              group.box_output_index,
+              group.stride_px,
+              grid_x,
+              grid_y,
+              class_id,
+              score});
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
 
 }  // namespace
 
@@ -115,7 +416,9 @@ void BpuYoloDetector::allocateTensors()
   }
 }
 
-void BpuYoloDetector::inferNv12(const uint8_t *nv12_data, std::size_t nv12_size)
+std::vector<BpuYoloDetection> BpuYoloDetector::inferNv12(
+    const uint8_t *nv12_data,
+    std::size_t nv12_size)
 {
   if (_dnn_handle == nullptr) {
     throw std::runtime_error("BPU model is not loaded");
@@ -166,6 +469,14 @@ void BpuYoloDetector::inferNv12(const uint8_t *nv12_data, std::size_t nv12_size)
         hbSysFlushMem(&_output_tensors[i].sysMem[0], HB_SYS_MEM_CACHE_INVALIDATE),
         "hbSysFlushMem output[" + std::to_string(i) + "] invalidate");
   }
+
+  printClassOutputRange(_output_tensors);
+
+  const std::vector<BpuYoloCandidate> candidates = collectCandidates(_output_tensors);
+  std::vector<BpuYoloDetection> detections =
+      decodeCandidates(candidates, _output_tensors);
+
+  return runNms(detections);
 }
 
 void BpuYoloDetector::checkRet(int ret, const std::string &step)
@@ -259,6 +570,49 @@ void BpuYoloDetector::queryTensorProperties()
     checkRet(
         hbDNNGetOutputTensorProperties(&properties, _dnn_handle, i),
         "hbDNNGetOutputTensorProperties");
+  }
+  validateOutputTensors();
+}
+
+void BpuYoloDetector::validateOutputTensors() const
+{
+  if (_output_count != kExpectedOutputCount) {
+    throw std::runtime_error(
+        "unsupported output count: " + std::to_string(_output_count));
+  }
+
+  if (_output_properties.size() != static_cast<std::size_t>(kExpectedOutputCount)) {
+    throw std::runtime_error("output properties are not ready");
+  }
+
+  const auto validate_shape =
+      [](const hbDNNTensorProperties &properties,
+         int32_t grid_size,
+         int32_t channel_count,
+         const std::string &name) {
+        const hbDNNTensorShape &shape = properties.validShape;
+
+        if (shape.numDimensions != 4 ||
+            shape.dimensionSize[0] != 1 ||
+            shape.dimensionSize[1] != grid_size ||
+            shape.dimensionSize[2] != grid_size ||
+            shape.dimensionSize[3] != channel_count) {
+          throw std::runtime_error(name + " has unexpected shape");
+        }
+      };
+
+  for (const BpuYoloOutputGroup &group : kOutputGroups) {
+    validate_shape(
+        _output_properties[static_cast<std::size_t>(group.cls_output_index)],
+        group.grid_size,
+        kClassCount,
+        "cls output[" + std::to_string(group.cls_output_index) + "]");
+
+    validate_shape(
+        _output_properties[static_cast<std::size_t>(group.box_output_index)],
+        group.grid_size,
+        kDflBinCount * 4,
+        "box output[" + std::to_string(group.box_output_index) + "]");
   }
 }
 

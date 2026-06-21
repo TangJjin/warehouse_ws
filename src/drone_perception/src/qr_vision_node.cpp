@@ -1,6 +1,9 @@
 #include "drone_perception/qr_vision_node.hpp"
 
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -13,6 +16,13 @@
 namespace
 {
 using SteadyClock = std::chrono::steady_clock;
+static constexpr int kBpuInputWidthPx = 640;
+static constexpr int kBpuInputHeightPx = 640;
+static constexpr std::size_t kBpuInputYSize =
+    static_cast<std::size_t>(kBpuInputWidthPx) *
+    static_cast<std::size_t>(kBpuInputHeightPx);
+static constexpr std::size_t kBpuInputUvSize = kBpuInputYSize / 4;
+static constexpr std::size_t kBpuInputNv12Size = kBpuInputYSize + kBpuInputUvSize * 2;
 
 double elapsedMs(
     const SteadyClock::time_point &start,
@@ -72,9 +82,13 @@ void QrVisionNode::declareParameters()
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
   sample_radius_px_ = this->declare_parameter<int>("sample_radius_px", 3);
-  
-  enable_bpu_ = this->declare_parameter<bool>("enable_bpu", false);
-  bpu_model_path_ = this->declare_parameter<std::string>("bpu_model_path", "");
+
+  enable_bpu_ = this->declare_parameter<bool>(
+      "enable_bpu",
+      DRONE_PERCEPTION_HAS_BPU != 0);
+  bpu_model_path_ = this->declare_parameter<std::string>(
+      "bpu_model_path",
+      "/home/sunrise/drone_ws/src/drone_perception/rdk_best_bayese_640x640_nv12.bin");
 
   if (log_throttle_ms_ <= 0)
   {
@@ -132,6 +146,75 @@ void QrVisionNode::initializeBpuDetector()
     enable_bpu_ = false;
   }
 #endif
+}
+
+bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
+{
+  if (color_image.empty()) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "BPU input image is empty");
+
+    return false;
+  }
+
+  if (color_image.channels() != 3) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "BPU input expects BGR image with 3 channels, got %d",
+        color_image.channels());
+
+    return false;
+  }
+
+  try {
+    cv::Mat resized_bgr;
+    cv::resize(
+        color_image,
+        resized_bgr,
+        cv::Size(kBpuInputWidthPx, kBpuInputHeightPx),
+        0.0,
+        0.0,
+        cv::INTER_LINEAR);
+
+    cv::Mat yuv_i420;
+    cv::cvtColor(resized_bgr, yuv_i420, cv::COLOR_BGR2YUV_I420);
+
+    if (!yuv_i420.isContinuous()) {
+      yuv_i420 = yuv_i420.clone();
+    }
+
+    bpu_input_nv12_.resize(kBpuInputNv12Size);
+
+    const uint8_t *y_plane = yuv_i420.ptr<uint8_t>(0);
+    const uint8_t *u_plane = y_plane + kBpuInputYSize;
+    const uint8_t *v_plane = u_plane + kBpuInputUvSize;
+    uint8_t *nv12_data = bpu_input_nv12_.data();
+
+    std::memcpy(nv12_data, y_plane, kBpuInputYSize);
+
+    uint8_t *uv_plane = nv12_data + kBpuInputYSize;
+
+    for (std::size_t i = 0; i < kBpuInputUvSize; ++i) {
+      uv_plane[i * 2] = u_plane[i];
+      uv_plane[i * 2 + 1] = v_plane[i];
+    }
+  } catch (const cv::Exception &e) {
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "Failed to prepare BPU input: %s",
+        e.what());
+
+    return false;
+  }
+
+  return true;
 }
 
 void QrVisionNode::initializeSubscriptions()
@@ -230,6 +313,46 @@ void QrVisionNode::handleSyncedFrame(
       center_v,
       sample_radius_px_);
 
+#if DRONE_PERCEPTION_HAS_BPU
+  if (enable_bpu_ && bpu_detector_) {
+    last_bpu_detections_.clear();
+
+    const auto preprocess_t0 = SteadyClock::now();
+    const bool input_ready = prepareBpuInput(color_bridge->image);
+    const auto preprocess_t1 = SteadyClock::now();
+
+    if (input_ready) {
+      try {
+        const auto infer_t0 = SteadyClock::now();
+
+        const auto detections = bpu_detector_->inferNv12(
+            bpu_input_nv12_.data(),
+            bpu_input_nv12_.size());
+        last_bpu_detections_ = detections;
+
+        const auto infer_t1 = SteadyClock::now();
+
+        RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "BPU inference ok. preprocess_ms=%.2f infer_ms=%.2f input_size=%zu detections=%zu",
+            elapsedMs(preprocess_t0, preprocess_t1),
+            elapsedMs(infer_t0, infer_t1),
+            bpu_input_nv12_.size(),
+            detections.size());
+      } catch (const std::exception &e) {
+        RCLCPP_ERROR_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "BPU inference failed: %s",
+            e.what());
+      }
+    }
+  }
+#endif
+
   if (debug_view_)
   {
     displayDebugFrame(color_bridge->image, center_depth);
@@ -306,6 +429,51 @@ void QrVisionNode::displayDebugFrame(
       cv::Scalar(180, 255, 180),
       1);
 
+#if DRONE_PERCEPTION_HAS_BPU
+  drawBpuDetections(display);
+#endif
+
   cv::imshow(window_name_, display);
   cv::waitKey(1);
 }
+
+#if DRONE_PERCEPTION_HAS_BPU
+void QrVisionNode::drawBpuDetections(cv::Mat &display) const
+{
+  const float scale_x =
+      static_cast<float>(display.cols) / static_cast<float>(kBpuInputWidthPx);
+  const float scale_y =
+      static_cast<float>(display.rows) / static_cast<float>(kBpuInputHeightPx);
+
+  for (const BpuYoloDetection &detection : last_bpu_detections_) {
+    const cv::Point top_left(
+        static_cast<int>(detection.x_min_px * scale_x),
+        static_cast<int>(detection.y_min_px * scale_y));
+    const cv::Point bottom_right(
+        static_cast<int>(detection.x_max_px * scale_x),
+        static_cast<int>(detection.y_max_px * scale_y));
+
+    cv::rectangle(
+        display,
+        top_left,
+        bottom_right,
+        cv::Scalar(0, 255, 0),
+        2);
+
+    const std::string label = cv::format(
+        "cls%d %.2f",
+        detection.class_id,
+        detection.score);
+    const int label_y = top_left.y > 18 ? top_left.y - 6 : top_left.y + 18;
+
+    cv::putText(
+        display,
+        label,
+        cv::Point(top_left.x, label_y),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.5,
+        cv::Scalar(0, 255, 0),
+        1);
+  }
+}
+#endif
