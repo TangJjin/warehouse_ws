@@ -279,6 +279,7 @@ def make_snapshot_jpeg(img, payload):
 
 
 def send_snapshot_uart(uart, seq, img, payload):
+    send_detection_uart(uart, seq, payload)
     snapshot, jpeg_data = make_snapshot_jpeg(img, payload)
     send_jpeg_uart(uart, seq, jpeg_data)
     print(

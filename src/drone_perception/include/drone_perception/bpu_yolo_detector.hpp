@@ -7,6 +7,16 @@
 #include <string>
 #include <vector>
 
+struct BpuYoloDetection
+{
+  float x_min_px{0.0F};
+  float y_min_px{0.0F};
+  float x_max_px{0.0F};
+  float y_max_px{0.0F};
+  float score{0.0F};
+  int32_t class_id{0};
+};
+
 class BpuYoloDetector
 {
 public:
@@ -17,12 +27,15 @@ public:
   BpuYoloDetector &operator=(const BpuYoloDetector &) = delete;
 
   void printModelInfo() const;
-  void inferNv12(const uint8_t *nv12_data, std::size_t nv12_size);
+  std::vector<BpuYoloDetection> inferNv12(
+      const uint8_t *nv12_data,
+      std::size_t nv12_size);
 
 private:
   void loadModel(const std::string &model_path);
   void releaseModel();
   void queryTensorProperties();
+  void validateOutputTensors() const;
   void allocateTensors();
   void releaseTensors();
 

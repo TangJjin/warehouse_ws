@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -43,6 +45,8 @@ private:
 
   void initializeBpuDetector();
 
+  bool prepareBpuInput(const cv::Mat &color_image);
+
   void handleSyncedFrame(
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
       const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg);
@@ -51,8 +55,12 @@ private:
       const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg);
 
   void displayDebugFrame(
-    const cv::Mat &color_image,
-    const DepthSampleResult &center_depth);
+      const cv::Mat &color_image,
+      const DepthSampleResult &center_depth);
+
+#if DRONE_PERCEPTION_HAS_BPU
+  void drawBpuDetections(cv::Mat &display) const;
+#endif
 
   void updateFps();
 
@@ -62,6 +70,8 @@ private:
   std::string window_name_;
 
   std::string bpu_model_path_;
+
+  std::vector<uint8_t> bpu_input_nv12_;
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
@@ -76,6 +86,7 @@ private:
 
 #if DRONE_PERCEPTION_HAS_BPU
   std::unique_ptr<BpuYoloDetector> bpu_detector_;
+  std::vector<BpuYoloDetection> last_bpu_detections_;
 #endif
 
   bool has_camera_info_ = false;
