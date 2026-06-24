@@ -44,6 +44,12 @@ double elapsedMs(
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
+struct ParsedVisualCode
+{
+  std::string category;
+  std::string code;
+};
+
 std::string trimAndUppercase(const std::string &text)
 {
   const auto begin = std::find_if_not(
@@ -157,21 +163,69 @@ bool isValidPrefixedCode(
   return has_payload;
 }
 
-std::string getVisualCodeCategory(const std::string &code)
+void appendParsedVisualCode(
+    const std::string &code,
+    std::vector<ParsedVisualCode> &parsed_codes)
 {
   if (isValidShelfCode(code)) {
-    return "shelf";
+    parsed_codes.push_back({"shelf", code});
+    return;
   }
 
   if (isValidPrefixedCode(code, "SKU")) {
-    return "sku";
+    parsed_codes.push_back({"sku", code});
+    return;
   }
 
   if (isValidPrefixedCode(code, "PKG")) {
-    return "pkg";
+    parsed_codes.push_back({"pkg", code});
+    return;
+  }
+}
+
+std::vector<ParsedVisualCode> parseVisualCodes(const std::string &code)
+{
+  std::vector<ParsedVisualCode> parsed_codes;
+  std::size_t begin = 0U;
+
+  while (begin <= code.size()) {
+    const std::size_t separator = code.find('|', begin);
+    const std::size_t end =
+        separator == std::string::npos ? code.size() : separator;
+    const std::string token = trimAndUppercase(code.substr(begin, end - begin));
+
+    if (!token.empty()) {
+      appendParsedVisualCode(token, parsed_codes);
+    }
+
+    if (separator == std::string::npos) {
+      break;
+    }
+
+    begin = separator + 1U;
   }
 
-  return {};
+  return parsed_codes;
+}
+
+std::string formatParsedVisualCodeCategories(
+    const std::vector<ParsedVisualCode> &parsed_codes)
+{
+  if (parsed_codes.empty()) {
+    return "ignored";
+  }
+
+  std::string categories;
+
+  for (const ParsedVisualCode &parsed_code : parsed_codes) {
+    if (!categories.empty()) {
+      categories += ",";
+    }
+
+    categories += parsed_code.category;
+  }
+
+  return categories;
 }
 #endif
 }  // namespace
@@ -578,7 +632,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
         const std::string raw_code = symbol->get_data();
         const std::string code = trimAndUppercase(raw_code);
-        const std::string category = getVisualCodeCategory(code);
+        const std::vector<ParsedVisualCode> parsed_codes = parseVisualCodes(code);
+        const std::string categories = formatParsedVisualCodeCategories(parsed_codes);
 
         RCLCPP_INFO_THROTTLE(
             get_logger(),
@@ -589,13 +644,13 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             symbol->get_type_name().c_str(),
             raw_code.c_str(),
             code.c_str(),
-            category.empty() ? "ignored" : category.c_str(),
+            categories.c_str(),
             continuous_roi.cols,
             continuous_roi.rows,
             roi.x,
             roi.y);
 
-        if (category.empty()) {
+        if (parsed_codes.empty()) {
           continue;
         }
 
@@ -622,12 +677,14 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
         const float dx = code_center.x - image_center.x;
         const float dy = code_center.y - image_center.y;
 
-        decoded_codes.push_back({
-            code,
-            category,
-            symbol->get_type_name(),
-            static_cast<double>(dx * dx + dy * dy)});
-        ++accepted_count;
+        for (const ParsedVisualCode &parsed_code : parsed_codes) {
+          decoded_codes.push_back({
+              parsed_code.code,
+              parsed_code.category,
+              symbol->get_type_name(),
+              static_cast<double>(dx * dx + dy * dy)});
+          ++accepted_count;
+        }
       }
 
       zbar_image.set_data(nullptr, 0U);
@@ -920,7 +977,13 @@ void QrVisionNode::displayDebugFrame(
   cv::Mat display = color_image.clone();
 
   cv::Mat overlay = display.clone();
-  cv::rectangle(overlay, cv::Point(12, 12), cv::Point(320, 98), cv::Scalar(30, 30, 30), cv::FILLED);
+  const int panel_right = std::min(display.cols - 12, 620);
+  cv::rectangle(
+      overlay,
+      cv::Point(12, 12),
+      cv::Point(panel_right, 164),
+      cv::Scalar(30, 30, 30),
+      cv::FILLED);
   cv::addWeighted(overlay, 0.45, display, 0.55, 0.0, display);
 
   cv::putText(
@@ -949,6 +1012,50 @@ void QrVisionNode::displayDebugFrame(
       0.55,
       cv::Scalar(180, 255, 180),
       1);
+
+  auto fit_status_text = [](std::string text) {
+    static constexpr std::size_t kMaxStatusTextLength = 58U;
+
+    if (text.size() > kMaxStatusTextLength) {
+      text = text.substr(0U, kMaxStatusTextLength - 3U) + "...";
+    }
+
+    return text;
+  };
+
+  auto draw_visual_code_line = [&](
+      const CodeStabilityState &state,
+      const char *category,
+      int y) {
+    if (state.stable_code.empty()) {
+      return y;
+    }
+
+    const bool is_qr_code =
+        state.stable_symbol_type.find("QR") != std::string::npos;
+    const char *kind = is_qr_code ? "QR" : "Barcode";
+    const std::string line = fit_status_text(cv::format(
+        "%s %s: %s",
+        kind,
+        category,
+        state.stable_code.c_str()));
+
+    cv::putText(
+        display,
+        line,
+        cv::Point(24, y),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.5,
+        is_qr_code ? cv::Scalar(120, 220, 255) : cv::Scalar(120, 255, 160),
+        1);
+
+    return y + 22;
+  };
+
+  int visual_code_y = 106;
+  visual_code_y = draw_visual_code_line(shelf_code_state_, "shelf", visual_code_y);
+  visual_code_y = draw_visual_code_line(sku_code_state_, "sku", visual_code_y);
+  (void)draw_visual_code_line(pkg_code_state_, "pkg", visual_code_y);
 
 #if DRONE_PERCEPTION_HAS_BPU
   drawBpuDetections(display);
