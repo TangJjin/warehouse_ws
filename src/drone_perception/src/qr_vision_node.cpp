@@ -126,6 +126,51 @@ bool isValidShelfCode(const std::string &code)
 
   return isAlphaString(area) && isDigitString(row) && isDigitString(col);
 }
+
+bool isValidPrefixedCode(
+    const std::string &code,
+    const std::string &prefix)
+{
+  if (code.rfind(prefix, 0U) != 0U || code.size() <= prefix.size()) {
+    return false;
+  }
+
+  bool has_payload = false;
+
+  for (std::size_t i = prefix.size(); i < code.size(); ++i) {
+    const unsigned char value = static_cast<unsigned char>(code[i]);
+
+    if (std::isalnum(value) != 0) {
+      has_payload = true;
+      continue;
+    }
+
+    if (code[i] == '-' || code[i] == '_') {
+      continue;
+    }
+
+    return false;
+  }
+
+  return has_payload;
+}
+
+std::string getVisualCodeCategory(const std::string &code)
+{
+  if (isValidShelfCode(code)) {
+    return "shelf";
+  }
+
+  if (isValidPrefixedCode(code, "SKU")) {
+    return "sku";
+  }
+
+  if (isValidPrefixedCode(code, "PKG")) {
+    return "pkg";
+  }
+
+  return {};
+}
 #endif
 }  // namespace
 
@@ -375,58 +420,74 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
   return true;
 }
 
-void QrVisionNode::updateShelfCodeStability(
-    const std::vector<DecodedShelfCode> &decoded_codes)
+void QrVisionNode::updateVisualCodeStability(
+    const std::vector<DecodedVisualCode> &decoded_codes)
 {
-  if (decoded_codes.empty()) {
-    ++lost_shelf_code_count_;
+  updateVisualCodeCategoryStability(decoded_codes, "shelf", shelf_code_state_);
+  updateVisualCodeCategoryStability(decoded_codes, "sku", sku_code_state_);
+  updateVisualCodeCategoryStability(decoded_codes, "pkg", pkg_code_state_);
+}
 
-    if (lost_shelf_code_count_ > shelf_code_lost_tolerance_frames_) {
-      candidate_shelf_code_.clear();
-      candidate_shelf_code_type_.clear();
-      stable_shelf_code_.clear();
-      stable_shelf_code_type_.clear();
-      candidate_shelf_code_count_ = 0;
+void QrVisionNode::updateVisualCodeCategoryStability(
+    const std::vector<DecodedVisualCode> &decoded_codes,
+    const std::string &category,
+    CodeStabilityState &state)
+{
+  const auto selected_code = std::find_if(
+      decoded_codes.begin(),
+      decoded_codes.end(),
+      [&category](const DecodedVisualCode &decoded_code) {
+        return decoded_code.category == category;
+      });
+
+  if (selected_code == decoded_codes.end()) {
+    ++state.lost_count;
+
+    if (state.lost_count > shelf_code_lost_tolerance_frames_) {
+      state.candidate_code.clear();
+      state.candidate_symbol_type.clear();
+      state.stable_code.clear();
+      state.stable_symbol_type.clear();
+      state.candidate_count = 0;
     }
 
     return;
   }
 
-  lost_shelf_code_count_ = 0;
+  state.lost_count = 0;
 
-  const DecodedShelfCode &selected_code = decoded_codes.front();
-
-  if (selected_code.code == candidate_shelf_code_) {
-    ++candidate_shelf_code_count_;
+  if (selected_code->code == state.candidate_code) {
+    ++state.candidate_count;
   } else {
-    candidate_shelf_code_ = selected_code.code;
-    candidate_shelf_code_type_ = selected_code.type;
-    candidate_shelf_code_count_ = 1;
+    state.candidate_code = selected_code->code;
+    state.candidate_symbol_type = selected_code->symbol_type;
+    state.candidate_count = 1;
   }
 
-  if (candidate_shelf_code_count_ < shelf_code_stable_frames_) {
+  if (state.candidate_count < shelf_code_stable_frames_) {
     return;
   }
 
-  stable_shelf_code_ = candidate_shelf_code_;
-  stable_shelf_code_type_ = candidate_shelf_code_type_;
+  state.stable_code = state.candidate_code;
+  state.stable_symbol_type = state.candidate_symbol_type;
 
   RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       log_throttle_ms_,
-      "stable shelf code type=%s code=%s stable_frames=%d",
-      stable_shelf_code_type_.c_str(),
-      stable_shelf_code_.c_str(),
-      candidate_shelf_code_count_);
+      "stable visual code category=%s symbol_type=%s code=%s stable_frames=%d",
+      category.c_str(),
+      state.stable_symbol_type.c_str(),
+      state.stable_code.c_str(),
+      state.candidate_count);
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
-std::vector<QrVisionNode::DecodedShelfCode> QrVisionNode::decodeShelfCodesFromDetections(
+std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFromDetections(
     const cv::Mat &color_image,
     const std::vector<BpuYoloDetection> &detections) const
 {
-  std::vector<DecodedShelfCode> decoded_codes;
+  std::vector<DecodedVisualCode> decoded_codes;
 
   if (color_image.empty() || detections.empty()) {
     return decoded_codes;
@@ -489,8 +550,9 @@ std::vector<QrVisionNode::DecodedShelfCode> QrVisionNode::decodeShelfCodesFromDe
 
     for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
       const std::string code = trimAndUppercase(symbol->get_data());
+      const std::string category = getVisualCodeCategory(code);
 
-      if (!isValidShelfCode(code)) {
+      if (category.empty()) {
         continue;
       }
 
@@ -517,6 +579,7 @@ std::vector<QrVisionNode::DecodedShelfCode> QrVisionNode::decodeShelfCodesFromDe
 
       decoded_codes.push_back({
           code,
+          category,
           symbol->get_type_name(),
           static_cast<double>(dx * dx + dy * dy)});
     }
@@ -527,7 +590,7 @@ std::vector<QrVisionNode::DecodedShelfCode> QrVisionNode::decodeShelfCodesFromDe
   std::sort(
       decoded_codes.begin(),
       decoded_codes.end(),
-      [](const DecodedShelfCode &a, const DecodedShelfCode &b) {
+      [](const DecodedVisualCode &a, const DecodedVisualCode &b) {
         return a.center_distance_sq < b.center_distance_sq;
       });
 
@@ -737,10 +800,10 @@ void QrVisionNode::processFrame(
 #endif
 
 #if DRONE_PERCEPTION_HAS_BPU
-  updateShelfCodeStability(
-      decodeShelfCodesFromDetections(color_bridge->image, last_bpu_detections_));
+  updateVisualCodeStability(
+      decodeVisualCodesFromDetections(color_bridge->image, last_bpu_detections_));
 #else
-  updateShelfCodeStability({});
+  updateVisualCodeStability({});
 #endif
 
   if (debug_view_)
