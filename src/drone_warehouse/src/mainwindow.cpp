@@ -81,7 +81,7 @@ void MainWindow::setupUi()
     // RosManager 是本次从 drone_qt 移植过来的 ROS 入口。
     // 这里先在主窗口创建它，后面统一在 setupConnections() 里连信号，在构造末尾启动 spin 线程。
     ros_manager_ = new RosManager(this);
-    /******************************************************/
+    /*****************************************************/
 }
 
 void MainWindow::setupFloatingWidgets()
@@ -116,13 +116,18 @@ void MainWindow::setupFloatingWidgets()
     altitude_value_label_ = new QLabel("0.0 m", attitude_panel_);
     attitude_layout->addWidget(altitude_value_label_, 0, 1);
 
-    attitude_layout->addWidget(new QLabel("模式", attitude_panel_), 1, 0);
-    speed_value_label_ = new QLabel("MODE_UNKNOWN", attitude_panel_);
-    attitude_layout->addWidget(speed_value_label_, 1, 1);
-
-    attitude_layout->addWidget(new QLabel("航向", attitude_panel_), 2, 0);
+    attitude_layout->addWidget(new QLabel("航向", attitude_panel_), 1, 0);
     yaw_value_label_ = new QLabel("0.0°", attitude_panel_);
-    attitude_layout->addWidget(yaw_value_label_, 2, 1);
+    attitude_layout->addWidget(yaw_value_label_, 1, 1);
+
+    attitude_layout->addWidget(new QLabel("电量", attitude_panel_), 2, 0);
+    battery_value_label_ = new QLabel("N/A", attitude_panel_);
+    attitude_layout->addWidget(battery_value_label_, 2, 1);
+
+    attitude_layout->addWidget(new QLabel("模式", attitude_panel_), 3, 0);
+    mode_value_label_ = new QLabel("MODE_UNKNOWN", attitude_panel_);
+    attitude_layout->addWidget(mode_value_label_, 3, 1);
+
 
     /*******************************************************/
 
@@ -402,7 +407,8 @@ void MainWindow::setupConnections()
 
                 scene_data_.drone_state.pose.yaw = yaw_deg;
 
-                altitude_value_label_->setText(QString::number(z, 'f', 1) + " m");
+                altitude_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
+                yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
                 scene_view_->setSceneData(scene_data_);
             },
             Qt::QueuedConnection);
@@ -550,19 +556,45 @@ void MainWindow::updateStatus(
     bool armed,
     const QString &task_name)
 {
-    Q_UNUSED(armed);
+    switch (flight_mode)
+    {
+        case drone_msgs::msg::DroneStatus::MODE_MANUAL:
+            scene_data_.drone_state.flight_mode = "MANUAL";
+            break;
+        case drone_msgs::msg::DroneStatus::MODE_OFFBOARD:
+            scene_data_.drone_state.flight_mode = "OFFBOARD";
+            break;
+        case drone_msgs::msg::DroneStatus::MODE_STABILIZE:
+            scene_data_.drone_state.flight_mode = "STABILIZE";
+            break;
+        case drone_msgs::msg::DroneStatus::MODE_AUTO:
+            scene_data_.drone_state.flight_mode = "AUTO";
+            break;
+        case drone_msgs::msg::DroneStatus::MODE_LOITER:
+            scene_data_.drone_state.flight_mode = "LOITER";
+            break;
+        case drone_msgs::msg::DroneStatus::MODE_RTL:
+            scene_data_.drone_state.flight_mode = "RTL";
+            break;
+        default:
+            scene_data_.drone_state.flight_mode = "UNKNOWN";
+            break;
+    }
 
     connect_status = connected;
 
     // 先把 ROS 返回的基础飞行状态同步到当前场景数据里。
     scene_data_.drone_state.connected = connected;
     scene_data_.drone_state.battery = battery_percent;
-    scene_data_.drone_state.flight_mode = task_name;
+    // scene_data_.drone_state.flight_mode = task_name;
 
     // 当前项目的 TopStatusBar 只直接展示“连接状态”和“任务文本”，
     // 所以这里先把最关键的信息映射过去。
     top_status_bar_->setConnected(connected);
     //top_status_bar_->setTaskText(task_name);
+
+    battery_value_label_->setText(QString::number(scene_data_.drone_state.battery, 'f', 1) + "%");
+    mode_value_label_->setText(scene_data_.drone_state.flight_mode);
 
     // flight_mode 目前在当前仓储界面里没有单独的枚举显示控件，
     // 先把它拼进速度/航向旁的任务文本体系里，不额外造新控件。
@@ -954,10 +986,6 @@ void MainWindow::setupDemoData()
 
     scene_view_->setSceneData(data);
     scene_data_ = data;//把最终演示场景保存成成员，后面 ROS 位置/状态更新时直接在这份数据上改
-
-    altitude_value_label_->setText(QString::number(data.drone_state.pose.z, 'f', 1) + " m");
-    speed_value_label_->setText(QString::number(data.drone_state.speed, 'f', 1) + " m/s");
-    yaw_value_label_->setText(QString::number(data.drone_state.pose.yaw, 'f', 1) + "°");
 
     top_status_bar_->setConnected(data.drone_state.connected);
     top_status_bar_->setTaskText("任务待命");
