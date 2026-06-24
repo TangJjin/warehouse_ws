@@ -1,10 +1,12 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <cv_bridge/cv_bridge.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
@@ -13,6 +15,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
 #include <rclcpp/time.hpp>
+#include <realsense2_camera_msgs/msg/rgbd.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
@@ -51,6 +54,15 @@ private:
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
       const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg);
 
+  void handleRgbdFrame(
+      const realsense2_camera_msgs::msg::RGBD::ConstSharedPtr &rgbd_msg);
+
+  void processFrame(
+      const cv_bridge::CvImageConstPtr &color_bridge,
+      const cv_bridge::CvImageConstPtr &depth_bridge,
+      const std::chrono::steady_clock::time_point &callback_t0,
+      const char *input_mode);
+
   void handleCameraInfo(
       const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg);
 
@@ -67,6 +79,7 @@ private:
   std::string color_topic_;
   std::string depth_topic_;
   std::string camera_info_topic_;
+  std::string rgbd_topic_;
   std::string window_name_;
 
   std::string bpu_model_path_;
@@ -75,9 +88,10 @@ private:
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
+  bool use_rgbd_ = false;
   mutable bool debug_window_created_ = false;
   int log_throttle_ms_ = 500;
-  int sample_radius_px_ = 3;
+  int sample_radius_px_ = 10;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
@@ -95,4 +109,5 @@ private:
   message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<ColorDepthSyncPolicy>> color_depth_sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
+  rclcpp::Subscription<realsense2_camera_msgs::msg::RGBD>::SharedPtr rgbd_sub_;
 };

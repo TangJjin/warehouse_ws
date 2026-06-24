@@ -18,6 +18,7 @@ namespace
 using SteadyClock = std::chrono::steady_clock;
 static constexpr int kBpuInputWidthPx = 640;
 static constexpr int kBpuInputHeightPx = 640;
+static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr std::size_t kBpuInputYSize =
     static_cast<std::size_t>(kBpuInputWidthPx) *
     static_cast<std::size_t>(kBpuInputHeightPx);
@@ -55,9 +56,11 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. color=%s depth=%s camera_info=%s",
+      "QR D435i video stream ready. mode=%s color=%s depth=%s rgbd=%s camera_info=%s",
+      use_rgbd_ ? "rgbd" : "synced",
       color_topic_.c_str(),
       depth_topic_.c_str(),
+      rgbd_topic_.c_str(),
       camera_info_topic_.c_str());
 }
 
@@ -77,11 +80,16 @@ void QrVisionNode::declareParameters()
       "depth_topic", "/camera/camera/aligned_depth_to_color/image_raw");
   camera_info_topic_ = this->declare_parameter<std::string>(
       "camera_info_topic", "/camera/camera/color/camera_info");
+  rgbd_topic_ = this->declare_parameter<std::string>(
+      "rgbd_topic", "/camera/camera/rgbd");
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
+  use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
-  sample_radius_px_ = this->declare_parameter<int>("sample_radius_px", 3);
+  sample_radius_px_ = this->declare_parameter<int>(
+      "sample_radius_px",
+      kDefaultSampleRadiusPx);
 
   enable_bpu_ = this->declare_parameter<bool>(
       "enable_bpu",
@@ -102,8 +110,9 @@ void QrVisionNode::declareParameters()
   {
     RCLCPP_WARN(
         get_logger(),
-        "sample_radius_px must be greater than or equal to 0, reset to 3");
-    sample_radius_px_ = 3;
+        "sample_radius_px must be greater than or equal to 0, reset to %d",
+        kDefaultSampleRadiusPx);
+    sample_radius_px_ = kDefaultSampleRadiusPx;
   }
 }
 
@@ -219,6 +228,22 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
 
 void QrVisionNode::initializeSubscriptions()
 {
+  if (use_rgbd_) {
+    rgbd_sub_ = this->create_subscription<realsense2_camera_msgs::msg::RGBD>(
+        rgbd_topic_,
+        rclcpp::SensorDataQoS(),
+        std::bind(
+            &QrVisionNode::handleRgbdFrame,
+            this,
+            std::placeholders::_1));
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Using RGBD input. rgbd=%s",
+        rgbd_topic_.c_str());
+    return;
+  }
+
   color_sub_.subscribe(this, color_topic_, rmw_qos_profile_sensor_data);
   depth_sub_.subscribe(this, depth_topic_, rmw_qos_profile_sensor_data);
 
@@ -239,6 +264,13 @@ void QrVisionNode::initializeSubscriptions()
           &QrVisionNode::handleCameraInfo,
           this,
           std::placeholders::_1));
+
+  RCLCPP_INFO(
+      get_logger(),
+      "Using synced image input. color=%s depth=%s camera_info=%s",
+      color_topic_.c_str(),
+      depth_topic_.c_str(),
+      camera_info_topic_.c_str());
 }
 
 void QrVisionNode::handleCameraInfo(
@@ -288,6 +320,43 @@ void QrVisionNode::handleSyncedFrame(
     return;
   }
 
+  processFrame(color_bridge, depth_bridge, callback_t0, "synced");
+}
+
+void QrVisionNode::handleRgbdFrame(
+    const realsense2_camera_msgs::msg::RGBD::ConstSharedPtr &rgbd_msg)
+{
+  const auto callback_t0 = SteadyClock::now();
+
+  cv_bridge::CvImageConstPtr color_bridge;
+  cv_bridge::CvImageConstPtr depth_bridge;
+
+  try
+  {
+    color_bridge = cv_bridge::toCvShare(rgbd_msg->rgb, rgbd_msg, "bgr8");
+    depth_bridge = cv_bridge::toCvShare(rgbd_msg->depth, rgbd_msg);
+  }
+  catch (const cv_bridge::Exception &ex)
+  {
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "cv_bridge RGBD conversion failed: %s",
+        ex.what());
+    return;
+  }
+
+  has_camera_info_ = true;
+  processFrame(color_bridge, depth_bridge, callback_t0, "rgbd");
+}
+
+void QrVisionNode::processFrame(
+    const cv_bridge::CvImageConstPtr &color_bridge,
+    const cv_bridge::CvImageConstPtr &depth_bridge,
+    const std::chrono::steady_clock::time_point &callback_t0,
+    const char *input_mode)
+{
   if (color_bridge->image.cols != depth_bridge->image.cols ||
       color_bridge->image.rows != depth_bridge->image.rows)
   {
@@ -336,7 +405,8 @@ void QrVisionNode::handleSyncedFrame(
             get_logger(),
             *get_clock(),
             log_throttle_ms_,
-            "BPU inference ok. preprocess_ms=%.2f infer_ms=%.2f input_size=%zu detections=%zu",
+            "BPU inference ok. mode=%s preprocess_ms=%.2f infer_ms=%.2f input_size=%zu detections=%zu",
+            input_mode,
             elapsedMs(preprocess_t0, preprocess_t1),
             elapsedMs(infer_t0, infer_t1),
             bpu_input_nv12_.size(),
@@ -365,8 +435,9 @@ void QrVisionNode::handleSyncedFrame(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "video stream fps=%.1f size=%dx%d center_depth=%.3fm camera_info=%s "
+        "video stream mode=%s fps=%.1f size=%dx%d center_depth=%.3fm camera_info=%s "
         "callback_ms=%.2f debug_view=%s",
+        input_mode,
         smoothed_fps_,
         color_bridge->image.cols,
         color_bridge->image.rows,
@@ -381,8 +452,9 @@ void QrVisionNode::handleSyncedFrame(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "video stream fps=%.1f size=%dx%d center_depth=invalid camera_info=%s "
+        "video stream mode=%s fps=%.1f size=%dx%d center_depth=invalid camera_info=%s "
         "callback_ms=%.2f debug_view=%s",
+        input_mode,
         smoothed_fps_,
         color_bridge->image.cols,
         color_bridge->image.rows,
