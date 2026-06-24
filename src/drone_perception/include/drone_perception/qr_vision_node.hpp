@@ -37,6 +37,28 @@ public:
   ~QrVisionNode() override;
 
 private:
+  struct DecodedShelfCode
+  {
+    std::string code;
+    std::string type;
+    double center_distance_sq{0.0};
+  };
+
+  struct BpuImageRect
+  {
+    float x_min{0.0F};
+    float y_min{0.0F};
+    float x_max{0.0F};
+    float y_max{0.0F};
+  };
+
+  struct BpuLetterboxState
+  {
+    float scale{1.0F};
+    int pad_x{0};
+    int pad_y{0};
+  };
+
   typedef message_filters::sync_policies::ApproximateTime<
       sensor_msgs::msg::Image,
       sensor_msgs::msg::Image>
@@ -49,6 +71,8 @@ private:
   void initializeBpuDetector();
 
   bool prepareBpuInput(const cv::Mat &color_image);
+
+  void updateShelfCodeStability(const std::vector<DecodedShelfCode> &decoded_codes);
 
   void handleSyncedFrame(
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
@@ -72,6 +96,15 @@ private:
 
 #if DRONE_PERCEPTION_HAS_BPU
   void drawBpuDetections(cv::Mat &display) const;
+
+  BpuImageRect mapBpuDetectionToImageRect(
+      const BpuYoloDetection &detection,
+      int image_width,
+      int image_height) const;
+
+  std::vector<DecodedShelfCode> decodeShelfCodesFromDetections(
+      const cv::Mat &color_image,
+      const std::vector<BpuYoloDetection> &detections) const;
 #endif
 
   void updateFps();
@@ -85,6 +118,7 @@ private:
   std::string bpu_model_path_;
 
   std::vector<uint8_t> bpu_input_nv12_;
+  BpuLetterboxState bpu_letterbox_;
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
@@ -92,9 +126,18 @@ private:
   mutable bool debug_window_created_ = false;
   int log_throttle_ms_ = 500;
   int sample_radius_px_ = 10;
+  int shelf_code_stable_frames_ = 3;
+  int shelf_code_lost_tolerance_frames_ = 2;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
+
+  std::string candidate_shelf_code_;
+  std::string candidate_shelf_code_type_;
+  std::string stable_shelf_code_;
+  std::string stable_shelf_code_type_;
+  int candidate_shelf_code_count_ = 0;
+  int lost_shelf_code_count_ = 0;
 
   DepthProcessor depth_processor_;
 

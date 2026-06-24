@@ -1,6 +1,9 @@
 #include "drone_perception/qr_vision_node.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -12,6 +15,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <zbar.h>
 
 namespace
 {
@@ -19,6 +23,11 @@ using SteadyClock = std::chrono::steady_clock;
 static constexpr int kBpuInputWidthPx = 640;
 static constexpr int kBpuInputHeightPx = 640;
 static constexpr int kDefaultSampleRadiusPx = 10;
+static constexpr int kDefaultShelfCodeStableFrames = 3;
+static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
+#if DRONE_PERCEPTION_HAS_BPU
+static constexpr float kShelfCodeRoiPaddingRatio = 0.15F;
+#endif
 static constexpr std::size_t kBpuInputYSize =
     static_cast<std::size_t>(kBpuInputWidthPx) *
     static_cast<std::size_t>(kBpuInputHeightPx);
@@ -31,6 +40,93 @@ double elapsedMs(
 {
   return std::chrono::duration<double, std::milli>(end - start).count();
 }
+
+#if DRONE_PERCEPTION_HAS_BPU
+std::string trimAndUppercase(const std::string &text)
+{
+  const auto begin = std::find_if_not(
+      text.begin(),
+      text.end(),
+      [](unsigned char value) {
+        return std::isspace(value) != 0;
+      });
+
+  const auto end = std::find_if_not(
+      text.rbegin(),
+      text.rend(),
+      [](unsigned char value) {
+        return std::isspace(value) != 0;
+      }).base();
+
+  if (begin >= end) {
+    return {};
+  }
+
+  std::string normalized(begin, end);
+  std::transform(
+      normalized.begin(),
+      normalized.end(),
+      normalized.begin(),
+      [](unsigned char value) {
+        return static_cast<char>(std::toupper(value));
+      });
+
+  return normalized;
+}
+
+bool isAlphaString(const std::string &text)
+{
+  if (text.empty()) {
+    return false;
+  }
+
+  return std::all_of(
+      text.begin(),
+      text.end(),
+      [](unsigned char value) {
+        return std::isalpha(value) != 0;
+      });
+}
+
+bool isDigitString(const std::string &text)
+{
+  if (text.empty()) {
+    return false;
+  }
+
+  return std::all_of(
+      text.begin(),
+      text.end(),
+      [](unsigned char value) {
+        return std::isdigit(value) != 0;
+      });
+}
+
+bool isValidShelfCode(const std::string &code)
+{
+  const std::size_t first_dash = code.find('-');
+
+  if (first_dash == std::string::npos) {
+    return false;
+  }
+
+  const std::size_t second_dash = code.find('-', first_dash + 1U);
+
+  if (second_dash == std::string::npos) {
+    return false;
+  }
+
+  if (code.find('-', second_dash + 1U) != std::string::npos) {
+    return false;
+  }
+
+  const std::string area = code.substr(0U, first_dash);
+  const std::string row = code.substr(first_dash + 1U, second_dash - first_dash - 1U);
+  const std::string col = code.substr(second_dash + 1U);
+
+  return isAlphaString(area) && isDigitString(row) && isDigitString(col);
+}
+#endif
 }  // namespace
 
 QrVisionNode::QrVisionNode()
@@ -90,6 +186,12 @@ void QrVisionNode::declareParameters()
   sample_radius_px_ = this->declare_parameter<int>(
       "sample_radius_px",
       kDefaultSampleRadiusPx);
+  shelf_code_stable_frames_ = this->declare_parameter<int>(
+      "shelf_code_stable_frames",
+      kDefaultShelfCodeStableFrames);
+  shelf_code_lost_tolerance_frames_ = this->declare_parameter<int>(
+      "shelf_code_lost_tolerance_frames",
+      kDefaultShelfCodeLostToleranceFrames);
 
   enable_bpu_ = this->declare_parameter<bool>(
       "enable_bpu",
@@ -113,6 +215,24 @@ void QrVisionNode::declareParameters()
         "sample_radius_px must be greater than or equal to 0, reset to %d",
         kDefaultSampleRadiusPx);
     sample_radius_px_ = kDefaultSampleRadiusPx;
+  }
+
+  if (shelf_code_stable_frames_ <= 0)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "shelf_code_stable_frames must be greater than 0, reset to %d",
+        kDefaultShelfCodeStableFrames);
+    shelf_code_stable_frames_ = kDefaultShelfCodeStableFrames;
+  }
+
+  if (shelf_code_lost_tolerance_frames_ < 0)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "shelf_code_lost_tolerance_frames must be greater than or equal to 0, reset to %d",
+        kDefaultShelfCodeLostToleranceFrames);
+    shelf_code_lost_tolerance_frames_ = kDefaultShelfCodeLostToleranceFrames;
   }
 }
 
@@ -181,17 +301,46 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
   }
 
   try {
+    const float scale = std::min(
+        static_cast<float>(kBpuInputWidthPx) / static_cast<float>(color_image.cols),
+        static_cast<float>(kBpuInputHeightPx) / static_cast<float>(color_image.rows));
+    const int resized_width = std::clamp(
+        static_cast<int>(std::round(static_cast<float>(color_image.cols) * scale)),
+        1,
+        kBpuInputWidthPx);
+    const int resized_height = std::clamp(
+        static_cast<int>(std::round(static_cast<float>(color_image.rows) * scale)),
+        1,
+        kBpuInputHeightPx);
+    const int pad_x = (kBpuInputWidthPx - resized_width) / 2;
+    const int pad_y = (kBpuInputHeightPx - resized_height) / 2;
+
     cv::Mat resized_bgr;
     cv::resize(
         color_image,
         resized_bgr,
-        cv::Size(kBpuInputWidthPx, kBpuInputHeightPx),
+        cv::Size(resized_width, resized_height),
         0.0,
         0.0,
         cv::INTER_LINEAR);
 
+    cv::Mat letterbox_bgr(
+        kBpuInputHeightPx,
+        kBpuInputWidthPx,
+        color_image.type(),
+        cv::Scalar(114, 114, 114));
+    resized_bgr.copyTo(letterbox_bgr(cv::Rect(
+        pad_x,
+        pad_y,
+        resized_width,
+        resized_height)));
+
+    bpu_letterbox_.scale = scale;
+    bpu_letterbox_.pad_x = pad_x;
+    bpu_letterbox_.pad_y = pad_y;
+
     cv::Mat yuv_i420;
-    cv::cvtColor(resized_bgr, yuv_i420, cv::COLOR_BGR2YUV_I420);
+    cv::cvtColor(letterbox_bgr, yuv_i420, cv::COLOR_BGR2YUV_I420);
 
     if (!yuv_i420.isContinuous()) {
       yuv_i420 = yuv_i420.clone();
@@ -225,6 +374,166 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
 
   return true;
 }
+
+void QrVisionNode::updateShelfCodeStability(
+    const std::vector<DecodedShelfCode> &decoded_codes)
+{
+  if (decoded_codes.empty()) {
+    ++lost_shelf_code_count_;
+
+    if (lost_shelf_code_count_ > shelf_code_lost_tolerance_frames_) {
+      candidate_shelf_code_.clear();
+      candidate_shelf_code_type_.clear();
+      stable_shelf_code_.clear();
+      stable_shelf_code_type_.clear();
+      candidate_shelf_code_count_ = 0;
+    }
+
+    return;
+  }
+
+  lost_shelf_code_count_ = 0;
+
+  const DecodedShelfCode &selected_code = decoded_codes.front();
+
+  if (selected_code.code == candidate_shelf_code_) {
+    ++candidate_shelf_code_count_;
+  } else {
+    candidate_shelf_code_ = selected_code.code;
+    candidate_shelf_code_type_ = selected_code.type;
+    candidate_shelf_code_count_ = 1;
+  }
+
+  if (candidate_shelf_code_count_ < shelf_code_stable_frames_) {
+    return;
+  }
+
+  stable_shelf_code_ = candidate_shelf_code_;
+  stable_shelf_code_type_ = candidate_shelf_code_type_;
+
+  RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      log_throttle_ms_,
+      "stable shelf code type=%s code=%s stable_frames=%d",
+      stable_shelf_code_type_.c_str(),
+      stable_shelf_code_.c_str(),
+      candidate_shelf_code_count_);
+}
+
+#if DRONE_PERCEPTION_HAS_BPU
+std::vector<QrVisionNode::DecodedShelfCode> QrVisionNode::decodeShelfCodesFromDetections(
+    const cv::Mat &color_image,
+    const std::vector<BpuYoloDetection> &detections) const
+{
+  std::vector<DecodedShelfCode> decoded_codes;
+
+  if (color_image.empty() || detections.empty()) {
+    return decoded_codes;
+  }
+
+  zbar::ImageScanner scanner;
+  scanner.set_config(zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 1);
+
+  const cv::Point2f image_center(
+      static_cast<float>(color_image.cols) * 0.5F,
+      static_cast<float>(color_image.rows) * 0.5F);
+
+  for (const BpuYoloDetection &detection : detections) {
+    const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+        detection,
+        color_image.cols,
+        color_image.rows);
+    const float x_min = image_rect.x_min;
+    const float y_min = image_rect.y_min;
+    const float x_max = image_rect.x_max;
+    const float y_max = image_rect.y_max;
+    const float width = x_max - x_min;
+    const float height = y_max - y_min;
+
+    if (width <= 1.0F || height <= 1.0F) {
+      continue;
+    }
+
+    const float pad_x = width * kShelfCodeRoiPaddingRatio;
+    const float pad_y = height * kShelfCodeRoiPaddingRatio;
+    const int roi_x_min = std::max(0, static_cast<int>(x_min - pad_x));
+    const int roi_y_min = std::max(0, static_cast<int>(y_min - pad_y));
+    const int roi_x_max = std::min(color_image.cols, static_cast<int>(x_max + pad_x));
+    const int roi_y_max = std::min(color_image.rows, static_cast<int>(y_max + pad_y));
+    const cv::Rect roi(
+        roi_x_min,
+        roi_y_min,
+        roi_x_max - roi_x_min,
+        roi_y_max - roi_y_min);
+
+    if (roi.width <= 1 || roi.height <= 1) {
+      continue;
+    }
+
+    cv::Mat gray_roi;
+    cv::cvtColor(color_image(roi), gray_roi, cv::COLOR_BGR2GRAY);
+
+    if (!gray_roi.isContinuous()) {
+      gray_roi = gray_roi.clone();
+    }
+
+    zbar::Image zbar_image(
+        static_cast<unsigned int>(gray_roi.cols),
+        static_cast<unsigned int>(gray_roi.rows),
+        "Y800",
+        gray_roi.data,
+        static_cast<unsigned long>(gray_roi.total()));
+
+    scanner.scan(zbar_image);
+
+    for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
+      const std::string code = trimAndUppercase(symbol->get_data());
+
+      if (!isValidShelfCode(code)) {
+        continue;
+      }
+
+      cv::Point2f code_center(
+          static_cast<float>(roi.x) + static_cast<float>(roi.width) * 0.5F,
+          static_cast<float>(roi.y) + static_cast<float>(roi.height) * 0.5F);
+
+      const int location_size = symbol->get_location_size();
+
+      if (location_size > 0) {
+        code_center = cv::Point2f(0.0F, 0.0F);
+
+        for (int i = 0; i < location_size; ++i) {
+          code_center.x += static_cast<float>(roi.x + symbol->get_location_x(i));
+          code_center.y += static_cast<float>(roi.y + symbol->get_location_y(i));
+        }
+
+        code_center.x /= static_cast<float>(location_size);
+        code_center.y /= static_cast<float>(location_size);
+      }
+
+      const float dx = code_center.x - image_center.x;
+      const float dy = code_center.y - image_center.y;
+
+      decoded_codes.push_back({
+          code,
+          symbol->get_type_name(),
+          static_cast<double>(dx * dx + dy * dy)});
+    }
+
+    zbar_image.set_data(nullptr, 0U);
+  }
+
+  std::sort(
+      decoded_codes.begin(),
+      decoded_codes.end(),
+      [](const DecodedShelfCode &a, const DecodedShelfCode &b) {
+        return a.center_distance_sq < b.center_distance_sq;
+      });
+
+  return decoded_codes;
+}
+#endif
 
 void QrVisionNode::initializeSubscriptions()
 {
@@ -405,12 +714,16 @@ void QrVisionNode::processFrame(
             get_logger(),
             *get_clock(),
             log_throttle_ms_,
-            "BPU inference ok. mode=%s preprocess_ms=%.2f infer_ms=%.2f input_size=%zu detections=%zu",
+            "BPU inference ok. mode=%s preprocess_ms=%.2f infer_ms=%.2f "
+            "input_size=%zu detections=%zu letterbox_scale=%.4f letterbox_pad=%d,%d",
             input_mode,
             elapsedMs(preprocess_t0, preprocess_t1),
             elapsedMs(infer_t0, infer_t1),
             bpu_input_nv12_.size(),
-            detections.size());
+            detections.size(),
+            bpu_letterbox_.scale,
+            bpu_letterbox_.pad_x,
+            bpu_letterbox_.pad_y);
       } catch (const std::exception &e) {
         RCLCPP_ERROR_THROTTLE(
             get_logger(),
@@ -421,6 +734,13 @@ void QrVisionNode::processFrame(
       }
     }
   }
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+  updateShelfCodeStability(
+      decodeShelfCodesFromDetections(color_bridge->image, last_bpu_detections_));
+#else
+  updateShelfCodeStability({});
 #endif
 
   if (debug_view_)
@@ -510,20 +830,51 @@ void QrVisionNode::displayDebugFrame(
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
+QrVisionNode::BpuImageRect QrVisionNode::mapBpuDetectionToImageRect(
+    const BpuYoloDetection &detection,
+    int image_width,
+    int image_height) const
+{
+  if (bpu_letterbox_.scale <= 0.0F || image_width <= 0 || image_height <= 0) {
+    return {};
+  }
+
+  const float image_width_f = static_cast<float>(image_width);
+  const float image_height_f = static_cast<float>(image_height);
+  const float pad_x = static_cast<float>(bpu_letterbox_.pad_x);
+  const float pad_y = static_cast<float>(bpu_letterbox_.pad_y);
+
+  const float x_min = (detection.x_min_px - pad_x) / bpu_letterbox_.scale;
+  const float y_min = (detection.y_min_px - pad_y) / bpu_letterbox_.scale;
+  const float x_max = (detection.x_max_px - pad_x) / bpu_letterbox_.scale;
+  const float y_max = (detection.y_max_px - pad_y) / bpu_letterbox_.scale;
+
+  return {
+      std::clamp(std::min(x_min, x_max), 0.0F, image_width_f),
+      std::clamp(std::min(y_min, y_max), 0.0F, image_height_f),
+      std::clamp(std::max(x_min, x_max), 0.0F, image_width_f),
+      std::clamp(std::max(y_min, y_max), 0.0F, image_height_f)};
+}
+
 void QrVisionNode::drawBpuDetections(cv::Mat &display) const
 {
-  const float scale_x =
-      static_cast<float>(display.cols) / static_cast<float>(kBpuInputWidthPx);
-  const float scale_y =
-      static_cast<float>(display.rows) / static_cast<float>(kBpuInputHeightPx);
-
   for (const BpuYoloDetection &detection : last_bpu_detections_) {
+    const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+        detection,
+        display.cols,
+        display.rows);
+
+    if (image_rect.x_max - image_rect.x_min <= 1.0F ||
+        image_rect.y_max - image_rect.y_min <= 1.0F) {
+      continue;
+    }
+
     const cv::Point top_left(
-        static_cast<int>(detection.x_min_px * scale_x),
-        static_cast<int>(detection.y_min_px * scale_y));
+        static_cast<int>(image_rect.x_min),
+        static_cast<int>(image_rect.y_min));
     const cv::Point bottom_right(
-        static_cast<int>(detection.x_max_px * scale_x),
-        static_cast<int>(detection.y_max_px * scale_y));
+        static_cast<int>(image_rect.x_max),
+        static_cast<int>(image_rect.y_max));
 
     cv::rectangle(
         display,

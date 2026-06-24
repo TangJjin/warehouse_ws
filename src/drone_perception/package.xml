@@ -17,6 +17,7 @@
   <depend>message_filters</depend>
   <depend>realsense2_camera_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>zbar</depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
