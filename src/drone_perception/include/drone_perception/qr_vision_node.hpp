@@ -120,7 +120,7 @@ private:
 
   std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
       const cv::Mat &color_image,
-      const std::vector<BpuYoloDetection> &detections) const;
+      const std::vector<BpuYoloDetection> &detections);
 #endif
 
   void updateFps();
