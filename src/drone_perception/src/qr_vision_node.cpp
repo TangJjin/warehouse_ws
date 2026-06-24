@@ -135,7 +135,7 @@ bool isValidShelfCode(const std::string &code)
   return isAlphaString(area) && isDigitString(row) && isDigitString(col);
 }
 
-bool isValidPrefixedCode(
+bool isValidShortPrefixedCode(
     const std::string &code,
     const std::string &prefix)
 {
@@ -148,12 +148,8 @@ bool isValidPrefixedCode(
   for (std::size_t i = prefix.size(); i < code.size(); ++i) {
     const unsigned char value = static_cast<unsigned char>(code[i]);
 
-    if (std::isalnum(value) != 0) {
+    if (std::isalnum(value) != 0 || code[i] == '_') {
       has_payload = true;
-      continue;
-    }
-
-    if (code[i] == '-' || code[i] == '_') {
       continue;
     }
 
@@ -172,12 +168,12 @@ void appendParsedVisualCode(
     return;
   }
 
-  if (isValidPrefixedCode(code, "SKU")) {
+  if (isValidShortPrefixedCode(code, "SKU-")) {
     parsed_codes.push_back({"sku", code});
     return;
   }
 
-  if (isValidPrefixedCode(code, "PKG")) {
+  if (isValidShortPrefixedCode(code, "PKG-")) {
     parsed_codes.push_back({"pkg", code});
     return;
   }
@@ -253,8 +249,9 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s color=%s depth=%s rgbd=%s camera_info=%s",
+      "QR D435i video stream ready. mode=%s decode_mode=%s color=%s depth=%s rgbd=%s camera_info=%s",
       use_rgbd_ ? "rgbd" : "synced",
+      use_barcode_format_ ? "barcode" : "qr",
       color_topic_.c_str(),
       depth_topic_.c_str(),
       rgbd_topic_.c_str(),
@@ -282,6 +279,7 @@ void QrVisionNode::declareParameters()
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
+  use_barcode_format_ = this->declare_parameter<bool>("use_barcode_format", false);
   use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
   sample_radius_px_ = this->declare_parameter<int>(
@@ -632,6 +630,10 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
         const std::string raw_code = symbol->get_data();
         const std::string code = trimAndUppercase(raw_code);
+        const std::string symbol_type = symbol->get_type_name();
+        const bool is_qr_code = symbol_type.find("QR") != std::string::npos;
+        const bool symbol_matches_mode =
+            use_barcode_format_ ? !is_qr_code : is_qr_code;
         const std::vector<ParsedVisualCode> parsed_codes = parseVisualCodes(code);
         const std::string categories = formatParsedVisualCodeCategories(parsed_codes);
 
@@ -639,9 +641,11 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             get_logger(),
             *get_clock(),
             log_throttle_ms_,
-            "zbar raw code scan=%s symbol_type=%s raw=%s normalized=%s category=%s roi=%dx%d at=%d,%d",
+            "zbar raw code scan=%s decode_mode=%s symbol_type=%s mode_match=%s raw=%s normalized=%s category=%s roi=%dx%d at=%d,%d",
             scan_mode,
-            symbol->get_type_name().c_str(),
+            use_barcode_format_ ? "barcode" : "qr",
+            symbol_type.c_str(),
+            symbol_matches_mode ? "true" : "false",
             raw_code.c_str(),
             code.c_str(),
             categories.c_str(),
@@ -650,7 +654,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             roi.x,
             roi.y);
 
-        if (parsed_codes.empty()) {
+        if (!symbol_matches_mode || parsed_codes.empty()) {
           continue;
         }
 
@@ -681,7 +685,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
           decoded_codes.push_back({
               parsed_code.code,
               parsed_code.category,
-              symbol->get_type_name(),
+              symbol_type,
               static_cast<double>(dx * dx + dy * dy)});
           ++accepted_count;
         }
