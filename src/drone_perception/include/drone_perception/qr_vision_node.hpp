@@ -37,11 +37,22 @@ public:
   ~QrVisionNode() override;
 
 private:
-  struct DecodedShelfCode
+  struct DecodedVisualCode
   {
     std::string code;
-    std::string type;
+    std::string category;
+    std::string symbol_type;
     double center_distance_sq{0.0};
+  };
+
+  struct CodeStabilityState
+  {
+    std::string candidate_code;
+    std::string candidate_symbol_type;
+    std::string stable_code;
+    std::string stable_symbol_type;
+    int candidate_count{0};
+    int lost_count{0};
   };
 
   struct BpuImageRect
@@ -72,7 +83,12 @@ private:
 
   bool prepareBpuInput(const cv::Mat &color_image);
 
-  void updateShelfCodeStability(const std::vector<DecodedShelfCode> &decoded_codes);
+  void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
+
+  void updateVisualCodeCategoryStability(
+      const std::vector<DecodedVisualCode> &decoded_codes,
+      const std::string &category,
+      CodeStabilityState &state);
 
   void handleSyncedFrame(
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
@@ -102,7 +118,7 @@ private:
       int image_width,
       int image_height) const;
 
-  std::vector<DecodedShelfCode> decodeShelfCodesFromDetections(
+  std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
       const cv::Mat &color_image,
       const std::vector<BpuYoloDetection> &detections) const;
 #endif
@@ -132,12 +148,9 @@ private:
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
 
-  std::string candidate_shelf_code_;
-  std::string candidate_shelf_code_type_;
-  std::string stable_shelf_code_;
-  std::string stable_shelf_code_type_;
-  int candidate_shelf_code_count_ = 0;
-  int lost_shelf_code_count_ = 0;
+  CodeStabilityState shelf_code_state_;
+  CodeStabilityState sku_code_state_;
+  CodeStabilityState pkg_code_state_;
 
   DepthProcessor depth_processor_;
 
