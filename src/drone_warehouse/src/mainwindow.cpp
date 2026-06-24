@@ -195,7 +195,7 @@ void MainWindow::setupFloatingWidgets()
 void MainWindow::setupConnections()
 {
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次日志文本
-        run_log_view_->clear();
+        run_log_view_->hide();
         clock_timer_->stop();
     });
 
@@ -301,6 +301,7 @@ void MainWindow::setupConnections()
                 //根据命令执行结果的成功与否，更新界面上的结果标签文本，显示相关消息
                 updateCommandResult(success, message);
                 run_log_view_->appendPlainText(QString("%1").arg(message));
+                //clock_timer_->start(5000);
             },
             Qt::QueuedConnection);
 
@@ -316,6 +317,7 @@ void MainWindow::setupConnections()
                     // delta_result_ = true;
                     //push_button_->setEnabled(true);
                     run_log_view_->appendPlainText(QString("%1").arg(message));
+                    clock_timer_->start(5000);
                 }
             },
             Qt::QueuedConnection);
@@ -329,6 +331,7 @@ void MainWindow::setupConnections()
                     //push_button_->setEnabled(false);
                     //waiting_task_result_ = false;
                     run_log_view_->appendPlainText(QString("%1").arg(message));
+                    //clock_timer_->start(5000);
                 }
             },
             Qt::QueuedConnection);
@@ -388,8 +391,8 @@ void MainWindow::setupConnections()
             [this](double x, double y, double z)
             {
                 // 当前仓储项目没有移植 position_view_，所以这里改成直接更新当前场景里的无人机位置。
-                scene_data_.drone_state.pose.x = -1 * (y * 100 -100);
-                scene_data_.drone_state.pose.y = -1 * (x * 100 -150);
+                scene_data_.drone_state.pose.x = -1 * (y * 100 -150);
+                scene_data_.drone_state.pose.y = -1 * (x * 100 -100);
                 scene_data_.drone_state.pose.z = z;
 
                 altitude_value_label_->setText(QString::number(z, 'f', 1) + " m");
@@ -423,7 +426,7 @@ void MainWindow::setupConnections()
                 updateWorldGroupState(points);
                 ros_manager_->startTask();
                 //run_log_view_->appendPlainText("初始化成功，准备巡检");
-                clock_timer_->start(5000);
+                //clock_timer_->start(5000);
             },
             Qt::QueuedConnection);
     }
@@ -438,14 +441,14 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     if (!ros_manager_)
     {
         run_log_view_->appendPlainText("初始化失败,rosmanager未就绪");
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
         return;
     }
 
     if (mission_upload_in_progress_)
     {
         run_log_view_->appendPlainText("无法初始化");
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
         return;
     }
 
@@ -498,18 +501,18 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
     if (success)
     {
         run_log_view_->appendPlainText(QString("%1").arg(message));
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
         ros_manager_->requestStartOffboard();
     }
     else if (!message.isEmpty())
     {
         run_log_view_->appendPlainText(QString("初始化失败：%1").arg(message));
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
     }
     else
     {
         run_log_view_->appendPlainText("初始化失败");
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
     }
 }
 
@@ -622,7 +625,7 @@ void MainWindow::appendBarcodeRecord(
     if (!location.valid)
     {
         run_log_view_->appendPlainText("收到图片，无法映射");
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
         return;
     }
 
@@ -631,7 +634,7 @@ void MainWindow::appendBarcodeRecord(
     if (!slot)
     {
         run_log_view_->appendPlainText("收到图片，目标货架槽位无效");
-        clock_timer_->start(5000);
+        //clock_timer_->start(5000);
         return;
     }
 
@@ -718,13 +721,15 @@ SlotLocation MainWindow::resolveSlotFromPose(const Pose3D &pose) const
         return location;
     }
 
-    if (pose.x >= 100.0)//`x >= 100` 认为是第 2 个货架
-    {
-        location.shelf_index = 1;
-    }
-    else if (pose.x >= -10.0)//`-10 <= x < 100` 认为是第 1 个货架
+    if (((pose.x >= 110.0) && (pose.x <= 140.0) && (pose.yaw >= 80.0) && (pose.yaw <= 100.0)) ||
+        ((pose.x >= -10.0) && (pose.x <= 10.0) && (pose.yaw >= -100.0) && (pose.yaw <= -80.0)))//第 1 个货架判定标准
     {
         location.shelf_index = 0;
+    }
+    else if (((pose.x >= -10.0) && (pose.x <= 10.0) && (pose.yaw >= 80.0) && (pose.yaw <= 100.0)) ||
+        ((pose.x >= -140.0) && (pose.x <= -110.0) && (pose.yaw >= -100.0) && (pose.yaw <= -80.0)))//第 2 个货架判定标准
+    {
+        location.shelf_index = 1;
     }
     else
     {
@@ -734,15 +739,15 @@ SlotLocation MainWindow::resolveSlotFromPose(const Pose3D &pose) const
     const double normalized_yaw = std::fmod(std::fmod(pose.yaw, 360.0) + 360.0, 360.0);//归一化 yaw
     location.side = (std::abs(normalized_yaw - 90.0) <= std::abs(normalized_yaw - 180.0)) ? "front" : "back";//比较离 90° 和 180° 哪个更近
 
-    const double clamped_y = qBound(-100.0, pose.y, 100.0);//先把 `y` 限制到 `[-100, 100]`
+    const double clamped_y = qBound(-100.0, pose.y, 50.0);//先把 `y` 限制到 `[-100, 50]`
     const double clamped_z = qBound(0.0, pose.z, 160.0);//先把 `z` 限制到 `[0, 160]`
 
-    const double normalized_col = (clamped_y + 100.0) / 200.0;//把 `y` 从 `[-100, 100]` 映射到 `[0, 1]`
+    const double normalized_col = (clamped_y + 100.0) / 150.0;//把 `y` 从 `[-100, 50]` 映射到 `[0, 1]`
     const double normalized_row = clamped_z / 160.0;//把 `z` 从 `[0, 160]` 映射到 `[0, 1]`
 
     //判断行列
-    location.col = qBound(0, static_cast<int>(normalized_col * 4.0), 3);
-    location.row = qBound(0, 3 - static_cast<int>(normalized_row * 4.0), 3);
+    location.col = qBound(0, static_cast<int>(normalized_col * 3.0), 2);
+    location.row = qBound(0, static_cast<int>(normalized_row * 4.0), 3);
     location.valid = true;//标志成功定位
     return location;
 }
