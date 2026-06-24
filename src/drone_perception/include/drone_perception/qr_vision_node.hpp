@@ -138,6 +138,7 @@ private:
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
+  bool use_barcode_format_ = false;
   bool use_rgbd_ = false;
   mutable bool debug_window_created_ = false;
   int log_throttle_ms_ = 500;
