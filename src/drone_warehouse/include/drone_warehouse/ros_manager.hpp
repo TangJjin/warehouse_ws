@@ -85,7 +85,7 @@ class RosManager : public QObject
             const QString &time_text);
 
         //定义一个信号，用于位置更新事件，包含无人机的二维位置坐标与高度
-        void positionUpdated(double x, double y, double z);
+        void positionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void deltaUpdated(double dx, double dy, double dyaw, bool valid);
 
         //机载端执行 offboard 启动服务后，把结果通知 UI
