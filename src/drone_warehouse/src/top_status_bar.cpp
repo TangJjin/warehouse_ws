@@ -31,6 +31,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(connection_button_);
     layout->addWidget(title_button_);
     layout->addWidget(shelf_button_);
+    
     layout->addWidget(task_button_);
     layout->addStretch();
     layout->addWidget(execute_button_);
