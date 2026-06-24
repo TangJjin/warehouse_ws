@@ -273,27 +273,27 @@ void AirborneNode::handleStartOffboard(
 
     if (offboard_started_) {
         response->success = false;
-        response->message = "offboard 已经启动，拒绝重复启动";
+        //response->message = "offboard 已经启动，拒绝重复启动";
         return;
     }
 
     if (!mission_uploaded_) {
         response->success = false;
-        response->message = "mission YAML 尚未上传";
+        //response->message = "mission YAML 尚未上传";
         offboard_started_ = false;
         return;
     }
 
     if (current_mission_path_.empty()) {
         response->success = false;
-        response->message = "mission 路径为空";
+        //response->message = "mission 路径为空";
         offboard_started_ = false;
         return;
     }
 
     if (!std::filesystem::exists(current_mission_path_)) {
         response->success = false;
-        response->message = "mission 文件不存在";
+        //response->message = "mission 文件不存在";
         offboard_started_ = false;
         return;
     }
@@ -301,7 +301,7 @@ void AirborneNode::handleStartOffboard(
     const bool ok = startOffboardCommand();
     if (!ok) {
         response->success = false;
-        response->message = "offboard 启动失败";
+        //response->message = "offboard 启动失败";
         offboard_started_ = false;
         return;
     }
@@ -309,7 +309,8 @@ void AirborneNode::handleStartOffboard(
     current_task_name_ = request->request_source;
     offboard_started_ = true;
     response->success = true;
-    response->message = "offboard 启动成功，等待ready信号确认";
+    //response->message = "offboard 启动成功，等待ready信号确认";
+    response->message = "初始化成功，准备巡检";
 }
 
 void AirborneNode::handleStartTask(
@@ -321,14 +322,14 @@ void AirborneNode::handleStartTask(
 
     if (task_started_) {
         response->success = false;
-        response->message = "start 已经启动，拒绝重复启动";
+        //response->message = "start 已经启动，拒绝重复启动";
         return;
     }
 
     const bool ok = startTaskCommand();
     if (!ok) {
         response->success = false;
-        response->message = "task启动失败";
+        //response->message = "task启动失败";
         return;
     }
 
@@ -336,7 +337,7 @@ void AirborneNode::handleStartTask(
 
     task_started_ = true;
     response->success = true;
-    response->message = "成功起飞";
+    response->message = "开始巡检";
 }
 
 void AirborneNode::handleStopPush(
@@ -348,7 +349,7 @@ void AirborneNode::handleStopPush(
 
     if (task_stoped_) {
         response->success = false;
-        response->message = "当前没有启动offboard";
+        //response->message = "当前没有启动offboard";
         return;
     }
 
@@ -356,7 +357,7 @@ void AirborneNode::handleStopPush(
     const bool ok = stopTaskCommand(error_message);
     if (!ok) {
         response->success = false;
-        response->message = "offboard 停止失败";
+        //response->message = "offboard 停止失败";
         task_stoped_ = false;
         return;
     }
@@ -366,7 +367,7 @@ void AirborneNode::handleStopPush(
     task_stoped_ = true;
     offboard_started_ = false;
     response->success = true;
-    response->message = "停止offboard成功";
+    response->message = "巡检任务结束";
 }
 
 bool AirborneNode::saveMissionYamlToFile(
@@ -382,14 +383,14 @@ bool AirborneNode::saveMissionYamlToFile(
     try {
         std::filesystem::create_directories(dir_path);
     } catch (const std::exception &e) {
-        error_message = std::string("创建 mission 目录失败: ") + e.what();
+        //error_message = std::string("创建 mission 目录失败: ") + e.what();
         return false;
     }
 
     //使用std::ofstream打开文件进行写入，如果文件无法打开则返回错误信息
     std::ofstream out(file_path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) {
-        error_message = "无法打开 mission 文件进行写入";
+        error_message = "路线无法打开";
         return false;
     }
 
@@ -398,7 +399,7 @@ bool AirborneNode::saveMissionYamlToFile(
     out.close();
 
     if (!out) {
-        error_message = "写入 mission 文件失败";
+        error_message = "路线解析错误";
         return false;
     }
 
@@ -457,7 +458,8 @@ void AirborneNode::handleUploadMissionSummary(
     current_mission_path_ = saved_path;
 
     response->success = true;
-    response->message = "mission 摘要上传成功，机载端已生成 YAML";
+    //response->message = "mission 摘要上传成功，机载端已生成 YAML";
+    response->message = "正在初始化";
     response->saved_path = saved_path;
     response->action_count = action_count;
 }
@@ -503,13 +505,15 @@ bool AirborneNode::startOffboardCommand()
             });
     }
 
+    const std::string file_path_warehouse = "/home/sunrise/drone_ws/src/drone_mission/warehouse/mission.yaml";
+
     const QString command = QString(
         "source /opt/ros/humble/setup.bash && "
         "source ~/drone_ws/install/setup.bash && "
         "exec ros2 launch drone_bringup run_offboard.launch.py "
         "mission_config_path:=%1 "
         "enable_offboard_control:=true ")
-        .arg(QString::fromStdString(current_mission_path_));
+        .arg(QString::fromStdString(file_path_warehouse));
 
     RCLCPP_INFO(this->get_logger(), "starting offboard process with command: %s", command.toStdString().c_str());
     offboard_process_->start("bash", QStringList() << "-lc" << command);
