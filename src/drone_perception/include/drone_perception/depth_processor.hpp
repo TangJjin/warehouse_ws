@@ -19,7 +19,7 @@ public:
       const cv::Mat &depth_image,
       int u,
       int v,
-      int sample_radius_px = 3) const;
+      int sample_radius_px = 10) const;
 
   cv::Point3d projectTo3D(
       int u,

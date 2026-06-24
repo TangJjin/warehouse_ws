@@ -15,6 +15,7 @@ find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_geometry REQUIRED)
 find_package(message_filters REQUIRED)
+find_package(realsense2_camera_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 # ── k230_tcp_bridge ──────────────────────────────────────
@@ -96,6 +97,7 @@ ament_target_dependencies(qr_vision_node
   image_geometry
   message_filters
   rclcpp
+  realsense2_camera_msgs
   sensor_msgs
 )
 
