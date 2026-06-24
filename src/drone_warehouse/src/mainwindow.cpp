@@ -116,8 +116,8 @@ void MainWindow::setupFloatingWidgets()
     altitude_value_label_ = new QLabel("0.0 m", attitude_panel_);
     attitude_layout->addWidget(altitude_value_label_, 0, 1);
 
-    attitude_layout->addWidget(new QLabel("速度", attitude_panel_), 1, 0);
-    speed_value_label_ = new QLabel("0.0 m/s", attitude_panel_);
+    attitude_layout->addWidget(new QLabel("模式", attitude_panel_), 1, 0);
+    speed_value_label_ = new QLabel("MODE_UNKNOWN", attitude_panel_);
     attitude_layout->addWidget(speed_value_label_, 1, 1);
 
     attitude_layout->addWidget(new QLabel("航向", attitude_panel_), 2, 0);
@@ -388,12 +388,19 @@ void MainWindow::setupConnections()
         //连接rosmanager发出的无人机位置信号
         connect(ros_manager_, &RosManager::positionUpdated,
             this,
-            [this](double x, double y, double z)
+            [this](double x, double y, double z, double qx, double qy, double qz, double qw)
             {
                 // 当前仓储项目没有移植 position_view_，所以这里改成直接更新当前场景里的无人机位置。
                 scene_data_.drone_state.pose.x = -1 * (y * 100 -150);
                 scene_data_.drone_state.pose.y = -1 * (x * 100 -100);
                 scene_data_.drone_state.pose.z = z;
+
+                const double siny_cosp = 2.0 * (qw * qz + qx * qy);
+                const double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+                const double yaw = std::atan2(siny_cosp, cosy_cosp);          // 弧度
+                const double yaw_deg = yaw * 180.0 / M_PI;                    // 角度
+
+                scene_data_.drone_state.pose.yaw = yaw_deg;
 
                 altitude_value_label_->setText(QString::number(z, 'f', 1) + " m");
                 scene_view_->setSceneData(scene_data_);
@@ -896,12 +903,9 @@ void MainWindow::setupDemoData()
 
     WarehouseSceneData data;
 
-    data.drone_state.connected = true;
     data.drone_state.flight_mode = "OFFBOARD";
-    data.drone_state.pose.x = 150.0;
-    data.drone_state.pose.y = 100.0;
+
     data.drone_state.pose.z = 0.0;
-    data.drone_state.pose.yaw = 35.0;
     // ===== 临时测试坐标，联调完成后删掉 =====
     // data.drone_state.pose.x = 0.0;
     // data.drone_state.pose.y = -80.0;
@@ -955,7 +959,7 @@ void MainWindow::setupDemoData()
     speed_value_label_->setText(QString::number(data.drone_state.speed, 'f', 1) + " m/s");
     yaw_value_label_->setText(QString::number(data.drone_state.pose.yaw, 'f', 1) + "°");
 
-    top_status_bar_->setConnected(false);
+    top_status_bar_->setConnected(data.drone_state.connected);
     top_status_bar_->setTaskText("任务待命");
 
 

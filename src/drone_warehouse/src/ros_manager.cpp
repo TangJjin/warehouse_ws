@@ -185,11 +185,16 @@ void RosManager::setupRosInterfaces()
             const double y = msg->pose.position.y;
             const double z = msg->pose.position.z;
 
+            const double qx = msg->pose.orientation.x;
+            const double qy = msg->pose.orientation.y;
+            const double qz = msg->pose.orientation.z;
+            const double qw = msg->pose.orientation.w;
+
             //使用Qt的信号槽机制在线程安全的方式下发位置更新信号，包含无人机的二维位置坐标和高度等信息
             QMetaObject::invokeMethod(
                 this,
-                [this, x, y, z]() {
-                    emit positionUpdated(x, y, z);
+                [this, x, y, z, yawx, yawy, yawz, yaww]() {
+                    emit positionUpdated(x, y, z, qx, qy, qz, qw);
                 },
                 Qt::QueuedConnection);
         });
