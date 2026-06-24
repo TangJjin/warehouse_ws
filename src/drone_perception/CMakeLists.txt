@@ -6,6 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -17,6 +18,8 @@ find_package(image_geometry REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(realsense2_camera_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+
+pkg_check_modules(ZBAR REQUIRED zbar)
 
 # ── k230_tcp_bridge ──────────────────────────────────────
 add_executable(k230_tcp_bridge
@@ -86,10 +89,22 @@ target_include_directories(qr_vision_node
   PRIVATE
   include
   ${OpenCV_INCLUDE_DIRS}
+  ${ZBAR_INCLUDE_DIRS}
 )
 
 target_link_libraries(qr_vision_node
   ${OpenCV_LIBS}
+  ${ZBAR_LIBRARIES}
+)
+
+target_link_directories(qr_vision_node
+  PRIVATE
+  ${ZBAR_LIBRARY_DIRS}
+)
+
+target_compile_options(qr_vision_node
+  PRIVATE
+  ${ZBAR_CFLAGS_OTHER}
 )
 
 ament_target_dependencies(qr_vision_node
