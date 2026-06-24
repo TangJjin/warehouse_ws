@@ -1,0 +1,69 @@
+#pragma once
+
+#include "drone_warehouse/models.hpp"
+
+#include <QDialog>
+#include <QIcon>
+#include <QVector>
+
+class QColor;
+class QEvent;
+class QGridLayout;
+class QLabel;
+class QObject;
+class QPushButton;
+
+class ShelfInfoDialog : public QDialog
+{
+    Q_OBJECT
+
+public:
+    explicit ShelfInfoDialog(QWidget *parent = nullptr);//货架信息弹窗模板，后续可在这里继续扩展真实内容
+
+    // 主窗口会把“所有货架的完整弹窗数据”一次性传进来。
+    // 这里不再像之前那样分散传很多 QStringList，而是直接传结构化后的 QVector<ShelfPanelData>。
+    void setShelfPanelData(const QVector<ShelfPanelData> &shelf_panel_data);//将外部数据一次性传入
+
+signals:
+    void slotDoubleClicked(int shelf_index, const QString &side, int row, int col);//双击某个点位时通知主窗口弹图
+
+private:
+    bool eventFilter(QObject *watched, QEvent *event) override;//监听槽位按钮双击事件
+    void showShelf1Info();//切换并显示货架1的面板内容
+    void showShelf2Info();//切换并显示货架2的面板内容
+    void showShelfInfo(int index);//按索引切换当前货架，再刷新网格和详情
+
+    void switchToFront();//切换到前面网格
+    void switchToBack();//切换到后面网格
+    void buildSlotGrid();//创建4x4网格按钮
+    void updateSlotGrid();//按当前面刷新所有网格按钮显示
+    void handleSlotClicked(int row, int col);//点击某个点位后的处理
+    void updateSlotDetail(const QString &slot_name, const QString &category_id, const QString &package_id);//刷新下方详情区
+    int slotIndex(int row, int col) const;//把行列换算成一维下标
+
+private:
+    QLabel *title_label_ = nullptr;//弹窗标题
+
+    QPushButton *shelf1_button_ = nullptr;//顶部货架1切换按钮
+    QPushButton *shelf2_button_ = nullptr;//顶部货架2切换按钮
+    QPushButton *stock_in_button_ = nullptr;//入库按钮
+    QPushButton *outgoing_button_ = nullptr;//出库按钮
+    QPushButton *close_button_ = nullptr;//关闭弹窗按钮
+
+    QPushButton *front_button_ = nullptr;//切换到前面货位网格
+    QPushButton *back_button_ = nullptr;//切换到后面货位网格
+
+    QVector<QPushButton*> slot_buttons_;//保存4x4网格里的16个按钮
+    QGridLayout *slot_grid_layout_ = nullptr;//4x4货位网格布局
+
+    QLabel *slot_value_label_ = nullptr;//当前点击的点位，例如 前面 R1C1
+    QLabel *category_value_label_ = nullptr;//当前点位的类别编号
+    QLabel *package_value_label_ = nullptr;//当前点位的包裹编号
+
+    QVector<ShelfPanelData> shelf_panel_data_;//所有货架的弹窗展示数据
+
+    QString current_side_ = "front";//当前查看的是前面还是后面
+    int current_slot_row_ = 0;//当前选中的行
+    int current_slot_col_ = 0;//当前选中的列
+    int current_shelf_index_ = 0;//当前显示的是第几个货架
+};
