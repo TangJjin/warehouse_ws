@@ -26,7 +26,9 @@ static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr int kDefaultShelfCodeStableFrames = 3;
 static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
 #if DRONE_PERCEPTION_HAS_BPU
-static constexpr float kShelfCodeRoiPaddingRatio = 0.15F;
+static constexpr float kVisualCodeRoiPaddingXRatio = 0.45F;
+static constexpr float kVisualCodeRoiPaddingYRatio = 0.20F;
+static constexpr double kVisualCodeRetryScale = 2.0;
 #endif
 static constexpr std::size_t kBpuInputYSize =
     static_cast<std::size_t>(kBpuInputWidthPx) *
@@ -485,7 +487,7 @@ void QrVisionNode::updateVisualCodeCategoryStability(
 #if DRONE_PERCEPTION_HAS_BPU
 std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFromDetections(
     const cv::Mat &color_image,
-    const std::vector<BpuYoloDetection> &detections) const
+    const std::vector<BpuYoloDetection> &detections)
 {
   std::vector<DecodedVisualCode> decoded_codes;
 
@@ -516,8 +518,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       continue;
     }
 
-    const float pad_x = width * kShelfCodeRoiPaddingRatio;
-    const float pad_y = height * kShelfCodeRoiPaddingRatio;
+    const float pad_x = width * kVisualCodeRoiPaddingXRatio;
+    const float pad_y = height * kVisualCodeRoiPaddingYRatio;
     const int roi_x_min = std::max(0, static_cast<int>(x_min - pad_x));
     const int roi_y_min = std::max(0, static_cast<int>(y_min - pad_y));
     const int roi_x_max = std::min(color_image.cols, static_cast<int>(x_max + pad_x));
@@ -539,52 +541,116 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       gray_roi = gray_roi.clone();
     }
 
-    zbar::Image zbar_image(
-        static_cast<unsigned int>(gray_roi.cols),
-        static_cast<unsigned int>(gray_roi.rows),
-        "Y800",
-        gray_roi.data,
-        static_cast<unsigned long>(gray_roi.total()));
+    auto scan_gray_roi = [&](
+        const cv::Mat &scan_roi,
+        float coordinate_scale,
+        const char *scan_mode) {
+      cv::Mat continuous_roi = scan_roi;
 
-    scanner.scan(zbar_image);
-
-    for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
-      const std::string code = trimAndUppercase(symbol->get_data());
-      const std::string category = getVisualCodeCategory(code);
-
-      if (category.empty()) {
-        continue;
+      if (!continuous_roi.isContinuous()) {
+        continuous_roi = continuous_roi.clone();
       }
 
-      cv::Point2f code_center(
-          static_cast<float>(roi.x) + static_cast<float>(roi.width) * 0.5F,
-          static_cast<float>(roi.y) + static_cast<float>(roi.height) * 0.5F);
+      zbar::Image zbar_image(
+          static_cast<unsigned int>(continuous_roi.cols),
+          static_cast<unsigned int>(continuous_roi.rows),
+          "Y800",
+          continuous_roi.data,
+          static_cast<unsigned long>(continuous_roi.total()));
 
-      const int location_size = symbol->get_location_size();
+      const int raw_count = scanner.scan(zbar_image);
+      int accepted_count = 0;
 
-      if (location_size > 0) {
-        code_center = cv::Point2f(0.0F, 0.0F);
+      if (raw_count <= 0) {
+        RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "zbar no code scan=%s roi=%dx%d at=%d,%d detection_score=%.3f",
+            scan_mode,
+            continuous_roi.cols,
+            continuous_roi.rows,
+            roi.x,
+            roi.y,
+            detection.score);
+      }
 
-        for (int i = 0; i < location_size; ++i) {
-          code_center.x += static_cast<float>(roi.x + symbol->get_location_x(i));
-          code_center.y += static_cast<float>(roi.y + symbol->get_location_y(i));
+      for (auto symbol = zbar_image.symbol_begin(); symbol != zbar_image.symbol_end(); ++symbol) {
+        const std::string raw_code = symbol->get_data();
+        const std::string code = trimAndUppercase(raw_code);
+        const std::string category = getVisualCodeCategory(code);
+
+        RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "zbar raw code scan=%s symbol_type=%s raw=%s normalized=%s category=%s roi=%dx%d at=%d,%d",
+            scan_mode,
+            symbol->get_type_name().c_str(),
+            raw_code.c_str(),
+            code.c_str(),
+            category.empty() ? "ignored" : category.c_str(),
+            continuous_roi.cols,
+            continuous_roi.rows,
+            roi.x,
+            roi.y);
+
+        if (category.empty()) {
+          continue;
         }
 
-        code_center.x /= static_cast<float>(location_size);
-        code_center.y /= static_cast<float>(location_size);
+        cv::Point2f code_center(
+            static_cast<float>(roi.x) + static_cast<float>(roi.width) * 0.5F,
+            static_cast<float>(roi.y) + static_cast<float>(roi.height) * 0.5F);
+
+        const int location_size = symbol->get_location_size();
+
+        if (location_size > 0) {
+          code_center = cv::Point2f(0.0F, 0.0F);
+
+          for (int i = 0; i < location_size; ++i) {
+            code_center.x += static_cast<float>(roi.x) +
+                static_cast<float>(symbol->get_location_x(i)) / coordinate_scale;
+            code_center.y += static_cast<float>(roi.y) +
+                static_cast<float>(symbol->get_location_y(i)) / coordinate_scale;
+          }
+
+          code_center.x /= static_cast<float>(location_size);
+          code_center.y /= static_cast<float>(location_size);
+        }
+
+        const float dx = code_center.x - image_center.x;
+        const float dy = code_center.y - image_center.y;
+
+        decoded_codes.push_back({
+            code,
+            category,
+            symbol->get_type_name(),
+            static_cast<double>(dx * dx + dy * dy)});
+        ++accepted_count;
       }
 
-      const float dx = code_center.x - image_center.x;
-      const float dy = code_center.y - image_center.y;
+      zbar_image.set_data(nullptr, 0U);
 
-      decoded_codes.push_back({
-          code,
-          category,
-          symbol->get_type_name(),
-          static_cast<double>(dx * dx + dy * dy)});
+      return accepted_count;
+    };
+
+    const int accepted_count = scan_gray_roi(gray_roi, 1.0F, "original");
+
+    if (accepted_count <= 0) {
+      cv::Mat resized_gray_roi;
+      cv::resize(
+          gray_roi,
+          resized_gray_roi,
+          cv::Size(),
+          kVisualCodeRetryScale,
+          kVisualCodeRetryScale,
+          cv::INTER_LINEAR);
+      scan_gray_roi(
+          resized_gray_roi,
+          static_cast<float>(kVisualCodeRetryScale),
+          "scale2");
     }
-
-    zbar_image.set_data(nullptr, 0U);
   }
 
   std::sort(
