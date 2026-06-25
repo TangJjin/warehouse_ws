@@ -191,6 +191,8 @@ public:
 
         camera_aim_scan_point_timeout_s_ =
             node_->declare_parameter<double>("camera_aim_scan_point_timeout_s", 30.0);
+        land_setpoint_quiet_time_s_ =
+            node_->declare_parameter<double>("land_setpoint_quiet_time_s", 0.2);
 
         setpoint_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/mavros/setpoint_position/local", rclcpp::QoS(10).reliable());
@@ -411,7 +413,10 @@ private:
     {
         resetCameraAimTrackingState();
         land_mode_request_sent_ = false;
+        land_setpoint_quiet_started_ = false;
         land_low_altitude_count_ = 0;
+        land_setpoint_quiet_start_time_ =
+            rclcpp::Time(0, 0, node_->get_clock()->get_clock_type());
     }
 
     void resetCameraAimTrackingState()
@@ -881,14 +886,34 @@ private:
             force_status_publish_ = true;
         }
 
+        if (!land_setpoint_quiet_started_)
+        {
+            land_setpoint_quiet_started_ = true;
+            land_setpoint_quiet_start_time_ = node_->now();
+            force_status_publish_ = true;
+            broadcastStatus("降落接管开始：已停止发送位置 setpoint，准备切换 AUTO.LAND。");
+            return;
+        }
+
         if (!land_mode_request_sent_)
         {
+            const double quiet_elapsed =
+                (node_->now() - land_setpoint_quiet_start_time_).seconds();
+            if (quiet_elapsed < land_setpoint_quiet_time_s_)
+            {
+                broadcastStatusThrottled(
+                    "降落接管静默中：已停止位置 setpoint，等待 " +
+                    formatSeconds(land_setpoint_quiet_time_s_ - quiet_elapsed) +
+                    " s 后请求 AUTO.LAND。");
+                return;
+            }
+
             if (!callSetMode("AUTO.LAND"))
             {
                 broadcastStatusThrottled(
-                    "等待进入 AUTO.LAND：当前高度（ENU z）=" +
-                    formatMeters(current_pose_.pose.position.z) + " m。");
-                sendPositionSetpoint(current_pose_);
+                    "AUTO.LAND 切换失败，保持 setpoint 静默并重试：当前高度（ENU z）=" +
+                    formatMeters(current_pose_.pose.position.z) + " m，当前模式=" +
+                    current_state_.mode + "。");
                 return;
             }
             land_mode_request_sent_ = true;
@@ -1484,11 +1509,14 @@ private:
     double camera_aim_no_target_confirm_s_ = 2.0;
     double camera_aim_record_result_timeout_s_ = 5.0;
     double camera_aim_scan_point_timeout_s_ = 30.0;
+    double land_setpoint_quiet_time_s_ = 0.2;
     Vec3dPID pid_cam_aim_;
 
     int aim_close_count_ = 0;
     bool land_mode_request_sent_ = false;
+    bool land_setpoint_quiet_started_ = false;
     int land_low_altitude_count_ = 0;
+    rclcpp::Time land_setpoint_quiet_start_time_;
 
     std::queue<std::shared_ptr<DroneAction>> action_queue_;
     std::shared_ptr<DroneAction> current_action_;

@@ -1,0 +1,4 @@
+python3 /home/tang/warehouse_ws/test_barcode_image_pub.py \
+--image /home/tang/test.jpg \
+--barcode "SKU001|PKG001" \
+--format jpg
