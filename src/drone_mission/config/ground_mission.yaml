@@ -10,7 +10,7 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [1.40, 1.25, 1.20]
+      position: [140.00, 125.00, 1.20]
       yaw: 0.00
       tolerance: 0.12
 
@@ -19,7 +19,7 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [1.40, -1.25, 1.20]
+      position: [140.00, -125.00, 1.20]
       yaw: 0.00
       tolerance: 0.12
 
@@ -28,7 +28,7 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [0.00, -1.25, 1.20]
+      position: [0.00, -125.00, 1.20]
       yaw: 0.00
       tolerance: 0.12
 
