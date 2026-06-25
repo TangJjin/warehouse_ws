@@ -158,6 +158,9 @@ private:
 #if DRONE_PERCEPTION_HAS_BPU
   std::unique_ptr<BpuYoloDetector> bpu_detector_;
   std::vector<BpuYoloDetection> last_bpu_detections_;
+  cv::Mat debug_barcode_roi_;
+  std::string debug_raw_symbol_;
+  std::string debug_raw_symbol_type_;
 #endif
 
   bool has_camera_info_ = false;
