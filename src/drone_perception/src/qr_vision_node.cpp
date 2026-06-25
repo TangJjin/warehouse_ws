@@ -33,10 +33,9 @@ static constexpr double kVisualCodeRetryScale = 2.0;
 // Barcode preprocessing constants (Mou Jiacun pipeline)
 static constexpr int kBarcodeSobelKsize = -1;
 static constexpr int kBarcodeMeanBlurSize = 9;
-static constexpr int kBarcodeBinaryThreshold = 200;
 static constexpr int kBarcodeMorphWidth = 22;
 static constexpr int kBarcodeMorphHeight = 8;
-static constexpr int kBarcodeMorphIterations = 6;
+static constexpr int kBarcodeMorphIterations = 3;
 #endif
 static constexpr std::size_t kBpuInputYSize =
     static_cast<std::size_t>(kBpuInputWidthPx) *
@@ -232,6 +231,124 @@ std::string formatParsedVisualCodeCategories(
   return categories;
 }
 
+void hybridBinarization(const cv::Mat &src, cv::Mat &dst)
+{
+  static constexpr int kBlockSize = 8;
+  static constexpr int kBlockSizePower = 3;
+  static constexpr int kBlockSizeMask = kBlockSize - 1;
+  static constexpr int kMinDimension = kBlockSize * 5;
+  static constexpr int kMinDynamicRange = 24;
+
+  const int width = src.cols;
+  const int height = src.rows;
+
+  // Fallback to OTSU for images too small for block-based approach
+  if (width < kMinDimension || height < kMinDimension) {
+    cv::threshold(src, dst, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    return;
+  }
+
+  // Convert to 1D luminance array for fast access
+  const std::vector<uchar> luminances(src.begin<uchar>(), src.end<uchar>());
+
+  // Sub-image dimensions (number of 8x8 blocks)
+  int sub_width = width >> kBlockSizePower;
+
+  if ((width & kBlockSizeMask) != 0) { sub_width++; }
+
+  int sub_height = height >> kBlockSizePower;
+
+  if ((height & kBlockSizeMask) != 0) { sub_height++; }
+
+  // Step 1: calculate black point (local threshold) for each 8x8 block
+  cv::Mat black_points(sub_height, sub_width, CV_8UC1);
+  const int max_y_offset = height - kBlockSize;
+  const int max_x_offset = width - kBlockSize;
+
+  for (int y = 0; y < sub_height; y++) {
+    int y_offset = y << kBlockSizePower;
+    if (y_offset > max_y_offset) { y_offset = max_y_offset; }
+
+    for (int x = 0; x < sub_width; x++) {
+      int x_offset = x << kBlockSizePower;
+      if (x_offset > max_x_offset) { x_offset = max_x_offset; }
+
+      int sum = 0;
+      int min = 0xFF;
+      int max = 0;
+
+      for (int yy = 0, offset = y_offset * width + x_offset; yy < kBlockSize; yy++, offset += width) {
+        for (int xx = 0; xx < kBlockSize; xx++) {
+          const int pixel = luminances[offset + xx];
+          sum += pixel;
+          if (pixel < min) { min = pixel; }
+          if (pixel > max) { max = pixel; }
+        }
+
+        // Early exit once dynamic range is met
+        if (max - min > kMinDynamicRange) {
+          for (yy++, offset += width; yy < kBlockSize; yy++, offset += width) {
+            for (int xx = 0; xx < kBlockSize; xx++) {
+              sum += luminances[offset + xx];
+            }
+          }
+        }
+      }
+
+      int average = sum >> (kBlockSizePower * 2);
+
+      // Low-contrast block: assume background, use half-min or neighbor estimate
+      if (max - min <= kMinDynamicRange) {
+        average = min / 2;
+
+        if (y > 0 && x > 0) {
+          const int neighbor_avg =
+              (static_cast<int>(black_points.at<uchar>(y - 1, x)) +
+               2 * static_cast<int>(black_points.at<uchar>(y, x - 1)) +
+               static_cast<int>(black_points.at<uchar>(y - 1, x - 1))) / 4;
+
+          if (min < neighbor_avg) { average = neighbor_avg; }
+        }
+      }
+
+      black_points.at<uchar>(y, x) = static_cast<uchar>(average);
+    }
+  }
+
+  // Step 2: apply local thresholds to produce binary output
+  dst.create(src.size(), src.type());
+
+  for (int y = 0; y < sub_height; y++) {
+    const int y_offset = std::min(y << kBlockSizePower, max_y_offset);
+    const int top = std::max(2, std::min(y, sub_height - 3));
+
+    for (int x = 0; x < sub_width; x++) {
+      const int x_offset = std::min(x << kBlockSizePower, max_x_offset);
+      const int left = std::max(2, std::min(x, sub_width - 3));
+
+      // Average black point over 5x5 block neighborhood
+      int sum = 0;
+      const uchar *bp_row = black_points.ptr<uchar>(top - 2);
+
+      for (int z = 0; z <= 4; z++) {
+        sum += bp_row[left - 2] + bp_row[left - 1] + bp_row[left] + bp_row[left + 1] + bp_row[left + 2];
+        bp_row += black_points.cols;
+      }
+
+      const int average = sum / 25;
+
+      // Apply threshold to each pixel in this 8x8 block
+      for (int yy = 0, offset = y_offset * width + x_offset; yy < kBlockSize; yy++, offset += width) {
+        uchar *dst_row = dst.ptr<uchar>(y_offset + yy);
+
+        for (int xx = 0; xx < kBlockSize; xx++) {
+          dst_row[x_offset + xx] = (luminances[offset + xx] <= average) ? 0 : 255;
+        }
+      }
+    }
+  }
+}
+
 void preprocessBarcodeRoi(cv::Mat &gray_roi)
 {
   // Sobel X−Y gradient: enhance horizontal stripe edges, suppress non-barcode textures
@@ -244,8 +361,8 @@ void preprocessBarcodeRoi(cv::Mat &gray_roi)
   // Mean blur: suppress high-frequency noise from gradient operation
   cv::blur(gray_roi, gray_roi, cv::Size(kBarcodeMeanBlurSize, kBarcodeMeanBlurSize));
 
-  // Binary threshold: isolate barcode stripes into clean foreground / background
-  cv::threshold(gray_roi, gray_roi, kBarcodeBinaryThreshold, 255, cv::THRESH_BINARY);
+  // Hybrid binarization: local adaptive threshold (ZXing algorithm)
+  hybridBinarization(gray_roi, gray_roi);
 
   // Morphological close with horizontal kernel: fill gaps within barcode stripes
   const cv::Mat kernel = cv::getStructuringElement(
@@ -627,7 +744,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       gray_roi = gray_roi.clone();
     }
 
-    if (use_barcode_format_) {
+    // Apply barcode preprocessing only when in barcode mode and detection is barcode (class_0)
+    if (use_barcode_format_ && detection.class_id == 0) {
       preprocessBarcodeRoi(gray_roi);
     }
 
@@ -674,6 +792,10 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             use_barcode_format_ ? !is_qr_code : is_qr_code;
         const std::vector<ParsedVisualCode> parsed_codes = parseVisualCodes(code);
         const std::string categories = formatParsedVisualCodeCategories(parsed_codes);
+
+        // Capture raw zbar output for debug display (before mode/parse filter)
+        debug_raw_symbol_ = code;
+        debug_raw_symbol_type_ = symbol_type;
 
         RCLCPP_INFO_THROTTLE(
             get_logger(),
@@ -749,6 +871,11 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
           resized_gray_roi,
           static_cast<float>(kVisualCodeRetryScale),
           "scale2");
+    }
+
+    // Store preprocessed barcode ROI for debug display
+    if (use_barcode_format_ && detection.class_id == 0) {
+      debug_barcode_roi_ = gray_roi.clone();
     }
   }
 
@@ -1100,7 +1227,56 @@ void QrVisionNode::displayDebugFrame(
   (void)draw_visual_code_line(pkg_code_state_, "pkg", visual_code_y);
 
 #if DRONE_PERCEPTION_HAS_BPU
+  // Show raw zbar output before parsing filter
+  if (!debug_raw_symbol_.empty()) {
+    const std::string raw_line = cv::format("Raw zbar: %s %s",
+        debug_raw_symbol_type_.c_str(),
+        fit_status_text(debug_raw_symbol_).c_str());
+    cv::putText(
+        display,
+        raw_line,
+        cv::Point(24, visual_code_y + 24),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.5,
+        cv::Scalar(180, 180, 180),
+        1);
+  }
+
   drawBpuDetections(display);
+
+  // Show preprocessed barcode ROI as picture-in-picture in bottom-right corner
+  if (!debug_barcode_roi_.empty()) {
+    const double roi_scale = std::min(
+        200.0 / static_cast<double>(debug_barcode_roi_.cols),
+        120.0 / static_cast<double>(debug_barcode_roi_.rows));
+    const int thumb_w = std::max(1, static_cast<int>(debug_barcode_roi_.cols * roi_scale));
+    const int thumb_h = std::max(1, static_cast<int>(debug_barcode_roi_.rows * roi_scale));
+
+    cv::Mat thumb;
+    cv::resize(debug_barcode_roi_, thumb, cv::Size(thumb_w, thumb_h), 0.0, 0.0, cv::INTER_NEAREST);
+
+    cv::Mat thumb_bgr;
+    cv::cvtColor(thumb, thumb_bgr, cv::COLOR_GRAY2BGR);
+
+    const int ox = display.cols - thumb_w - 12;
+    const int oy = display.rows - thumb_h - 12;
+    thumb_bgr.copyTo(display(cv::Rect(ox, oy, thumb_w, thumb_h)));
+
+    cv::rectangle(
+        display,
+        cv::Point(ox - 1, oy - 1),
+        cv::Point(ox + thumb_w + 1, oy + thumb_h + 1),
+        cv::Scalar(0, 255, 0), 1);
+
+    cv::putText(
+        display,
+        "Barcode ROI",
+        cv::Point(ox, oy - 6),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.4,
+        cv::Scalar(0, 255, 0),
+        1);
+  }
 #endif
 
   cv::imshow(window_name_, display);
