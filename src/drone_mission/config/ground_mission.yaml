@@ -1,45 +1,70 @@
 # Mission configuration
-# Gazebo camera_aim test version:
-# takeoff -> hover -> move to test scan point -> camera_aim -> hover -> land
 mission:
   takeoff_altitude: 1.20
   actions:
     - type: "takeoff"
-      altitude: 1.20
+      altitude: 0.00
 
     - type: "hover"
-      duration: 3.00
+      duration: 0.00
 
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 1.20]
+      position: [140.00, 125.00, 1.20]
       yaw: 0.00
       tolerance: 0.12
 
     - type: "hover"
-      duration: 2.00
+      duration: 0.50
 
-    - type: "camera_aim"
+    - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 1.20]
-      axis: "z"
-      tolerance: 10.0
+      position: [140.00, -125.00, 1.20]
+      yaw: 0.00
+      tolerance: 0.12
 
     - type: "hover"
-      duration: 2.00
+      duration: 0.50
+
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, -125.00, 1.20]
+      yaw: 0.00
+      tolerance: 0.12
+
+    - type: "hover"
+      duration: 0.50
+
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.50, 0.50]
+      yaw: 0.00
+      tolerance: 0.12
+
+    - type: "hover"
+      duration: 0.50
+
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 0.00]
+      yaw: 0.00
+      tolerance: 0.12
+
+    - type: "hover"
+      duration: 3.00
 
     - type: "land"
 
 system:
-  use_camera_aim: true
-  camera_aim_pid_p: 0.001
-  camera_aim_pid_i: 0.0
-  camera_aim_pid_d: 0.001
-  camera_aim_target_timeout_s: 0.5
-  camera_aim_stable_cycles: 20
+  use_camera_aim: false
+  camera_aim_pid_p: 0.01
+  camera_aim_pid_i: 0.00
+  camera_aim_pid_d: 0.01
+  camera_aim_target_timeout_s: 1.00
+  camera_aim_stable_cycles: 15
   camera_aim_max_step: 0.05
-  camera_aim_wait_first_targets_timeout_s: 2.0
-  camera_aim_no_target_confirm_s: 2.0
-  camera_aim_record_result_timeout_s: 5.0
-  camera_aim_scan_point_timeout_s: 30.0
+  camera_aim_wait_first_targets_timeout_s: 8.00
+  camera_aim_no_target_confirm_s: 3.00
+  camera_aim_record_result_timeout_s: 10.00
+  camera_aim_scan_point_timeout_s: 30.00
   auto_start_mission: false
