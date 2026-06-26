@@ -547,7 +547,7 @@ void ShelfInfoDialog::setupSerial()
     serial_.setFlowControl(QSerialPort::NoFlowControl);
 
     if (!serial_.open(QIODevice::ReadWrite)) {
-        qWarning() << "failed to open serial port";
+        return;
     }
 
     connect(&serial_, &QSerialPort::readyRead, this, [this]() {
