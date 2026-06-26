@@ -25,13 +25,85 @@ mission:
     - type: "hover"
       duration: 2.00
       
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.15
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.30
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.45
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.70
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.85
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.00
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.10
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.25
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.35
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.40
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.58
+      tolerance: 0.12
+      
       ########################################
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 0.40]
       yaw: 1.57
       tolerance: 0.12
-
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.57
+      tolerance: 0.12
+      
     - type: "hover"
       duration: 2.00
       
@@ -138,9 +210,45 @@ mission:
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 1.60]
+      yaw: 1.57
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 1.40
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 1.10
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.70
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.30
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
       yaw: 0.00
       tolerance: 0.12
-
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.00
+      tolerance: 0.12
+      
     - type: "hover"
       duration: 2.00
       
