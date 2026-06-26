@@ -108,6 +108,8 @@ private:
     QLabel *altitude_value_label_ = nullptr;//高度数值
     QLabel *speed_value_label_ = nullptr;//速度数值
     QLabel *yaw_value_label_ = nullptr;//航向数值
+    QLabel *battery_value_label_ = nullptr;//电池电量数值
+    QLabel *mode_value_label_ = nullptr;//模式显示
 
     QWidget *view_mode_widget_ = nullptr;//视图模式控件
     QLabel *view_mode_left_label_ = nullptr;//2D标签

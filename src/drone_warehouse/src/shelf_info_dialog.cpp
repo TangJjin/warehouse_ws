@@ -95,6 +95,22 @@ namespace
 
         return QColor("#00d48a");//其余情况整架绿
     }
+
+    uint16_t crc16_ccitt(const uint8_t *data, int length)
+    {
+        uint16_t crc = 0xFFFF;
+        for (int i = 0; i < length; ++i) {
+            crc ^= static_cast<uint16_t>(data[i]) << 8;
+            for (int j = 0; j < 8; ++j) {
+                if (crc & 0x8000) {
+                    crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
+                } else {
+                    crc = static_cast<uint16_t>(crc << 1);
+                }
+            }
+        }
+        return crc;
+    }
 }
 
 ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
@@ -521,7 +537,7 @@ bool ShelfInfoDialog::eventFilter(QObject *watched, QEvent *event)
     return QDialog::eventFilter(watched, event);
 }
 
-void GroundLinkBridge::setupSerial()
+void ShelfInfoDialog::setupSerial()
 {
     serial_.setPortName("/dev/ttyS3");
     serial_.setBaudRate(QSerialPort::Baud9600);
@@ -531,8 +547,18 @@ void GroundLinkBridge::setupSerial()
     serial_.setFlowControl(QSerialPort::NoFlowControl);
 
     if (!serial_.open(QIODevice::ReadWrite)) {
-        RCLCPP_ERROR(this->get_logger(), "failed to open serial port");
+        qWarning() << "failed to open serial port";
     }
+
+    connect(&serial_, &QSerialPort::readyRead, this, [this]() {
+        uint8_t deviceId = 0;
+        uint8_t status = 0;
+        QByteArray payload;
+
+        while (uart_read(deviceId, status, payload)) {
+            // 这里处理一帧完整数据
+        }
+    });
 }
 
 int ShelfInfoDialog::slotIndex(int row, int col) const
@@ -549,16 +575,6 @@ void ShelfInfoDialog::uart_write(uint8_t deviceId, uint8_t status, const QByteAr
     // uint8_t status = (0x1 << 4) | 0x0;
     // uart_write(0x00, status, payload);
 }
-
-connect(&serial_, &QSerialPort::readyRead, this, [this]() {
-    uint8_t deviceId = 0;
-    uint8_t status = 0;
-    QByteArray payload;
-
-    while (uart_read(deviceId, status, payload)) {
-        // 这里处理一帧完整数据
-    }
-});
 
 bool ShelfInfoDialog::uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload)
 {
@@ -654,7 +670,7 @@ bool ShelfInfoDialog::uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &
     }
 }
 
-QByteArray GroundLinkBridge::encodeFrame(uint8_t sof1, uint8_t sof2,
+QByteArray ShelfInfoDialog::encodeFrame(uint8_t sof1, uint8_t sof2,
                                         uint8_t deviceId, uint8_t status,
                                         const QByteArray &payload) const
 {
@@ -692,7 +708,7 @@ QByteArray GroundLinkBridge::encodeFrame(uint8_t sof1, uint8_t sof2,
     return frame;
 }
 
-bool GroundLinkBridge::validateFrame(const QByteArray &frame,
+bool ShelfInfoDialog::validateFrame(const QByteArray &frame,
                                     uint8_t expectedSof1, uint8_t expectedSof2,
                                     uint8_t &deviceId, uint8_t &status,
                                     QByteArray &payload) const
