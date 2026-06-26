@@ -95,6 +95,7 @@ struct ShelfSlotItem
 
     QString observed_category_id;//无人机巡检实际识别到的类别编号
     QString observed_package_id;//无人机巡检实际识别到的包裹编号
+    QString position_package_id;//无人机巡检实际识别到仓库位置
     QString observed_time_text;//无人机巡检结果时间
 
     bool has_image = false;//当前点位是否已经绑定图片

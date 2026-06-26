@@ -84,12 +84,22 @@ namespace offboard_run {
         // 工厂方法，创建 "移动到目标位置" 的动作
         static std::shared_ptr<DroneAction> createMoveToAction(
             const geometry_msgs::msg::PoseStamped &target_pose,
-            Frame frame = Frame::WORLD_BODY, double position_tolerance = 0.1) {
+            Frame frame = Frame::WORLD_BODY,
+            double position_tolerance = 0.1,
+            double yaw_tolerance_rad = 5.0 * M_PI / 180.0,
+            double move_max_xy_speed_mps = 0.35,
+            double move_max_z_speed_mps = 0.20,
+            double move_max_yaw_rate_radps = 30.0 * M_PI / 180.0)
+        {
             auto action = std::make_shared<DroneAction>(PrivateTag{});
-            action->type_ = ActionType::MOVE_TO_POSITION; // 设置动作类型
-            action->target_pose_ = target_pose;  // 设置目标位置
-            action->frame_ = frame;  // 设置参考坐标系
-            action->position_tolerance_ = position_tolerance;  // 设置位置公差
+            action->type_ = ActionType::MOVE_TO_POSITION;     // 设置动作类型
+            action->target_pose_ = target_pose;               // 设置目标位置
+            action->frame_ = frame;                           // 设置参考坐标系
+            action->position_tolerance_ = position_tolerance; // 设置位置公差
+            action->yaw_tolerance_rad_ = yaw_tolerance_rad;   // 设置 yaw 到达容差
+            action->move_max_xy_speed_mps_ = move_max_xy_speed_mps;
+            action->move_max_z_speed_mps_ = move_max_z_speed_mps;
+            action->move_max_yaw_rate_radps_ = move_max_yaw_rate_radps;
             return action;
         }
 
@@ -196,6 +206,11 @@ namespace offboard_run {
         // 判断动作是否已中止
         bool isAborted() const { return status_ == ActionStatus::ABORTED; }
 
+        double getMoveMaxXYSpeed() const { return move_max_xy_speed_mps_; }
+        double getMoveMaxZSpeed() const { return move_max_z_speed_mps_; }
+        double getMoveMaxYawRateRadps() const { return move_max_yaw_rate_radps_; }
+        double getYawToleranceRad() const { return yaw_tolerance_rad_; }
+
     private:
         // 动作类型（如悬停、移动等）
         ActionType type_ = ActionType::HOVER;
@@ -228,5 +243,21 @@ namespace offboard_run {
 
         // 动作开始时间
         rclcpp::Time start_time_;
+
+        // move 动作在水平面 (x/y) 上的最大平滑推进速度，单位 m/s
+        double move_max_xy_speed_mps_ = 0.35;
+
+        // move 动作在竖直方向 (z) 上的最大平滑推进速度，单位 m/s
+        double move_max_z_speed_mps_ = 0.20;
+
+        // move 动作的最大偏航角速度，单位 rad/s。
+        // 这里用 30.0 * M_PI / 180.0 是把更直观的 30 deg/s 转成弧度制，
+        // 因为 C++/ROS/tf2 里的 yaw、三角函数和角度差计算通常都统一使用弧度。
+        double move_max_yaw_rate_radps_ = 30.0 * M_PI / 180.0;
+
+        // move 动作的偏航到达容差，单位 rad。
+        // 这里用 5.0 * M_PI / 180.0 是把 5 deg 转成弧度制，
+        // 表示当前 yaw 与目标 yaw 的误差小于约 5 度时，可认为朝向已经到位。
+        double yaw_tolerance_rad_ = 5.0 * M_PI / 180.0;
     };
 }

@@ -161,6 +161,27 @@ struct ActiveScanPointContext
     bool has_received_targets_frame = false; // 区分“空网格”与“根本没收到数据”
 };
 
+struct MoveRuntimeState
+{
+    bool initialized = false;
+
+    geometry_msgs::msg::PoseStamped start_pose;
+    // 进入动作时一次性冻结后的world_enu终点
+    geometry_msgs::msg::PoseStamped resolved_target_pose;
+    // 上一次真正发出去的平滑 setpoint
+    geometry_msgs::msg::PoseStamped last_command_pose;
+
+    rclcpp::Time last_update_time;
+
+    double start_yaw_rad = 0.0;
+    // 用于 yaw 平滑推进
+    double target_yaw_rad = 0.0;
+    double last_command_yaw_rad = 0.0;
+
+    double total_distance_m = 0.0;
+    int stable_count = 0;
+};
+
 class ActionExecutor
 {
 public:
@@ -412,6 +433,7 @@ private:
     void resetActionRuntimeState()
     {
         resetCameraAimTrackingState();
+        resetMoveRuntimeState();
         land_mode_request_sent_ = false;
         land_setpoint_quiet_started_ = false;
         land_low_altitude_count_ = 0;
@@ -451,13 +473,226 @@ private:
 
     double getYawDeg(const geometry_msgs::msg::PoseStamped &pose) const
     {
+        return getPoseYawRad(pose) * 57.29577951308232;
+    }
+
+    double getPoseYawRad(const geometry_msgs::msg::PoseStamped &pose) const
+    {
+        // move 平滑控制内部统一使用弧度制 yaw，避免角度/弧度混用。
         tf2::Quaternion q;
         tf2::fromMsg(pose.pose.orientation, q);
         double roll = 0.0;
         double pitch = 0.0;
         double yaw = 0.0;
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-        return yaw * 57.29577951308232;
+        return yaw;
+    }
+
+    geometry_msgs::msg::Quaternion makeQuaternionFromYaw(double yaw_rad) const
+    {
+        // /mavros/setpoint_position/local 仍然发 PoseStamped，因此需要把目标 yaw 重新封装成四元数。
+        tf2::Quaternion q;
+        q.setRPY(0.0, 0.0, yaw_rad);
+        q.normalize();
+        return tf2::toMsg(q);
+    }
+
+    double normalizeAngleRad(double angle_rad) const
+    {
+        // 把任意角度误差折叠回 [-pi, pi]，保证 yaw 总是走最短角路径。
+        return std::atan2(std::sin(angle_rad), std::cos(angle_rad));
+    }
+
+    double stepTowardYawRad(
+        double current_yaw_rad,
+        double target_yaw_rad,
+        double max_step_rad) const
+    {
+        // yaw 不直接跳到终点，而是按本周期允许的最大角步长逼近目标。
+        const double yaw_error = normalizeAngleRad(target_yaw_rad - current_yaw_rad);
+        if (std::abs(yaw_error) <= max_step_rad)
+        {
+            return target_yaw_rad;
+        }
+
+        return normalizeAngleRad(
+            current_yaw_rad + std::copysign(max_step_rad, yaw_error));
+    }
+
+    Eigen::Vector3d stepTowardPosition(
+        const Eigen::Vector3d &from,
+        const Eigen::Vector3d &to,
+        double max_xy_step,
+        double max_z_step) const
+    {
+        // 位置平滑推进分成水平和竖直两部分限速：
+        // xy 用平面距离限速，z 单独限速，便于室内把升降速度设得更保守。
+        Eigen::Vector3d result = from;
+
+        const Eigen::Vector2d xy_delta = to.head<2>() - from.head<2>();
+        const double xy_distance = xy_delta.norm();
+        if (xy_distance <= max_xy_step || max_xy_step <= 0.0)
+        {
+            result.x() = to.x();
+            result.y() = to.y();
+        }
+        else
+        {
+            const Eigen::Vector2d xy_step = xy_delta.normalized() * max_xy_step;
+            result.x() += xy_step.x();
+            result.y() += xy_step.y();
+        }
+
+        const double z_delta = to.z() - from.z();
+        if (std::abs(z_delta) <= max_z_step || max_z_step <= 0.0)
+        {
+            result.z() = to.z();
+        }
+        else
+        {
+            result.z() += std::copysign(max_z_step, z_delta);
+        }
+
+        return result;
+    }
+
+    void resetMoveRuntimeState()
+    {
+        move_runtime_.initialized = false;
+        move_runtime_.start_pose = geometry_msgs::msg::PoseStamped{};
+        move_runtime_.resolved_target_pose = geometry_msgs::msg::PoseStamped{};
+        move_runtime_.last_command_pose = geometry_msgs::msg::PoseStamped{};
+        move_runtime_.last_update_time =
+            rclcpp::Time(0, 0, node_->get_clock()->get_clock_type());
+        move_runtime_.start_yaw_rad = 0.0;
+        move_runtime_.target_yaw_rad = 0.0;
+        move_runtime_.last_command_yaw_rad = 0.0;
+        move_runtime_.total_distance_m = 0.0;
+        move_runtime_.stable_count = 0;
+    }
+
+    bool resolveMoveTargetPoseOnce(
+        const std::shared_ptr<DroneAction> &action,
+        geometry_msgs::msg::PoseStamped &resolved_target_pose)
+    {
+        // move 动作一开始就把目标冻结成固定 world_enu 终点。
+        // 这样后续即使机体继续转向，BODY / WORLD_BODY 目标也不会在执行过程中漂移。
+        resolved_target_pose = action->getTargetPose();
+
+        if (action->getFrame() == DroneAction::Frame::WORLD_BODY)
+        {
+            try
+            {
+                resolved_target_pose = tf_buffer_.transform(resolved_target_pose, "world_enu");
+            }
+            catch (const tf2::TransformException &ex)
+            {
+                RCLCPP_WARN(node_->get_logger(), "坐标变换失败：%s，已保持当前位置。", ex.what());
+                return false;
+            }
+        }
+        else if (action->getFrame() == DroneAction::Frame::BODY)
+        {
+            // BODY 模式下，位置和 yaw 都解释为“相对上一动作结束姿态”的增量。
+            const Eigen::Vector3d delta = bodyVectorToEnu(
+                Eigen::Vector3d(
+                    resolved_target_pose.pose.position.x,
+                    resolved_target_pose.pose.position.y,
+                    resolved_target_pose.pose.position.z));
+            const double target_yaw_delta = getPoseYawRad(resolved_target_pose);
+
+            resolved_target_pose = last_finish_pose_;
+            resolved_target_pose.pose.position.x += delta.x();
+            resolved_target_pose.pose.position.y += delta.y();
+            resolved_target_pose.pose.position.z += delta.z();
+            resolved_target_pose.pose.orientation =
+                makeQuaternionFromYaw(normalizeAngleRad(getPoseYawRad(last_finish_pose_) + target_yaw_delta));
+        }
+
+        if (resolved_target_pose.header.frame_id.empty())
+        {
+            resolved_target_pose.header.frame_id = "world_enu";
+        }
+
+        return true;
+    }
+
+    bool initializeMoveRuntime(const std::shared_ptr<DroneAction> &action)
+    {
+        // 首次进入 move 时初始化运行时状态。
+        // 这里缓存的是“平滑轨迹状态”，而不是仅缓存最终目标点。
+        geometry_msgs::msg::PoseStamped resolved_target_pose;
+        if (!resolveMoveTargetPoseOnce(action, resolved_target_pose))
+        {
+            return false;
+        }
+
+        move_runtime_.initialized = true;
+        move_runtime_.start_pose = current_pose_;
+        move_runtime_.resolved_target_pose = resolved_target_pose;
+        move_runtime_.last_command_pose = current_pose_;
+        move_runtime_.last_command_pose.header.frame_id = "world_enu";
+        move_runtime_.last_update_time = node_->now();
+        move_runtime_.start_yaw_rad = getPoseYawRad(current_pose_);
+        move_runtime_.target_yaw_rad = getPoseYawRad(resolved_target_pose);
+        move_runtime_.last_command_yaw_rad = move_runtime_.start_yaw_rad;
+        move_runtime_.total_distance_m =
+            SpatialPoint(current_pose_).distance(SpatialPoint(resolved_target_pose));
+        move_runtime_.stable_count = 0;
+        return true;
+    }
+
+    geometry_msgs::msg::PoseStamped buildNextMoveSetpoint(
+        const std::shared_ptr<DroneAction> &action,
+        double dt)
+    {
+        // 参考轨迹生成策略：
+        // 从“上一次发出的命令位姿”出发，朝最终目标推进一个受限步长。
+        // 这样 setpoint 本身是连续变化的，而不是每周期都跳到最终终点。
+        geometry_msgs::msg::PoseStamped next_setpoint = move_runtime_.last_command_pose;
+
+        const Eigen::Vector3d from(
+            move_runtime_.last_command_pose.pose.position.x,
+            move_runtime_.last_command_pose.pose.position.y,
+            move_runtime_.last_command_pose.pose.position.z);
+        const Eigen::Vector3d to(
+            move_runtime_.resolved_target_pose.pose.position.x,
+            move_runtime_.resolved_target_pose.pose.position.y,
+            move_runtime_.resolved_target_pose.pose.position.z);
+
+        const Eigen::Vector3d next_position = stepTowardPosition(
+            from,
+            to,
+            action->getMoveMaxXYSpeed() * dt,
+            action->getMoveMaxZSpeed() * dt);
+
+        next_setpoint.header.frame_id = "world_enu";
+        next_setpoint.pose.position.x = next_position.x();
+        next_setpoint.pose.position.y = next_position.y();
+        next_setpoint.pose.position.z = next_position.z();
+
+        move_runtime_.last_command_yaw_rad = stepTowardYawRad(
+            move_runtime_.last_command_yaw_rad,
+            move_runtime_.target_yaw_rad,
+            action->getMoveMaxYawRateRadps() * dt);
+        next_setpoint.pose.orientation =
+            makeQuaternionFromYaw(move_runtime_.last_command_yaw_rad);
+
+        return next_setpoint;
+    }
+
+    bool isMoveGoalReached(
+        const std::shared_ptr<DroneAction> &action) const
+    {
+        // move 完成条件同时看位置和 yaw，避免“人到位了但机头还在转”。
+        const SpatialPoint current(current_pose_);
+        const SpatialPoint target(move_runtime_.resolved_target_pose);
+        const double position_error = current.distance(target);
+        const double yaw_error = std::abs(normalizeAngleRad(
+            move_runtime_.target_yaw_rad - getPoseYawRad(current_pose_)));
+
+        return position_error < action->getPositionTolerance() &&
+               yaw_error < action->getYawToleranceRad();
     }
 
     std::string formatPose(const geometry_msgs::msg::PoseStamped &pose) const
@@ -578,54 +813,56 @@ private:
 
     void executeMoveToPosition(const std::shared_ptr<DroneAction> &action)
     {
-        geometry_msgs::msg::PoseStamped target = action->getTargetPose();
-
-        if (action->getFrame() == DroneAction::Frame::WORLD_BODY)
+        if (!move_runtime_.initialized)
         {
-            try
+            if (!initializeMoveRuntime(action))
             {
-                target = tf_buffer_.transform(target, "world_enu");
-            }
-            catch (const tf2::TransformException &ex)
-            {
-                RCLCPP_WARN(node_->get_logger(), "坐标变换失败：%s，已保持当前位置。", ex.what());
                 sendPositionSetpoint(current_pose_);
                 return;
             }
         }
-        else if (action->getFrame() == DroneAction::Frame::BODY)
+
+        const rclcpp::Time now = node_->now();
+        double dt = (now - move_runtime_.last_update_time).seconds();
+        move_runtime_.last_update_time = now;
+        if (dt <= 0.0)
         {
-            const Eigen::Vector3d delta = bodyVectorToEnu(Eigen::Vector3d(target.pose.position.x,
-                                                                          target.pose.position.y, target.pose.position.z));
-            target = last_finish_pose_;
-            target.pose.position.x += delta.x();
-            target.pose.position.y += delta.y();
-            target.pose.position.z += delta.z();
+            // 首帧或时钟异常时给一个保底周期，避免本周期步长为 0。
+            dt = 0.02;
         }
 
-        const SpatialPoint current(current_pose_);
-        const SpatialPoint target_point(target);
-        const double distance_to_target = current.distance(target_point);
-        if (distance_to_target < action->getPositionTolerance())
+        // 根据当前平滑轨迹状态生成下一帧 setpoint。
+        const geometry_msgs::msg::PoseStamped next_setpoint =
+            buildNextMoveSetpoint(action, dt);
+        move_runtime_.last_command_pose = next_setpoint;
+        sendPositionSetpoint(next_setpoint);
+
+        if (isMoveGoalReached(action))
         {
-            aim_close_count_++;
-            if (aim_close_count_ > 20)
+            // 连续满足阈值才完成，降低位置估计轻微抖动带来的误判。
+            move_runtime_.stable_count++;
+            if (move_runtime_.stable_count > 20)
             {
-                completeCurrentAction("已到达目标位置。");
+                completeCurrentAction("已平滑到达目标位置与目标朝向。");
                 return;
             }
         }
         else
         {
-            aim_close_count_ = 0;
+            move_runtime_.stable_count = 0;
         }
 
+        const SpatialPoint current(current_pose_);
+        const SpatialPoint target_point(move_runtime_.resolved_target_pose);
+        const double distance_to_target = current.distance(target_point);
+        const double yaw_error_deg = std::abs(normalizeAngleRad(
+            move_runtime_.target_yaw_rad - getPoseYawRad(current_pose_))) * 57.29577951308232;
         bool current_uses_world_body = false;
         bool target_uses_world_body = false;
         const std::string current_text =
             formatStatusPose(current_pose_, "ENU", current_uses_world_body);
         const std::string target_text =
-            formatStatusPose(target, "ENU", target_uses_world_body);
+            formatStatusPose(move_runtime_.resolved_target_pose, "ENU", target_uses_world_body);
         const std::string frame_text =
             current_uses_world_body && target_uses_world_body
                 ? "初始点坐标系 world_body"
@@ -634,8 +871,8 @@ private:
         broadcastStatusThrottled(
             "航点飞行中（" + frame_text + "）：当前 " + current_text +
             "，目标 " + target_text +
-            "，剩余距离=" + formatSeconds(distance_to_target) + " m。");
-        sendPositionSetpoint(target);
+            "，剩余距离=" + formatMeters(distance_to_target) +
+            " m，剩余偏航=" + formatSeconds(yaw_error_deg) + " deg。");
     }
 
     void executeHover(const std::shared_ptr<DroneAction> &action)
@@ -1474,6 +1711,8 @@ private:
         return nullptr;
     }
 
+    //- 进入 `move` 第一帧时初始化
+    //- 记录起点、解析终点、提取起始 yaw 和目标 yaw
     rclcpp::Node::SharedPtr node_;
     tf2_ros::Buffer &tf_buffer_;
 
@@ -1526,4 +1765,5 @@ private:
 
     int action_id_ = 0;
     ActiveScanPointContext active_scan_point_;
+    MoveRuntimeState move_runtime_;
 };

@@ -216,6 +216,8 @@ class MissionController {
   std::shared_ptr<DroneAction> parseMoveAction(const YAML::Node &item,
                                                std::size_t index) {
     geometry_msgs::msg::PoseStamped target;
+    constexpr double kDegToRad = M_PI / 180.0;
+    constexpr double kRadToDeg = 57.29577951308232;
     const std::string frame =
         item["frame"] ? item["frame"].as<std::string>() : "world_body";
     const YAML::Node pos = item["position"];
@@ -237,13 +239,32 @@ class MissionController {
 
     const double tolerance =
         item["tolerance"] ? item["tolerance"].as<double>() : 0.1;
+    const double yaw_tolerance_deg =
+        item["yaw_tolerance_deg"] ? item["yaw_tolerance_deg"].as<double>() : 5.0;
+    const double max_xy_speed_mps =
+        item["max_xy_speed_mps"] ? item["max_xy_speed_mps"].as<double>() : 0.35;
+    const double max_z_speed_mps =
+        item["max_z_speed_mps"] ? item["max_z_speed_mps"].as<double>() : 0.20;
+    const double max_yaw_rate_deg_s =
+        item["max_yaw_rate_deg_s"] ? item["max_yaw_rate_deg_s"].as<double>() : 30.0;
+
     auto use_frame = parseFrame(frame);
-    constexpr double kRadToDeg = 57.29577951308232;
     RCLCPP_INFO(node_->get_logger(),
-                "  %zu：移动到 [%.2f, %.2f, %.2f]，坐标系=%s，偏航=%.2f 度",
+                "  %zu：移动到 [%.2f, %.2f, %.2f]，坐标系=%s，偏航=%.2f 度，"
+                "位置容差=%.2f m，偏航容差=%.2f 度，xy速度=%.2f m/s，z速度=%.2f m/s，"
+                "yaw角速度=%.2f 度/s",
                 index, target.pose.position.x, target.pose.position.y,
-                target.pose.position.z, frame.c_str(), yaw * kRadToDeg);
-    return DroneAction::createMoveToAction(target, use_frame, tolerance);
+                target.pose.position.z, frame.c_str(), yaw * kRadToDeg,
+                tolerance, yaw_tolerance_deg, max_xy_speed_mps,
+                max_z_speed_mps, max_yaw_rate_deg_s);
+    return DroneAction::createMoveToAction(
+        target,
+        use_frame,
+        tolerance,
+        yaw_tolerance_deg * kDegToRad,
+        max_xy_speed_mps,
+        max_z_speed_mps,
+        max_yaw_rate_deg_s * kDegToRad);
   }
 
   std::shared_ptr<DroneAction> parseCameraAimAction(const YAML::Node &item,
