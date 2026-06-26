@@ -695,7 +695,7 @@ void MainWindow::appendBarcodeRecord(
     {
         slot->observed_category_id.clear();
         slot->observed_package_id = barcode.trimmed();
-        slot->observed_third_field.clear();
+        slot->position_package_id.clear();
     }
 
     slot->observed_time_text = time_text;
@@ -734,7 +734,7 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
         return nullptr;
     }
 
-    if (row < 0 || row >= 4 || col < 0 || col >= 4)
+    if (row < 0 || row >= 4 || col < 0 || col >= 3)
     {
         return nullptr;
     }

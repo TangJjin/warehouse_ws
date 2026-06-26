@@ -193,7 +193,7 @@ void RosManager::setupRosInterfaces()
             //使用Qt的信号槽机制在线程安全的方式下发位置更新信号，包含无人机的二维位置坐标和高度等信息
             QMetaObject::invokeMethod(
                 this,
-                [this, x, y, z, yawx, yawy, yawz, yaww]() {
+                [this, x, y, z, qx, qy, qz, qw]() {
                     emit positionUpdated(x, y, z, qx, qy, qz, qw);
                 },
                 Qt::QueuedConnection);

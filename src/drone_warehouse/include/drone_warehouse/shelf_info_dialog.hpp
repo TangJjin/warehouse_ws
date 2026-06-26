@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QIcon>
 #include <QVector>
+#include <QSerialPort>
 
 class QColor;
 class QEvent;
@@ -41,8 +42,9 @@ private:
     void updateSlotDetail(const QString &slot_name, const QString &category_id, const QString &package_id);//刷新下方详情区
     int slotIndex(int row, int col) const;//把行列换算成一维下标
 
+    void setupSerial();
     void uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload);
-    bool uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload)
+    bool uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload);
 
     QByteArray encodeFrame(uint8_t sof1, uint8_t sof2,
                                             uint8_t deviceId, uint8_t status,
@@ -71,6 +73,8 @@ private:
     QLabel *slot_value_label_ = nullptr;//当前点击的点位，例如 前面 R1C1
     QLabel *category_value_label_ = nullptr;//当前点位的类别编号
     QLabel *package_value_label_ = nullptr;//当前点位的包裹编号
+
+    QSerialPort serial_;
 
     QVector<ShelfPanelData> shelf_panel_data_;//所有货架的弹窗展示数据
 
