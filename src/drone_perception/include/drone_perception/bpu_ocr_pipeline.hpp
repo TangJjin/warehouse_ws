@@ -27,6 +27,15 @@ struct BpuOcrConfig
   int rec_input_width_px{320};
 };
 
+struct OcrTimingStats
+{
+  double det_preprocess_ms{0.0};
+  double det_infer_ms{0.0};
+  double det_postprocess_ms{0.0};
+  double rec_total_ms{0.0};
+  int rec_box_count{0};
+};
+
 class BpuOcrPipeline
 {
 public:
@@ -38,6 +47,7 @@ public:
 
   std::vector<OcrTextRegion> infer(const cv::Mat &bgr_image);
   void printModelInfo() const;
+  const OcrTimingStats &lastTiming() const;
 
 private:
   class BpuDnnModel;
@@ -53,10 +63,21 @@ private:
     float score{0.0F};
   };
 
-  std::vector<uint8_t> prepareDetectionInput(const cv::Mat &bgr_image) const;
+  struct DetectionInput
+  {
+    std::vector<uint8_t> nv12;
+    float scale{1.0F};
+    int pad_x{0};
+    int pad_y{0};
+    int model_width_px{0};
+    int model_height_px{0};
+  };
+
+  DetectionInput prepareDetectionInput(const cv::Mat &bgr_image) const;
   std::vector<DetectionBox> detectTextBoxes(
       const std::vector<std::vector<float>> &outputs,
-      const cv::Size &image_size) const;
+      const cv::Size &image_size,
+      const DetectionInput &detection_input) const;
   RecognitionResult recognizeText(const cv::Mat &crop_bgr) const;
   cv::Mat cropAndRectify(const cv::Mat &image, const DetectionBox &box) const;
   static std::string decodeCtcGreedy(
@@ -70,6 +91,7 @@ private:
   static std::string defaultRecognitionModelPath();
 
   BpuOcrConfig _config;
+  OcrTimingStats _last_timing{};
   std::unique_ptr<BpuDnnModel> _det_model;
   std::unique_ptr<BpuDnnModel> _rec_model;
 };
