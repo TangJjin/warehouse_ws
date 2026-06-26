@@ -378,6 +378,7 @@ QrVisionNode::QrVisionNode()
 {
   declareParameters();
   initializeBpuDetector();
+  initializeBpuOcrPipeline();
   initializeSubscriptions();
 
   if (debug_view_)
@@ -396,9 +397,11 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s decode_mode=%s color=%s depth=%s rgbd=%s camera_info=%s",
+      "QR D435i video stream ready. mode=%s decode_mode=%s yolo_bpu=%s ocr_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
       use_rgbd_ ? "rgbd" : "synced",
       use_barcode_format_ ? "barcode" : "qr",
+      enable_bpu_ ? "true" : "false",
+      enable_bpu_ocr_ ? "true" : "false",
       color_topic_.c_str(),
       depth_topic_.c_str(),
       rgbd_topic_.c_str(),
@@ -442,9 +445,24 @@ void QrVisionNode::declareParameters()
   enable_bpu_ = this->declare_parameter<bool>(
       "enable_bpu",
       DRONE_PERCEPTION_HAS_BPU != 0);
+  enable_bpu_ocr_ = this->declare_parameter<bool>(
+      "enable_bpu_ocr",
+      DRONE_PERCEPTION_HAS_BPU != 0);
   bpu_model_path_ = this->declare_parameter<std::string>(
       "bpu_model_path",
       "/home/sunrise/drone_ws/src/drone_perception/rdk_best_bayese_640x640_nv12.bin");
+  ocr_det_model_path_ = this->declare_parameter<std::string>(
+      "ocr_det_model_path",
+      "/home/sunrise/drone_ws/src/drone_perception/en_PP-OCRv3_det_640x640_nv12.bin");
+  ocr_rec_model_path_ = this->declare_parameter<std::string>(
+      "ocr_rec_model_path",
+      "/home/sunrise/drone_ws/src/drone_perception/en_PP-OCRv3_rec_48x320_rgb.bin");
+  ocr_det_threshold_ = this->declare_parameter<double>(
+      "ocr_det_threshold",
+      0.5);
+  ocr_det_min_area_px_ = this->declare_parameter<int>(
+      "ocr_det_min_area_px",
+      100);
 
   if (log_throttle_ms_ <= 0)
   {
@@ -520,6 +538,46 @@ void QrVisionNode::initializeBpuDetector()
         "BPU inference requested but this build has no RDK BPU SDK");
     enable_bpu_ = false;
   }
+#endif
+}
+
+void QrVisionNode::initializeBpuOcrPipeline()
+{
+#if DRONE_PERCEPTION_HAS_BPU
+  if (!enable_bpu_ocr_) {
+    return;
+  }
+
+  try {
+    BpuOcrConfig config{};
+    config.det_model_path = ocr_det_model_path_;
+    config.rec_model_path = ocr_rec_model_path_;
+    config.det_threshold = ocr_det_threshold_;
+    config.det_min_area_px = ocr_det_min_area_px_;
+    bpu_ocr_pipeline_ = std::make_unique<BpuOcrPipeline>(config);
+
+    RCLCPP_INFO(
+        get_logger(),
+        "BPU OCR pipeline initialized. det_model=%s rec_model=%s",
+        config.det_model_path.empty() ? "<auto>" : config.det_model_path.c_str(),
+        config.rec_model_path.empty() ? "<auto>" : config.rec_model_path.c_str());
+  } catch (const std::exception &e) {
+    bpu_ocr_pipeline_.reset();
+    enable_bpu_ocr_ = false;
+
+    RCLCPP_ERROR(
+        get_logger(),
+        "Failed to initialize BPU OCR pipeline: %s",
+        e.what());
+  }
+#else
+  if (enable_bpu_ocr_) {
+    RCLCPP_WARN(
+        get_logger(),
+        "BPU OCR requested but this build has no RDK BPU SDK");
+  }
+
+  enable_bpu_ocr_ = false;
 #endif
 }
 
@@ -1113,6 +1171,32 @@ void QrVisionNode::processFrame(
       }
     }
   }
+
+  if (enable_bpu_ocr_ && bpu_ocr_pipeline_) {
+    last_ocr_regions_.clear();
+
+    try {
+      const auto ocr_t0 = SteadyClock::now();
+      last_ocr_regions_ = bpu_ocr_pipeline_->infer(color_bridge->image);
+      const auto ocr_t1 = SteadyClock::now();
+
+      RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          log_throttle_ms_,
+          "BPU OCR ok. mode=%s ocr_ms=%.2f regions=%zu",
+          input_mode,
+          elapsedMs(ocr_t0, ocr_t1),
+          last_ocr_regions_.size());
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          log_throttle_ms_,
+          "BPU OCR failed: %s",
+          e.what());
+    }
+  }
 #endif
 
 #if DRONE_PERCEPTION_HAS_BPU
@@ -1170,11 +1254,12 @@ void QrVisionNode::displayDebugFrame(
   cv::Mat display = color_image.clone();
 
   cv::Mat overlay = display.clone();
+  const int panel_bottom = enable_bpu_ocr_ ? 236 : 164;
   const int panel_right = std::min(display.cols - 12, 620);
   cv::rectangle(
       overlay,
       cv::Point(12, 12),
-      cv::Point(panel_right, 164),
+      cv::Point(panel_right, panel_bottom),
       cv::Scalar(30, 30, 30),
       cv::FILLED);
   cv::addWeighted(overlay, 0.45, display, 0.55, 0.0, display);
@@ -1267,6 +1352,31 @@ void QrVisionNode::displayDebugFrame(
   }
 
   drawBpuDetections(display);
+  drawOcrRegions(display);
+
+  if (enable_bpu_ocr_ && !last_ocr_regions_.empty()) {
+    int ocr_text_y = visual_code_y + 48;
+
+    for (const OcrTextRegion &region : last_ocr_regions_) {
+      const std::string ocr_line = cv::format(
+          "OCR: %s (%.2f)",
+          fit_status_text(region.text).c_str(),
+          region.score);
+      cv::putText(
+          display,
+          ocr_line,
+          cv::Point(24, ocr_text_y),
+          cv::FONT_HERSHEY_SIMPLEX,
+          0.5,
+          cv::Scalar(255, 210, 120),
+          1);
+      ocr_text_y += 22;
+
+      if (ocr_text_y > panel_bottom - 8) {
+        break;
+      }
+    }
+  }
 
   // Show preprocessed barcode ROI as picture-in-picture in bottom-right corner
   if (!debug_barcode_roi_.empty()) {
@@ -1374,6 +1484,45 @@ void QrVisionNode::drawBpuDetections(cv::Mat &display) const
         cv::FONT_HERSHEY_SIMPLEX,
         0.5,
         cv::Scalar(0, 255, 0),
+        1);
+  }
+}
+
+void QrVisionNode::drawOcrRegions(cv::Mat &display) const
+{
+  for (const OcrTextRegion &region : last_ocr_regions_) {
+    std::vector<cv::Point> polygon;
+    polygon.reserve(region.box.size());
+
+    for (const cv::Point2f &point : region.box) {
+      polygon.emplace_back(
+          static_cast<int>(std::round(point.x)),
+          static_cast<int>(std::round(point.y)));
+    }
+
+    const cv::Point *points = polygon.data();
+    const int point_count = static_cast<int>(polygon.size());
+
+    cv::polylines(
+        display,
+        &points,
+        &point_count,
+        1,
+        true,
+        cv::Scalar(255, 180, 80),
+        2);
+
+    if (polygon.empty()) {
+      continue;
+    }
+
+    cv::putText(
+        display,
+        cv::format("%s %.2f", region.text.c_str(), region.score),
+        cv::Point(polygon.front().x, std::max(18, polygon.front().y - 6)),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.5,
+        cv::Scalar(255, 200, 120),
         1);
   }
 }

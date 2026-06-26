@@ -26,6 +26,7 @@
 #endif
 
 #if DRONE_PERCEPTION_HAS_BPU
+#include "drone_perception/bpu_ocr_pipeline.hpp"
 #include "drone_perception/bpu_yolo_detector.hpp"
 #endif
 
@@ -81,6 +82,8 @@ private:
 
   void initializeBpuDetector();
 
+  void initializeBpuOcrPipeline();
+
   bool prepareBpuInput(const cv::Mat &color_image);
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
@@ -121,6 +124,8 @@ private:
   std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
       const cv::Mat &color_image,
       const std::vector<BpuYoloDetection> &detections);
+
+  void drawOcrRegions(cv::Mat &display) const;
 #endif
 
   void updateFps();
@@ -132,12 +137,15 @@ private:
   std::string window_name_;
 
   std::string bpu_model_path_;
+  std::string ocr_det_model_path_;
+  std::string ocr_rec_model_path_;
 
   std::vector<uint8_t> bpu_input_nv12_;
   BpuLetterboxState bpu_letterbox_;
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
+  bool enable_bpu_ocr_ = false;
   bool use_barcode_format_ = false;
   bool use_rgbd_ = false;
   mutable bool debug_window_created_ = false;
@@ -145,6 +153,8 @@ private:
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
   int shelf_code_lost_tolerance_frames_ = 2;
+  int ocr_det_min_area_px_ = 100;
+  float ocr_det_threshold_ = 0.5F;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
@@ -157,7 +167,9 @@ private:
 
 #if DRONE_PERCEPTION_HAS_BPU
   std::unique_ptr<BpuYoloDetector> bpu_detector_;
+  std::unique_ptr<BpuOcrPipeline> bpu_ocr_pipeline_;
   std::vector<BpuYoloDetection> last_bpu_detections_;
+  std::vector<OcrTextRegion> last_ocr_regions_;
   cv::Mat debug_barcode_roi_;
   std::string debug_raw_symbol_;
   std::string debug_raw_symbol_type_;
