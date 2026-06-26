@@ -2,7 +2,7 @@
 # Gazebo camera_aim test version:
 # takeoff -> hover -> move to test scan point -> camera_aim -> hover -> land
 mission:
-  takeoff_altitude: 0.00
+  takeoff_altitude: 1.20
   actions:
     - type: "takeoff"
       altitude: 0.00
@@ -12,10 +12,6 @@ mission:
       position: [0.00, 0.00, 0.40]
       yaw: 0.00
       tolerance: 0.12
-      yaw_tolerance_deg: 5.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 20.0
 
     - type: "hover"
       duration: 2.00
@@ -25,13 +21,75 @@ mission:
       position: [0.75, 0.00, 0.40]
       yaw: 0.00
       tolerance: 0.12
-      yaw_tolerance_deg: 5.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 20.0
 
     - type: "hover"
       duration: 2.00
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.15
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.30
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.45
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.70
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 0.85
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.00
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.10
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.25
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.35
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.40
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.58
+      tolerance: 0.12
       
       ########################################
     - type: "move"
@@ -39,11 +97,13 @@ mission:
       position: [0.75, 0.00, 0.40]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 18.0
-
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.75, 0.00, 0.40]
+      yaw: 1.57
+      tolerance: 0.12
+      
     - type: "hover"
       duration: 2.00
       
@@ -52,10 +112,6 @@ mission:
       position: [1.25, 0.00, 0.40]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -65,10 +121,6 @@ mission:
       position: [1.75, 0.00, 0.40]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -78,10 +130,6 @@ mission:
       position: [1.75, 0.00, 0.80]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -91,10 +139,6 @@ mission:
       position: [1.25, 0.00, 0.80]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -104,10 +148,6 @@ mission:
       position: [0.75, 0.00, 0.80]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -117,10 +157,6 @@ mission:
       position: [0.75, 0.00, 1.20]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -130,10 +166,6 @@ mission:
       position: [1.25, 0.00, 1.20]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -143,10 +175,6 @@ mission:
       position: [1.75, 0.00, 1.20]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -156,10 +184,6 @@ mission:
       position: [1.75, 0.00, 1.60]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -169,10 +193,6 @@ mission:
       position: [1.25, 0.00, 1.60]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -182,10 +202,6 @@ mission:
       position: [0.75, 0.00, 1.60]
       yaw: 1.57
       tolerance: 0.12
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
       duration: 2.00
@@ -194,13 +210,45 @@ mission:
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 1.60]
+      yaw: 1.57
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 1.40
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 1.10
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.70
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.30
+      tolerance: 0.12
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
       yaw: 0.00
       tolerance: 0.12
-      yaw_tolerance_deg: 5.0
-      max_xy_speed_mps: 0.30
-      max_z_speed_mps: 0.15
-      max_yaw_rate_deg_s: 20.0
-
+      
+    - type: "move"
+      frame: "world_body"
+      position: [0.00, 0.00, 1.60]
+      yaw: 0.00
+      tolerance: 0.12
+      
     - type: "hover"
       duration: 2.00
       
@@ -209,20 +257,12 @@ mission:
       position: [0.00, 0.00, 0.80]
       yaw: 0.00
       tolerance: 0.12
-      yaw_tolerance_deg: 5.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 20.0
       
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 0.00]
       yaw: 0.00
       tolerance: 0.12
-      yaw_tolerance_deg: 5.0
-      max_xy_speed_mps: 0.25
-      max_z_speed_mps: 0.12
-      max_yaw_rate_deg_s: 20.0
 
       
     - type: "land"
