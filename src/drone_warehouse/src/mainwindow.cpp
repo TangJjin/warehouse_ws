@@ -679,15 +679,23 @@ void MainWindow::appendBarcodeRecord(
 
     //消息拆包
     const QStringList parts = barcode.split('|', Qt::KeepEmptyParts);
-    if (parts.size() == 2)
+    if (parts.size() == 3)
     {
         slot->observed_category_id = parts[0].trimmed();
         slot->observed_package_id = parts[1].trimmed();
+        slot->position_package_id = parts.mid(2).join("|").trimmed();
+    }
+    else if (parts.size() == 2)
+    {
+        slot->observed_category_id = parts[0].trimmed();
+        slot->observed_package_id = parts[1].trimmed();
+        slot->position_package_id.clear();
     }
     else
     {
         slot->observed_category_id.clear();
         slot->observed_package_id = barcode.trimmed();
+        slot->observed_third_field.clear();
     }
 
     slot->observed_time_text = time_text;
