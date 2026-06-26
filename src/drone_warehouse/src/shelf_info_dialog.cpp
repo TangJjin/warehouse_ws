@@ -1,5 +1,6 @@
 #include "drone_warehouse/shelf_info_dialog.hpp"
 
+#include <limits>
 #include <QColor>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -103,6 +104,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     resize(600, 500);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
     setMinimumSize(380, 380);//限制最小尺寸，避免窗口过小导致控件挤压
     setModal(false);//这里先用非模态窗口，点击后可与主界面同时操作
+
+    setupSerial();//打开串口
 
     auto *main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(5, 5, 5, 5);//窗口内部整体留白
@@ -518,7 +521,222 @@ bool ShelfInfoDialog::eventFilter(QObject *watched, QEvent *event)
     return QDialog::eventFilter(watched, event);
 }
 
+void GroundLinkBridge::setupSerial()
+{
+    serial_.setPortName("/dev/ttyS3");
+    serial_.setBaudRate(QSerialPort::Baud9600);
+    serial_.setDataBits(QSerialPort::Data8);
+    serial_.setParity(QSerialPort::NoParity);
+    serial_.setStopBits(QSerialPort::OneStop);
+    serial_.setFlowControl(QSerialPort::NoFlowControl);
+
+    if (!serial_.open(QIODevice::ReadWrite)) {
+        RCLCPP_ERROR(this->get_logger(), "failed to open serial port");
+    }
+}
+
 int ShelfInfoDialog::slotIndex(int row, int col) const
 {
     return row * 3 + col;//4列表格里，把二维行列下标换算成一维数组下标
+}
+
+void ShelfInfoDialog::uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload)
+{
+    const QByteArray frame = encodeFrame(0x57, 0x01, deviceId, status, payload);
+    serial_.write(frame);
+
+    // QByteArray payload;
+    // uint8_t status = (0x1 << 4) | 0x0;
+    // uart_write(0x00, status, payload);
+}
+
+connect(&serial_, &QSerialPort::readyRead, this, [this]() {
+    uint8_t deviceId = 0;
+    uint8_t status = 0;
+    QByteArray payload;
+
+    while (uart_read(deviceId, status, payload)) {
+        // 这里处理一帧完整数据
+    }
+});
+
+bool ShelfInfoDialog::uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload)
+{
+    static QByteArray rxBuffer;
+
+    deviceId = 0;
+    status = 0;
+    payload.clear();
+
+    rxBuffer.append(serial_.readAll());
+
+    constexpr uint8_t kRespSof1 = 0x31;
+    constexpr uint8_t kRespSof2 = 0x01;
+    constexpr int kMinFrameSize = 10;   // 2 + 1 + 1 + 4 + 2
+    constexpr int kFixedHeaderSize = 8; // 2 + 1 + 1 + 4
+
+    while (true) {
+        if (rxBuffer.size() < 2) {
+            return false;
+        }
+
+        int sofIndex = -1;
+        for (int i = 0; i <= rxBuffer.size() - 2; ++i) {
+            const uint8_t b0 = static_cast<uint8_t>(rxBuffer.at(i));
+            const uint8_t b1 = static_cast<uint8_t>(rxBuffer.at(i + 1));
+            if (b0 == kRespSof1 && b1 == kRespSof2) {
+                sofIndex = i;
+                break;
+            }
+        }
+
+        if (sofIndex < 0) {
+            if (rxBuffer.size() > 1) {
+                rxBuffer.remove(0, rxBuffer.size() - 1);
+            }
+            return false;
+        }
+
+        if (sofIndex > 0) {
+            rxBuffer.remove(0, sofIndex);
+        }
+
+        if (rxBuffer.size() < kFixedHeaderSize) {
+            return false;
+        }
+
+        const auto *data = reinterpret_cast<const uint8_t *>(rxBuffer.constData());
+
+        const uint32_t payloadLen =
+            static_cast<uint32_t>(data[4]) |
+            (static_cast<uint32_t>(data[5]) << 8) |
+            (static_cast<uint32_t>(data[6]) << 16) |
+            (static_cast<uint32_t>(data[7]) << 24);
+
+        const quint64 expectedSize64 =
+            static_cast<quint64>(kFixedHeaderSize) +
+            static_cast<quint64>(payloadLen) +
+            2u;
+
+        if (expectedSize64 > static_cast<quint64>(std::numeric_limits<int>::max())) {
+            rxBuffer.remove(0, 1);
+            continue;
+        }
+
+        const int expectedSize = static_cast<int>(expectedSize64);
+
+        if (expectedSize < kMinFrameSize) {
+            rxBuffer.remove(0, 1);
+            continue;
+        }
+
+        if (rxBuffer.size() < expectedSize) {
+            return false;
+        }
+
+        const QByteArray frame = rxBuffer.left(expectedSize);
+
+        uint8_t parsedDeviceId = 0;
+        uint8_t parsedStatus = 0;
+        QByteArray parsedPayload;
+
+        if (validateFrame(frame, kRespSof1, kRespSof2,
+                        parsedDeviceId, parsedStatus, parsedPayload)) {
+            rxBuffer.remove(0, expectedSize);
+
+            deviceId = parsedDeviceId;
+            status = parsedStatus;
+            payload = parsedPayload;
+            return true;
+        }
+
+        rxBuffer.remove(0, 1);
+    }
+}
+
+QByteArray GroundLinkBridge::encodeFrame(uint8_t sof1, uint8_t sof2,
+                                        uint8_t deviceId, uint8_t status,
+                                        const QByteArray &payload) const
+{
+    QByteArray frame;
+    frame.reserve(2 + 1 + 1 + 4 + payload.size() + 2);
+
+    // 包头
+    frame.append(static_cast<char>(sof1));
+    frame.append(static_cast<char>(sof2));
+
+    // 设备号
+    frame.append(static_cast<char>(deviceId));
+
+    // 指令状态
+    frame.append(static_cast<char>(status));
+
+    // 数据长度（4 byte，小端）
+    const uint32_t payloadLen = static_cast<uint32_t>(payload.size());
+    frame.append(static_cast<char>( payloadLen        & 0xFF));
+    frame.append(static_cast<char>((payloadLen >> 8)  & 0xFF));
+    frame.append(static_cast<char>((payloadLen >> 16) & 0xFF));
+    frame.append(static_cast<char>((payloadLen >> 24) & 0xFF));
+
+    // 数据
+    frame.append(payload);
+
+    // CRC16：对除 CRC 自身以外的所有字节计算
+    const uint8_t *crcBegin = reinterpret_cast<const uint8_t *>(frame.constData());
+    const int crcLen = frame.size();
+    const uint16_t crc = crc16_ccitt(crcBegin, crcLen);
+
+    frame.append(static_cast<char>(crc & 0xFF));
+    frame.append(static_cast<char>((crc >> 8) & 0xFF));
+
+    return frame;
+}
+
+bool GroundLinkBridge::validateFrame(const QByteArray &frame,
+                                    uint8_t expectedSof1, uint8_t expectedSof2,
+                                    uint8_t &deviceId, uint8_t &status,
+                                    QByteArray &payload) const
+{
+    // 最小长度 = 包头2 + 设备号1 + 指令状态1 + 数据长度4 + CRC2
+    if (frame.size() < 10) {
+        return false;
+    }
+
+    const auto *data = reinterpret_cast<const uint8_t *>(frame.constData());
+
+    // 包头校验
+    if (data[0] != expectedSof1 || data[1] != expectedSof2) {
+        return false;
+    }
+
+    // 解析长度（4 byte，小端）
+    const uint32_t payloadLen =
+        static_cast<uint32_t>(data[4]) |
+        (static_cast<uint32_t>(data[5]) << 8) |
+        (static_cast<uint32_t>(data[6]) << 16) |
+        (static_cast<uint32_t>(data[7]) << 24);
+
+    const int expectedSize = 2 + 1 + 1 + 4 + static_cast<int>(payloadLen) + 2;
+    if (frame.size() != expectedSize) {
+        return false;
+    }
+
+    // 提取 CRC
+    const uint16_t recvCrc =
+        static_cast<uint16_t>(data[frame.size() - 2]) |
+        (static_cast<uint16_t>(data[frame.size() - 1]) << 8);
+
+    // 计算 CRC（除 CRC 本身）
+    const uint16_t calcCrc = crc16_ccitt(data, frame.size() - 2);
+
+    if (recvCrc != calcCrc) {
+        return false;
+    }
+
+    // 解析字段
+    deviceId = data[2];
+    status = data[3];
+    payload = frame.mid(8, static_cast<int>(payloadLen));
+
+    return true;
 }

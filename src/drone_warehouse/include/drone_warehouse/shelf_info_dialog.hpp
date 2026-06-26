@@ -41,6 +41,18 @@ private:
     void updateSlotDetail(const QString &slot_name, const QString &category_id, const QString &package_id);//刷新下方详情区
     int slotIndex(int row, int col) const;//把行列换算成一维下标
 
+    void uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload);
+    bool uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload)
+
+    QByteArray encodeFrame(uint8_t sof1, uint8_t sof2,
+                                            uint8_t deviceId, uint8_t status,
+                                            const QByteArray &payload) const;
+
+    bool validateFrame(const QByteArray &frame,
+                                        uint8_t expectedSof1, uint8_t expectedSof2,
+                                        uint8_t &deviceId, uint8_t &status,
+                                        QByteArray &payload) const;
+
 private:
     QLabel *title_label_ = nullptr;//弹窗标题
 
