@@ -173,6 +173,7 @@ if(RDK_DNN_INCLUDE_DIR AND RDK_DNN_LIBRARY)
   target_sources(qr_vision_node
     PRIVATE
     src/bpu_yolo_detector.cpp
+    src/bpu_ocr_pipeline.cpp
   )
 
   target_include_directories(qr_vision_node
