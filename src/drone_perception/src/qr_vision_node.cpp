@@ -57,6 +57,20 @@ struct VisualCodeScanStats
   int accepted_count{0};
 };
 
+void configureVisualCodeScanner(
+    zbar::ImageScanner &scanner,
+    bool use_barcode_format)
+{
+  scanner.set_config(zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 0);
+
+  if (use_barcode_format) {
+    scanner.set_config(zbar::ZBAR_CODE128, zbar::ZBAR_CFG_ENABLE, 1);
+    return;
+  }
+
+  scanner.set_config(zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_ENABLE, 1);
+}
+
 std::string trimAndUppercase(const std::string &text)
 {
   const auto begin = std::find_if_not(
@@ -680,7 +694,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
   }
 
   zbar::ImageScanner scanner;
-  scanner.set_config(zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 1);
+  configureVisualCodeScanner(scanner, use_barcode_format_);
 
   const cv::Point2f image_center(
       static_cast<float>(color_image.cols) * 0.5F,
