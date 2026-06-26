@@ -431,7 +431,7 @@ void QrVisionNode::declareParameters()
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
   use_barcode_format_ = this->declare_parameter<bool>("use_barcode_format", false);
   use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
-  log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 500);
+  log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   sample_radius_px_ = this->declare_parameter<int>(
       "sample_radius_px",
       kDefaultSampleRadiusPx);
@@ -468,8 +468,8 @@ void QrVisionNode::declareParameters()
   {
     RCLCPP_WARN(
         get_logger(),
-        "log_throttle_ms must be greater than 0, reset to 500");
-    log_throttle_ms_ = 500;
+        "log_throttle_ms must be greater than 0, reset to 2000");
+    log_throttle_ms_ = 2000;
   }
 
   if (sample_radius_px_ < 0)

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <cctype>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -28,19 +29,6 @@ static constexpr int kRecInputHeightIndex = 2;
 
 static constexpr char kCtcAlphabet[] =
     "0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~!\"#$%&'()*+,-./ ";
-
-float clampFloat(float value, float min_value, float max_value)
-{
-  if (value < min_value) {
-    return min_value;
-  }
-
-  if (value > max_value) {
-    return max_value;
-  }
-
-  return value;
-}
 
 std::size_t shapeElementCount(const hbDNNTensorShape &shape)
 {
@@ -147,6 +135,11 @@ std::array<cv::Point2f, 4> rectToOrderedPoints(const cv::RotatedRect &rect)
   });
 
   return {top[0], top[1], bottom[1], bottom[0]};
+}
+
+bool isDigitChar(char value)
+{
+  return std::isdigit(static_cast<unsigned char>(value)) != 0;
 }
 
 }  // namespace
@@ -604,11 +597,15 @@ BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &c
   const hbDNNTensorShape &shape = _rec_model->outputProperties()[0].validShape;
   const auto [time_steps, class_count] = resolveSequenceShape(shape);
   float mean_score = 0.0F;
-  const std::string text = decodeCtcGreedy(
+  const std::string text = normalizeShelfCode(decodeCtcGreedy(
       rec_outputs[0].data(),
       time_steps,
       class_count,
-      &mean_score);
+      &mean_score));
+
+  if (!isValidShelfCode(text)) {
+    return {};
+  }
 
   return {text, mean_score};
 }
@@ -703,6 +700,80 @@ std::string BpuOcrPipeline::decodeCtcGreedy(
   }
 
   return decoded_text;
+}
+
+std::string BpuOcrPipeline::normalizeShelfCode(const std::string &text)
+{
+  std::string normalized;
+  normalized.reserve(text.size());
+
+  for (char value : text) {
+    if (std::isspace(static_cast<unsigned char>(value)) != 0) {
+      continue;
+    }
+
+    if (value == '_') {
+      normalized.push_back('-');
+      continue;
+    }
+
+    normalized.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(value))));
+  }
+
+  if (normalized.size() >= 2U && (normalized[0] == '4' || normalized[0] == '8')) {
+    normalized[0] = normalized[0] == '4' ? 'A' : 'B';
+  }
+
+  for (std::size_t i = 0; i < normalized.size(); ++i) {
+    if (normalized[i] == '=') {
+      normalized[i] = '-';
+      continue;
+    }
+
+    if (i == 0U) {
+      continue;
+    }
+
+    if (normalized[i] == 'O') {
+      normalized[i] = '0';
+    } else if (normalized[i] == 'I' || normalized[i] == 'L') {
+      normalized[i] = '1';
+    }
+  }
+
+  return normalized;
+}
+
+bool BpuOcrPipeline::isValidShelfCode(const std::string &text)
+{
+  if (text.size() < 5U) {
+    return false;
+  }
+
+  if (text[0] != 'A' && text[0] != 'B') {
+    return false;
+  }
+
+  const std::size_t first_dash = text.find('-');
+  const std::size_t second_dash = text.find('-', first_dash == std::string::npos ? 0U : first_dash + 1U);
+
+  if (first_dash != 1U || second_dash == std::string::npos) {
+    return false;
+  }
+
+  if (text.find('-', second_dash + 1U) != std::string::npos) {
+    return false;
+  }
+
+  const std::string middle = text.substr(first_dash + 1U, second_dash - first_dash - 1U);
+  const std::string tail = text.substr(second_dash + 1U);
+
+  if (middle.empty() || tail.empty()) {
+    return false;
+  }
+
+  return std::all_of(middle.begin(), middle.end(), isDigitChar) &&
+      std::all_of(tail.begin(), tail.end(), isDigitChar);
 }
 
 std::string BpuOcrPipeline::defaultDetectionModelPath()

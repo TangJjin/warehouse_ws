@@ -64,6 +64,8 @@ private:
       int time_steps,
       int class_count,
       float *mean_score);
+  static std::string normalizeShelfCode(const std::string &text);
+  static bool isValidShelfCode(const std::string &text);
   static std::string defaultDetectionModelPath();
   static std::string defaultRecognitionModelPath();
 
