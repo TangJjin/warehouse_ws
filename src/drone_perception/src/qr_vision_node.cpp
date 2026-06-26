@@ -57,6 +57,12 @@ struct ParsedVisualCode
   std::string code;
 };
 
+struct VisualCodeScanStats
+{
+  int symbol_count{0};
+  int accepted_count{0};
+};
+
 std::string trimAndUppercase(const std::string &text)
 {
   const auto begin = std::find_if_not(
@@ -737,17 +743,14 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       continue;
     }
 
-    cv::Mat gray_roi;
-    cv::cvtColor(color_image(roi), gray_roi, cv::COLOR_BGR2GRAY);
+    cv::Mat raw_gray_roi;
+    cv::cvtColor(color_image(roi), raw_gray_roi, cv::COLOR_BGR2GRAY);
 
-    if (!gray_roi.isContinuous()) {
-      gray_roi = gray_roi.clone();
+    if (!raw_gray_roi.isContinuous()) {
+      raw_gray_roi = raw_gray_roi.clone();
     }
 
-    // Apply barcode preprocessing only when in barcode mode and detection is barcode (class_0)
-    if (use_barcode_format_ && detection.class_id == 0) {
-      preprocessBarcodeRoi(gray_roi);
-    }
+    const bool barcode_detection = use_barcode_format_ && detection.class_id == 0;
 
     auto scan_gray_roi = [&](
         const cv::Mat &scan_roi,
@@ -767,7 +770,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
           static_cast<unsigned long>(continuous_roi.total()));
 
       const int raw_count = scanner.scan(zbar_image);
-      int accepted_count = 0;
+      VisualCodeScanStats stats{};
+      stats.symbol_count = raw_count;
 
       if (raw_count <= 0) {
         RCLCPP_INFO_THROTTLE(
@@ -847,35 +851,40 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
               parsed_code.category,
               symbol_type,
               static_cast<double>(dx * dx + dy * dy)});
-          ++accepted_count;
+          ++stats.accepted_count;
         }
       }
 
       zbar_image.set_data(nullptr, 0U);
 
-      return accepted_count;
+      return stats;
     };
 
-    const int accepted_count = scan_gray_roi(gray_roi, 1.0F, "original");
+    VisualCodeScanStats scan_stats = scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
 
-    if (accepted_count <= 0) {
-      cv::Mat resized_gray_roi;
+    if (scan_stats.accepted_count <= 0 && barcode_detection) {
+      cv::Mat barcode_gray_roi = raw_gray_roi.clone();
+      preprocessBarcodeRoi(barcode_gray_roi);
+      debug_barcode_roi_ = barcode_gray_roi.clone();
+
+      scan_stats = scan_gray_roi(barcode_gray_roi, 1.0F, "barcode_pre");
+    } else if (barcode_detection) {
+      debug_barcode_roi_ = raw_gray_roi.clone();
+    }
+
+    if (scan_stats.accepted_count <= 0) {
+      cv::Mat retry_gray_roi;
       cv::resize(
-          gray_roi,
-          resized_gray_roi,
+          barcode_detection && !debug_barcode_roi_.empty() ? debug_barcode_roi_ : raw_gray_roi,
+          retry_gray_roi,
           cv::Size(),
           kVisualCodeRetryScale,
           kVisualCodeRetryScale,
           cv::INTER_LINEAR);
       scan_gray_roi(
-          resized_gray_roi,
+          retry_gray_roi,
           static_cast<float>(kVisualCodeRetryScale),
           "scale2");
-    }
-
-    // Store preprocessed barcode ROI for debug display
-    if (use_barcode_format_ && detection.class_id == 0) {
-      debug_barcode_roi_ = gray_roi.clone();
     }
   }
 
