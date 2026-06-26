@@ -30,12 +30,6 @@ static constexpr float kVisualCodeRoiPaddingXRatio = 0.45F;
 static constexpr float kVisualCodeRoiPaddingYRatio = 0.20F;
 static constexpr double kVisualCodeRetryScale = 2.0;
 
-// Barcode preprocessing constants (Mou Jiacun pipeline)
-static constexpr int kBarcodeSobelKsize = -1;
-static constexpr int kBarcodeMeanBlurSize = 9;
-static constexpr int kBarcodeMorphWidth = 22;
-static constexpr int kBarcodeMorphHeight = 8;
-static constexpr int kBarcodeMorphIterations = 3;
 #endif
 static constexpr std::size_t kBpuInputYSize =
     static_cast<std::size_t>(kBpuInputWidthPx) *
@@ -357,28 +351,9 @@ void hybridBinarization(const cv::Mat &src, cv::Mat &dst)
 
 void preprocessBarcodeRoi(cv::Mat &gray_roi)
 {
-  // Sobel X−Y gradient: enhance horizontal stripe edges, suppress non-barcode textures
-  cv::Mat grad_x, grad_y;
-  cv::Sobel(gray_roi, grad_x, CV_32F, 1, 0, kBarcodeSobelKsize);
-  cv::Sobel(gray_roi, grad_y, CV_32F, 0, 1, kBarcodeSobelKsize);
-  cv::Mat gradient = cv::abs(grad_x) - cv::abs(grad_y);
-  cv::convertScaleAbs(gradient, gray_roi);
-
-  // Mean blur: suppress high-frequency noise from gradient operation
-  cv::blur(gray_roi, gray_roi, cv::Size(kBarcodeMeanBlurSize, kBarcodeMeanBlurSize));
-
-  // Hybrid binarization: local adaptive threshold (ZXing algorithm)
-  hybridBinarization(gray_roi, gray_roi);
-
-  // Morphological close with horizontal kernel: fill gaps within barcode stripes
-  const cv::Mat kernel = cv::getStructuringElement(
-      cv::MORPH_RECT,
-      cv::Size(kBarcodeMorphWidth, kBarcodeMorphHeight));
-  cv::morphologyEx(gray_roi, gray_roi, cv::MORPH_CLOSE, kernel);
-
-  // Erode then dilate: remove isolated noise blobs while preserving stripe dimensions
-  cv::erode(gray_roi, gray_roi, cv::Mat(), cv::Point(-1, -1), kBarcodeMorphIterations);
-  cv::dilate(gray_roi, gray_roi, cv::Mat(), cv::Point(-1, -1), kBarcodeMorphIterations);
+  cv::Mat denoised_roi;
+  cv::GaussianBlur(gray_roi, denoised_roi, cv::Size(3, 3), 0.0);
+  hybridBinarization(denoised_roi, gray_roi);
 }
 #endif
 }  // namespace
@@ -862,29 +837,44 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
     VisualCodeScanStats scan_stats = scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
 
-    if (scan_stats.accepted_count <= 0 && barcode_detection) {
-      cv::Mat barcode_gray_roi = raw_gray_roi.clone();
-      preprocessBarcodeRoi(barcode_gray_roi);
-      debug_barcode_roi_ = barcode_gray_roi.clone();
-
-      scan_stats = scan_gray_roi(barcode_gray_roi, 1.0F, "barcode_pre");
-    } else if (barcode_detection) {
-      debug_barcode_roi_ = raw_gray_roi.clone();
-    }
-
     if (scan_stats.accepted_count <= 0) {
-      cv::Mat retry_gray_roi;
+      cv::Mat scaled_raw_gray_roi;
       cv::resize(
-          barcode_detection && !debug_barcode_roi_.empty() ? debug_barcode_roi_ : raw_gray_roi,
-          retry_gray_roi,
+          raw_gray_roi,
+          scaled_raw_gray_roi,
           cv::Size(),
           kVisualCodeRetryScale,
           kVisualCodeRetryScale,
           cv::INTER_LINEAR);
-      scan_gray_roi(
-          retry_gray_roi,
+      scan_stats = scan_gray_roi(
+          scaled_raw_gray_roi,
           static_cast<float>(kVisualCodeRetryScale),
-          "scale2");
+          "raw_gray_scale2");
+    }
+
+    if (barcode_detection) {
+      cv::Mat barcode_gray_roi = raw_gray_roi.clone();
+      preprocessBarcodeRoi(barcode_gray_roi);
+      debug_barcode_roi_ = barcode_gray_roi.clone();
+
+      if (scan_stats.accepted_count <= 0) {
+        scan_stats = scan_gray_roi(barcode_gray_roi, 1.0F, "barcode_binary");
+      }
+
+      if (scan_stats.accepted_count <= 0) {
+        cv::Mat scaled_barcode_gray_roi;
+        cv::resize(
+            barcode_gray_roi,
+            scaled_barcode_gray_roi,
+            cv::Size(),
+            kVisualCodeRetryScale,
+            kVisualCodeRetryScale,
+            cv::INTER_NEAREST);
+        scan_gray_roi(
+            scaled_barcode_gray_roi,
+            static_cast<float>(kVisualCodeRetryScale),
+            "barcode_binary_scale2");
+      }
     }
   }
 
