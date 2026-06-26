@@ -1176,17 +1176,20 @@ void QrVisionNode::processFrame(
     last_ocr_regions_.clear();
 
     try {
-      const auto ocr_t0 = SteadyClock::now();
       last_ocr_regions_ = bpu_ocr_pipeline_->infer(color_bridge->image);
-      const auto ocr_t1 = SteadyClock::now();
+      const OcrTimingStats &ocr_timing = bpu_ocr_pipeline_->lastTiming();
 
       RCLCPP_INFO_THROTTLE(
           get_logger(),
           *get_clock(),
           log_throttle_ms_,
-          "BPU OCR ok. mode=%s ocr_ms=%.2f regions=%zu",
+          "BPU OCR ok. mode=%s det_pre_ms=%.2f det_infer_ms=%.2f det_post_ms=%.2f rec_total_ms=%.2f rec_boxes=%d regions=%zu",
           input_mode,
-          elapsedMs(ocr_t0, ocr_t1),
+          ocr_timing.det_preprocess_ms,
+          ocr_timing.det_infer_ms,
+          ocr_timing.det_postprocess_ms,
+          ocr_timing.rec_total_ms,
+          ocr_timing.rec_box_count,
           last_ocr_regions_.size());
     } catch (const std::exception &e) {
       RCLCPP_ERROR_THROTTLE(
