@@ -224,12 +224,12 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     detail_layout->setSpacing(6);
 
     slot_value_label_ = new QLabel("当前点位：前面 R1C1", detail_panel);
-    category_value_label_ = new QLabel("类别编号：————", detail_panel);
     package_value_label_ = new QLabel("包裹编号：————", detail_panel);
+    category_value_label_ = new QLabel("类别编号：————", detail_panel);
 
     detail_layout->addWidget(slot_value_label_);
-    detail_layout->addWidget(category_value_label_);
     detail_layout->addWidget(package_value_label_);
+    detail_layout->addWidget(category_value_label_);
     main_layout->addWidget(detail_panel);
 
     /***********************************************************/
@@ -550,8 +550,8 @@ void ShelfInfoDialog::handleSlotClicked(int row, int col)
 void ShelfInfoDialog::updateSlotDetail(const QString &slot_name, const QString &category_id, const QString &package_id)
 {
     slot_value_label_->setText("当前点位：" + slot_name);
-    category_value_label_->setText("类别编号：" + category_id);
     package_value_label_->setText("包裹编号：" + package_id);
+    category_value_label_->setText("类别编号：" + category_id);
 }
 
 bool ShelfInfoDialog::eventFilter(QObject *watched, QEvent *event)
@@ -634,16 +634,31 @@ void ShelfInfoDialog::startManualStockIn()
     manual_scan_ack_received_ = false;
     raw_serial_buffer_.clear();
 
+    stock_outgoing_ = 0;
     uart_write(0x00, 0x00, QByteArray::fromHex("0A020001"));
 }
 
 void ShelfInfoDialog::handleManualStockOut()
 {
+    if (!serial_.isOpen()) {
+        updateSlotDetail("串口未打开", category_value_label_->text().mid(5), package_value_label_->text().mid(5));
+        return;
+    }
     // 地面站手动出库发起链路：
     // 1. Dialog 不直接改自己的展示副本。
     // 2. 这里只把“当前选中的格子坐标”发给 MainWindow。
     // 3. 真正的数据清空统一由 MainWindow 执行，避免主数据和弹窗副本分叉。
-    emit manualStockOutRequested(current_shelf_index_, current_side_, current_slot_row_, current_slot_col_);
+
+    pending_shelf_index_ = current_shelf_index_;
+    pending_side_ = current_side_;
+    pending_row_ = current_slot_row_;
+    pending_col_ = current_slot_col_;
+    waiting_manual_scan_result_ = true;
+    manual_scan_ack_received_ = false;
+    raw_serial_buffer_.clear();
+
+    stock_outgoing_ = 1;
+    uart_write(0x00, 0x00, QByteArray::fromHex("0A020001"));
 }
 
 void ShelfInfoDialog::handleSerialFrame(uint8_t deviceId, uint8_t status, const QByteArray &payload)
@@ -674,9 +689,20 @@ void ShelfInfoDialog::processManualScanText(const QString &scan_text)
     const QString package_id = parts[0].trimmed();
     const QString category_id = parts[1].trimmed();
 
+    manual_scan_ack_received_ = false;
     waiting_manual_scan_result_ = false;
-    emit manualStockInScanned(pending_shelf_index_, pending_side_, pending_row_, pending_col_,
-                              category_id, package_id);
+    if(stock_outgoing_ == 0)
+    {
+        emit manualStockInScanned(pending_shelf_index_, pending_side_, pending_row_, pending_col_,
+                                category_id, package_id);
+        stock_outgoing_ = -1;
+    }
+    else if(stock_outgoing_ == 1)
+    {
+        emit manualStockOutRequested(pending_shelf_index_, pending_side_, pending_row_, pending_col_,
+                                    category_id, package_id);
+        stock_outgoing_ = -1;
+    }
 }
 
 int ShelfInfoDialog::slotIndex(int row, int col) const

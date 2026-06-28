@@ -54,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent)
     top_status_bar_->setTriggerTime(mission_trigger_time_text_);//传入想要定的时间
     top_status_bar_->setTimeTriggerEnabled(mission_time_trigger_enabled_);//传入是否开启时间定时
     /******************************************************/
-    top_status_bar_->setConnected(true);
+    //top_status_bar_->setConnected(true);
     updateOverlayGeometry();
 
     /*********************ros移植部分***********************/
@@ -305,15 +305,32 @@ void MainWindow::setupConnections()
     // 3. MainWindow 在这里统一执行清空，避免 Dialog 和主数据各改各的导致状态分叉。
     connect(shelf_info_dialog_, &ShelfInfoDialog::manualStockOutRequested,
         this,
-        [this](int shelf_index, const QString &side, int row, int col)
+        [this](int shelf_index, const QString &side, int row, int col, const QString &category_id, const QString &package_id)
         {
-            applyManualStockOut(shelf_index, side, row, col);
+            applyManualStockOut(shelf_index, side, row, col, category_id, package_id);
         });
 
     /*********************ros通信相关***********************/
     
     if (ros_manager_)
     {
+        connect(top_status_bar_, &TopStatusBar::scheduledcheckbuttonnClicked, this, [this]() {
+            if(mission_trigger_time_text_flag_ == 1)
+            {
+                mission_trigger_time_text_ = "18:00:00";
+                run_log_view_->appendPlainText(QString("已设置定时巡检：%1").arg(mission_trigger_time_text_));
+                mission_trigger_time_text_flag_ = 0;
+                clock_timer_->start(5000);
+            }
+            else
+            {
+                mission_trigger_time_text_ = "";
+                run_log_view_->appendPlainText(QString("已关闭定时巡检"));
+                mission_trigger_time_text_flag_ = 1;
+                clock_timer_->start(5000);
+            }
+        });
+
         connect(top_status_bar_, &TopStatusBar::executeButtonClicked, this, [this]() {
             triggerMissionUpload("button");
         });
@@ -748,14 +765,14 @@ void MainWindow::appendBarcodeRecord(
 
     if (parts.size() >= 3)
     {
-        slot->observed_category_id = parts[0].trimmed();
-        slot->observed_package_id = parts[1].trimmed();
+        slot->observed_category_id = parts[1].trimmed();
+        slot->observed_package_id = parts[0].trimmed();
         slot->position_package_id = slot_code;
     }
     else if (parts.size() == 2)
     {
-        slot->observed_category_id = parts[0].trimmed();
-        slot->observed_package_id = parts[1].trimmed();
+        slot->observed_category_id = parts[1].trimmed();
+        slot->observed_package_id = parts[0].trimmed();
         slot->position_package_id.clear();
     }
     else
@@ -806,7 +823,7 @@ void MainWindow::applyManualStockIn(int shelf_index, const QString &side, int ro
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
 }
 
-void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int row, int col)
+void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int row, int col, const QString &category_id, const QString &package_id)
 {
     // 地面站手动出库真正清空数据的地方：
     // 1. 先按当前选中格定位到主数据里的槽位。
@@ -819,6 +836,21 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
         return;
     }
 
+    const QString scanned_category_id = category_id.trimmed();
+    const QString scanned_package_id = package_id.trimmed();
+
+    if (slot->category_id.isEmpty() || slot->package_id.isEmpty())
+    {
+        run_log_view_->appendPlainText("台帐数据缺失");
+        return;
+    }
+    if (slot->category_id != scanned_category_id ||
+        slot->package_id != scanned_package_id)
+    {
+        run_log_view_->appendPlainText("台帐数据不对应");
+        return;
+    }
+
     slot->category_id.clear();
     slot->package_id.clear();
     slot->observed_category_id.clear();
@@ -828,12 +860,19 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
     slot->has_image = false;
     slot->latest_image = SlotImageData{};
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+
+    run_log_view_->appendPlainText(
+    QString("手动出库成功：货架%1 %2 R%3C%4")
+        .arg(shelf_index + 1)
+        .arg(side)
+        .arg(row + 1)
+        .arg(col + 1));
 }
 
 SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
 {
     SlotLocation location;
-    static const QRegularExpression pattern("^([A-Z])-([1-9]\\d*)-([1-9]\\d*)$");
+    static const QRegularExpression pattern("^([A-Z])-(\\d+)-(\\d+)$");
     const QRegularExpressionMatch match = pattern.match(slot_code.trimmed());
     if (!match.hasMatch())
     {
@@ -844,7 +883,7 @@ SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
     const int encoded_row = match.captured(2).toInt();
     const int encoded_col = match.captured(3).toInt();
 
-    if (encoded_row < 1 || encoded_row > 4 || encoded_col < 1 || encoded_col > 3)
+    if (encoded_row < 0 || encoded_row > 3 || encoded_col < 0 || encoded_col > 2)
     {
         return location;
     }
@@ -857,8 +896,8 @@ SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
 
     location.shelf_index = shelf_bucket / 2;
     location.side = (shelf_bucket % 2 == 0) ? "front" : "back";
-    location.row = encoded_row - 1;
-    location.col = encoded_col - 1;
+    location.row = encoded_row;
+    location.col = encoded_col;
     location.valid = location.shelf_index >= 0 && location.shelf_index < shelf_panel_data_.size();
     return location;
 }

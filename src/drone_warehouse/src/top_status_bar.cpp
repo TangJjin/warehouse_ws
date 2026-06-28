@@ -39,7 +39,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(time_label_);
 
     title_button_->hide();
-    shelf_button_->hide();
+    //shelf_button_->hide();
     task_button_->hide();
     execute_button_->hide();
     scheduled_check_button_->hide();
@@ -51,6 +51,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
+    connect(scheduled_check_button_, &QPushButton::clicked, this, &TopStatusBar::scheduledcheckbuttonnClicked);
 
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次时间文本
         const QString current_time_text = QDateTime::currentDateTime().toString("HH:mm:ss");
@@ -134,7 +135,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 void TopStatusBar::setConnected(bool connected)
 {
     title_button_->setVisible(connected);
-    shelf_button_->setVisible(connected);
+    //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
     execute_button_->setVisible(connected);
     scheduled_check_button_->setVisible(connected);
