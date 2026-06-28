@@ -27,6 +27,9 @@ public:
 
 signals:
     void slotDoubleClicked(int shelf_index, const QString &side, int row, int col);//双击某个点位时通知主窗口弹图
+    void manualStockInScanned(int shelf_index, const QString &side, int row, int col,
+                              const QString &category_id, const QString &package_id);
+    void manualStockOutRequested(int shelf_index, const QString &side, int row, int col);
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;//监听槽位按钮双击事件
@@ -43,6 +46,10 @@ private:
     int slotIndex(int row, int col) const;//把行列换算成一维下标
 
     void setupSerial();
+    void startManualStockIn();
+    void handleManualStockOut();
+    void handleSerialFrame(uint8_t deviceId, uint8_t status, const QByteArray &payload);
+    void processManualScanText(const QString &scan_text);
     void uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload);
     bool uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &payload);
 
@@ -77,6 +84,14 @@ private:
     QSerialPort serial_;
 
     QVector<ShelfPanelData> shelf_panel_data_;//所有货架的弹窗展示数据
+
+    QByteArray raw_serial_buffer_;
+    bool waiting_manual_scan_result_ = false;
+    bool manual_scan_ack_received_ = false;
+    int pending_shelf_index_ = -1;
+    QString pending_side_;
+    int pending_row_ = -1;
+    int pending_col_ = -1;
 
     QString current_side_ = "front";//当前查看的是前面还是后面
     int current_slot_row_ = 0;//当前选中的行

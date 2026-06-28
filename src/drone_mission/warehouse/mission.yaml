@@ -11,217 +11,217 @@ mission:
       frame: "world_body"
       position: [0.00, 0.00, 0.40]
       yaw: 0.00
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 20.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
 
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 0.40]
       yaw: 0.00
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
       ########################################
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 0.40]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.25, 0.00, 0.40]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.75, 0.00, 0.40]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       ########################################
     - type: "move"
       frame: "world_body"
       position: [1.75, 0.00, 0.80]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.25, 0.00, 0.80]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 0.80]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       ########################################
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 1.20]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.25, 0.00, 1.20]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.75, 0.00, 1.20]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       ########################################
     - type: "move"
       frame: "world_body"
       position: [1.75, 0.00, 1.60]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [1.25, 0.00, 1.60]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [0.75, 0.00, 1.60]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       ########################################
       
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 1.60]
       yaw: 1.57
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 1.60]
       yaw: 0.00
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 1.00
       
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 0.80]
       yaw: 0.00
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -231,7 +231,7 @@ mission:
       frame: "world_body"
       position: [0.00, 0.00, 0.00]
       yaw: 0.00
-      tolerance: 0.12
+      tolerance: 0.08
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30

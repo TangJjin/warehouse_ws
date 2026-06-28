@@ -1,5 +1,6 @@
 #include "drone_warehouse/shelf_info_dialog.hpp"
 
+#include <QDebug>
 #include <limits>
 #include <QColor>
 #include <QGridLayout>
@@ -33,33 +34,44 @@ namespace
 
     QColor slotStatusColor(const ShelfSlotItem &slot)
     {
-        if (!slot.has_image)
-        {
-            return QColor("#7f8c9a");//灰：没图
-        }
-
         const bool has_manual_data =
             !slot.category_id.isEmpty() && !slot.package_id.isEmpty();
         const bool has_observed_data =
             !slot.observed_category_id.isEmpty() && !slot.observed_package_id.isEmpty();
 
-        if (!has_manual_data || !has_observed_data)
+        // 1. 台账没有、巡检也没有：灰
+        if (!has_manual_data && !has_observed_data)
         {
-            return QColor("#f0b429");//黄：有图但还不能比较
+            return QColor("#7f8c9a");
         }
 
+        // 2. 巡检有、台账没有：红
+        if (!has_manual_data && has_observed_data)
+        {
+            return QColor("#ff5c5c");
+        }
+
+        // 3. 台账有、巡检没有：黄
+        if (has_manual_data && !has_observed_data)
+        {
+            return QColor("#f0b429");
+        }
+
+        // 4. 两边都有，完全一致：绿
         if (slot.category_id == slot.observed_category_id &&
             slot.package_id == slot.observed_package_id)
         {
-            return QColor("#00d48a");//绿：一致
+            return QColor("#00d48a");
         }
 
-        return QColor("#ff5c5c");//红：不一致
+        // 5. 两边都有，但不一致：红
+        return QColor("#ff5c5c");
     }
 
     QColor shelfStatusColor(const ShelfPanelData &shelf)
     {
         bool has_red = false;
+        bool has_yellow = false;
         bool all_gray = true;
 
         auto check_slots = [&](const QVector<ShelfSlotItem> &slot_items)
@@ -72,6 +84,10 @@ namespace
                 {
                     has_red = true;
                 }
+                else if (color == QColor("#f0b429"))
+                {
+                    has_yellow = true;
+                }
 
                 if (color != QColor("#7f8c9a"))
                 {
@@ -83,32 +99,39 @@ namespace
         check_slots(shelf.front_slots);
         check_slots(shelf.back_slots);
 
-        if (has_red)
-        {
-            return QColor("#ff5c5c");//只要有一个红槽位，整架红
-        }
-
         if (all_gray)
         {
-            return QColor("#7f8c9a");//全部灰，整架灰
+            return QColor("#7f8c9a");
         }
 
-        return QColor("#00d48a");//其余情况整架绿
+        if (has_red)
+        {
+            return QColor("#ff5c5c");
+        }
+
+        if (has_yellow)
+        {
+            return QColor("#f0b429");
+        }
+
+        return QColor("#00d48a");
     }
 
     uint16_t crc16_ccitt(const uint8_t *data, int length)
     {
-        uint16_t crc = 0xFFFF;
+        uint16_t crc = 0x0000;
+
         for (int i = 0; i < length; ++i) {
-            crc ^= static_cast<uint16_t>(data[i]) << 8;
+            crc ^= static_cast<uint16_t>(data[i]);
             for (int j = 0; j < 8; ++j) {
-                if (crc & 0x8000) {
-                    crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
+                if (crc & 0x0001) {
+                    crc = (crc >> 1) ^ 0xA001;
                 } else {
-                    crc = static_cast<uint16_t>(crc << 1);
+                    crc >>= 1;
                 }
             }
         }
+
         return crc;
     }
 }
@@ -117,8 +140,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
-    resize(600, 500);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
-    setMinimumSize(380, 380);//限制最小尺寸，避免窗口过小导致控件挤压
+    resize(380, 470);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
+    setMinimumSize(380, 470);//限制最小尺寸，避免窗口过小导致控件挤压
     setModal(false);//这里先用非模态窗口，点击后可与主界面同时操作
 
     setupSerial();//打开串口
@@ -240,8 +263,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
 
     // 关闭按钮当前只做最基础行为，后续如果需要保存状态可再扩展。
     connect(close_button_, &QPushButton::clicked, this, &ShelfInfoDialog::close);
-    //connect(stock_in_button_, &QPushButton::clicked, this, &ShelfInfoDialog::close);
-    //connect(outgoing_button_, &QPushButton::clicked, this, &ShelfInfoDialog::close);
+    connect(stock_in_button_, &QPushButton::clicked, this, &ShelfInfoDialog::startManualStockIn);
+    connect(outgoing_button_, &QPushButton::clicked, this, &ShelfInfoDialog::handleManualStockOut);
 
     setStyleSheet(
         "QDialog {"
@@ -429,6 +452,7 @@ void ShelfInfoDialog::updateSlotGrid()
     {
         return;
     }
+    
 
     const ShelfPanelData &current_shelf = shelf_panel_data_[current_shelf_index_];//先取当前货架
     const QVector<ShelfSlotItem> &current_slots =
@@ -458,6 +482,13 @@ void ShelfInfoDialog::updateSlotGrid()
             // }
             button->setIcon(makeStatusIcon(slotStatusColor(slot)));
 
+            const bool is_selected = (row == current_slot_row_ && col == current_slot_col_);
+            if (is_selected) {
+                button->setStyleSheet("background: rgba(70, 110, 160, 160); border: 1px solid rgba(120, 180, 255, 180); border-radius:8px; color: #e7f3ff;");
+            } else {
+                button->setStyleSheet("background: rgba(42, 58, 82, 120); border: 1px solid rgba(90, 130, 180, 80); border-radius:8px; color: #d7e3f4;");
+            }
+
             button->setToolTip(
             QString("台账: %1 | %2\n巡检: %3 | %4")
                 .arg(slot.category_id.isEmpty() ? "——" : slot.category_id)
@@ -484,6 +515,8 @@ void ShelfInfoDialog::handleSlotClicked(int row, int col)
 {
     current_slot_row_ = row;//记录当前选中的行
     current_slot_col_ = col;//记录当前选中的列
+
+    updateSlotGrid();
 
     // 如果当前还没有任何货架数据，就不要继续往下取点位了。
     if (shelf_panel_data_.isEmpty() || current_shelf_index_ < 0 || current_shelf_index_ >= shelf_panel_data_.size())
@@ -539,7 +572,7 @@ bool ShelfInfoDialog::eventFilter(QObject *watched, QEvent *event)
 
 void ShelfInfoDialog::setupSerial()
 {
-    serial_.setPortName("/dev/ttyS3");
+    serial_.setPortName("/dev/ttyS6");
     serial_.setBaudRate(QSerialPort::Baud9600);
     serial_.setDataBits(QSerialPort::Data8);
     serial_.setParity(QSerialPort::NoParity);
@@ -555,10 +588,95 @@ void ShelfInfoDialog::setupSerial()
         uint8_t status = 0;
         QByteArray payload;
 
+        // 地面站手动入库的串口接收链路分两段：
+        // 1. 先走 `uart_read(...)`，把带 `31 01` 包头的 ACK 帧从串口流里切出来，再交给 `handleSerialFrame(...)` 判断。
+        // 2. ACK 之后，扫码枪会继续直接吐出纯文本 `CAT01|PKG88`，这部分不是协议帧，所以继续从串口剩余字节里攒文本。
+        // 3. 一旦文本里已经形成完整的 `类别|包裹` 格式，就交给 `processManualScanText(...)` 往主窗口回传。
+        if (waiting_manual_scan_result_ && manual_scan_ack_received_) {
+            raw_serial_buffer_.append(serial_.readAll());
+            const qsizetype newline_index = raw_serial_buffer_.indexOf('\n');
+            if (newline_index >= 0) {
+                const QByteArray line = raw_serial_buffer_.left(newline_index);
+                raw_serial_buffer_.remove(0, newline_index + 1);
+                processManualScanText(QString::fromLatin1(line).trimmed());
+            } else if (!raw_serial_buffer_.isEmpty()) {
+                const QString scan_text = QString::fromLatin1(raw_serial_buffer_).trimmed();
+                if (raw_serial_buffer_.contains('\r')) {
+                    QByteArray line = raw_serial_buffer_.left(raw_serial_buffer_.indexOf('\r'));
+                    raw_serial_buffer_.clear();
+                    processManualScanText(scan_text);
+                }
+            }
+        }
+
         while (uart_read(deviceId, status, payload)) {
-            // 这里处理一帧完整数据
+            handleSerialFrame(deviceId, status, payload);
         }
     });
+}
+
+void ShelfInfoDialog::startManualStockIn()
+{
+    if (!serial_.isOpen()) {
+        updateSlotDetail("串口未打开", category_value_label_->text().mid(5), package_value_label_->text().mid(5));
+        return;
+    }
+
+    // 地面站手动入库发起链路：
+    // 1. 先把“当前选中的货架/前后面/行列”冻结到 pending_*，避免扫码期间用户切换选中格后写错位置。
+    // 2. 清空本轮串口文本缓存，并进入 `waiting_manual_scan_result_` 等待态。
+    // 3. 最后发固定开启扫码命令，等待设备先回 ACK、再回纯文本扫码结果。
+    pending_shelf_index_ = current_shelf_index_;
+    pending_side_ = current_side_;
+    pending_row_ = current_slot_row_;
+    pending_col_ = current_slot_col_;
+    waiting_manual_scan_result_ = true;
+    manual_scan_ack_received_ = false;
+    raw_serial_buffer_.clear();
+
+    uart_write(0x00, 0x00, QByteArray::fromHex("0A020001"));
+}
+
+void ShelfInfoDialog::handleManualStockOut()
+{
+    // 地面站手动出库发起链路：
+    // 1. Dialog 不直接改自己的展示副本。
+    // 2. 这里只把“当前选中的格子坐标”发给 MainWindow。
+    // 3. 真正的数据清空统一由 MainWindow 执行，避免主数据和弹窗副本分叉。
+    emit manualStockOutRequested(current_shelf_index_, current_side_, current_slot_row_, current_slot_col_);
+}
+
+void ShelfInfoDialog::handleSerialFrame(uint8_t deviceId, uint8_t status, const QByteArray &payload)
+{
+    Q_UNUSED(deviceId);
+    Q_UNUSED(payload);
+
+    // 这里专门处理“开启扫码命令”对应的 ACK 帧。
+    // 当前协议里，设备会先返回一帧 `31 01 ...` 的确认帧，status 仍然是 0x00。
+    // 这一步不落库，只表示设备已经收到命令，真正的扫码结果还要继续等后面的纯文本串口输出。
+    if (status == 0x00 && waiting_manual_scan_result_) {
+        manual_scan_ack_received_ = true;
+        raw_serial_buffer_.clear();
+        return;
+    }
+}
+
+void ShelfInfoDialog::processManualScanText(const QString &scan_text)
+{
+    // 这里处理地面站手动入库真正拿到的扫码文本。
+    // 当前约定格式只有两段：`CAT01|PKG88`。
+    // 解析成功后，把结果和之前冻结下来的 pending 格子一起发给 MainWindow，
+    // 由 MainWindow 统一写入主数据，再刷新弹窗显示。
+    const QStringList parts = scan_text.split('|', Qt::KeepEmptyParts);
+    if (parts.size() < 2) {
+        return;
+    }
+    const QString package_id = parts[0].trimmed();
+    const QString category_id = parts[1].trimmed();
+
+    waiting_manual_scan_result_ = false;
+    emit manualStockInScanned(pending_shelf_index_, pending_side_, pending_row_, pending_col_,
+                              category_id, package_id);
 }
 
 int ShelfInfoDialog::slotIndex(int row, int col) const
@@ -568,8 +686,15 @@ int ShelfInfoDialog::slotIndex(int row, int col) const
 
 void ShelfInfoDialog::uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload)
 {
+
+    if (!serial_.isOpen()) {
+        return;
+    }
+
     const QByteArray frame = encodeFrame(0x57, 0x01, deviceId, status, payload);
     serial_.write(frame);
+    qDebug() << "TX:" << frame.toHex(' ').toUpper();
+    serial_.flush();
 
     // QByteArray payload;
     // uint8_t status = (0x1 << 4) | 0x0;
@@ -623,11 +748,12 @@ bool ShelfInfoDialog::uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &
 
         const auto *data = reinterpret_cast<const uint8_t *>(rxBuffer.constData());
 
+        // 数据长度：4 byte，大端
         const uint32_t payloadLen =
-            static_cast<uint32_t>(data[4]) |
-            (static_cast<uint32_t>(data[5]) << 8) |
-            (static_cast<uint32_t>(data[6]) << 16) |
-            (static_cast<uint32_t>(data[7]) << 24);
+            (static_cast<uint32_t>(data[4]) << 24) |
+            (static_cast<uint32_t>(data[5]) << 16) |
+            (static_cast<uint32_t>(data[6]) << 8)  |
+            static_cast<uint32_t>(data[7]);
 
         const quint64 expectedSize64 =
             static_cast<quint64>(kFixedHeaderSize) +
@@ -663,6 +789,8 @@ bool ShelfInfoDialog::uart_read(uint8_t &deviceId, uint8_t &status, QByteArray &
             deviceId = parsedDeviceId;
             status = parsedStatus;
             payload = parsedPayload;
+
+            qDebug() << "RX:" << frame.toHex(' ').toUpper();
             return true;
         }
 
@@ -687,23 +815,23 @@ QByteArray ShelfInfoDialog::encodeFrame(uint8_t sof1, uint8_t sof2,
     // 指令状态
     frame.append(static_cast<char>(status));
 
-    // 数据长度（4 byte，小端）
+    // 数据长度：4 byte，大端
     const uint32_t payloadLen = static_cast<uint32_t>(payload.size());
-    frame.append(static_cast<char>( payloadLen        & 0xFF));
-    frame.append(static_cast<char>((payloadLen >> 8)  & 0xFF));
-    frame.append(static_cast<char>((payloadLen >> 16) & 0xFF));
     frame.append(static_cast<char>((payloadLen >> 24) & 0xFF));
+    frame.append(static_cast<char>((payloadLen >> 16) & 0xFF));
+    frame.append(static_cast<char>((payloadLen >> 8) & 0xFF));
+    frame.append(static_cast<char>(payloadLen & 0xFF));
 
     // 数据
     frame.append(payload);
 
     // CRC16：对除 CRC 自身以外的所有字节计算
-    const uint8_t *crcBegin = reinterpret_cast<const uint8_t *>(frame.constData());
+    const uint8_t *data = reinterpret_cast<const uint8_t *>(frame.constData());
     const int crcLen = frame.size();
-    const uint16_t crc = crc16_ccitt(crcBegin, crcLen);
+    const uint16_t crc = crc16_ccitt(data, crcLen);
 
-    frame.append(static_cast<char>(crc & 0xFF));
     frame.append(static_cast<char>((crc >> 8) & 0xFF));
+    frame.append(static_cast<char>(crc & 0xFF));
 
     return frame;
 }
@@ -725,12 +853,12 @@ bool ShelfInfoDialog::validateFrame(const QByteArray &frame,
         return false;
     }
 
-    // 解析长度（4 byte，小端）
+    // 数据长度：4 byte，大端
     const uint32_t payloadLen =
-        static_cast<uint32_t>(data[4]) |
-        (static_cast<uint32_t>(data[5]) << 8) |
-        (static_cast<uint32_t>(data[6]) << 16) |
-        (static_cast<uint32_t>(data[7]) << 24);
+        (static_cast<uint32_t>(data[4]) << 24) |
+        (static_cast<uint32_t>(data[5]) << 16) |
+        (static_cast<uint32_t>(data[6]) << 8)  |
+        static_cast<uint32_t>(data[7]);
 
     const int expectedSize = 2 + 1 + 1 + 4 + static_cast<int>(payloadLen) + 2;
     if (frame.size() != expectedSize) {
@@ -739,8 +867,8 @@ bool ShelfInfoDialog::validateFrame(const QByteArray &frame,
 
     // 提取 CRC
     const uint16_t recvCrc =
-        static_cast<uint16_t>(data[frame.size() - 2]) |
-        (static_cast<uint16_t>(data[frame.size() - 1]) << 8);
+        (static_cast<uint16_t>(data[frame.size() - 2]) << 8) |
+        static_cast<uint16_t>(data[frame.size() - 1]);
 
     // 计算 CRC（除 CRC 本身）
     const uint16_t calcCrc = crc16_ccitt(data, frame.size() - 2);
