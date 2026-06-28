@@ -1,6 +1,7 @@
 #include "drone_perception/qr_vision_node.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui.hpp>
@@ -25,7 +27,11 @@ static constexpr int kBpuInputHeightPx = 640;
 static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr int kDefaultShelfCodeStableFrames = 3;
 static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
+static constexpr float kDefaultOcrYoloPaddingRatio = 0.15F;
 #if DRONE_PERCEPTION_HAS_BPU
+static constexpr int32_t kYoloClassQrcode = 0;
+static constexpr int32_t kYoloClassPackage = 1;
+static constexpr int32_t kYoloClassShelfTag = 2;
 static constexpr float kVisualCodeRoiPaddingXRatio = 0.45F;
 static constexpr float kVisualCodeRoiPaddingYRatio = 0.20F;
 static constexpr double kVisualCodeRetryScale = 2.0;
@@ -59,16 +65,9 @@ struct VisualCodeScanStats
 };
 
 void configureVisualCodeScanner(
-    zbar::ImageScanner &scanner,
-    bool use_barcode_format)
+    zbar::ImageScanner &scanner)
 {
   scanner.set_config(zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 0);
-
-  if (use_barcode_format) {
-    scanner.set_config(zbar::ZBAR_CODE128, zbar::ZBAR_CFG_ENABLE, 1);
-    return;
-  }
-
   scanner.set_config(zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_ENABLE, 1);
 }
 
@@ -104,59 +103,6 @@ std::string trimAndUppercase(const std::string &text)
   return normalized;
 }
 
-bool isAlphaString(const std::string &text)
-{
-  if (text.empty()) {
-    return false;
-  }
-
-  return std::all_of(
-      text.begin(),
-      text.end(),
-      [](unsigned char value) {
-        return std::isalpha(value) != 0;
-      });
-}
-
-bool isDigitString(const std::string &text)
-{
-  if (text.empty()) {
-    return false;
-  }
-
-  return std::all_of(
-      text.begin(),
-      text.end(),
-      [](unsigned char value) {
-        return std::isdigit(value) != 0;
-      });
-}
-
-bool isValidShelfCode(const std::string &code)
-{
-  const std::size_t first_dash = code.find('-');
-
-  if (first_dash == std::string::npos) {
-    return false;
-  }
-
-  const std::size_t second_dash = code.find('-', first_dash + 1U);
-
-  if (second_dash == std::string::npos) {
-    return false;
-  }
-
-  if (code.find('-', second_dash + 1U) != std::string::npos) {
-    return false;
-  }
-
-  const std::string area = code.substr(0U, first_dash);
-  const std::string row = code.substr(first_dash + 1U, second_dash - first_dash - 1U);
-  const std::string col = code.substr(second_dash + 1U);
-
-  return isAlphaString(area) && isDigitString(row) && isDigitString(col);
-}
-
 bool isValidShortPrefixedCode(
     const std::string &code,
     const std::string &prefix)
@@ -185,11 +131,6 @@ void appendParsedVisualCode(
     const std::string &code,
     std::vector<ParsedVisualCode> &parsed_codes)
 {
-  if (isValidShelfCode(code)) {
-    parsed_codes.push_back({"shelf", code});
-    return;
-  }
-
   if (isValidShortPrefixedCode(code, "SKU-")) {
     parsed_codes.push_back({"sku", code});
     return;
@@ -205,6 +146,7 @@ std::vector<ParsedVisualCode> parseVisualCodes(const std::string &code)
 {
   std::vector<ParsedVisualCode> parsed_codes;
   std::size_t begin = 0U;
+  std::size_t token_count = 0U;
 
   while (begin <= code.size()) {
     const std::size_t separator = code.find('|', begin);
@@ -213,6 +155,7 @@ std::vector<ParsedVisualCode> parseVisualCodes(const std::string &code)
     const std::string token = trimAndUppercase(code.substr(begin, end - begin));
 
     if (!token.empty()) {
+      ++token_count;
       appendParsedVisualCode(token, parsed_codes);
     }
 
@@ -221,6 +164,23 @@ std::vector<ParsedVisualCode> parseVisualCodes(const std::string &code)
     }
 
     begin = separator + 1U;
+  }
+
+  const bool has_sku = std::any_of(
+      parsed_codes.begin(),
+      parsed_codes.end(),
+      [](const ParsedVisualCode &parsed_code) {
+        return parsed_code.category == "sku";
+      });
+  const bool has_pkg = std::any_of(
+      parsed_codes.begin(),
+      parsed_codes.end(),
+      [](const ParsedVisualCode &parsed_code) {
+        return parsed_code.category == "pkg";
+      });
+
+  if (token_count != 2U || parsed_codes.size() != 2U || !has_sku || !has_pkg) {
+    return {};
   }
 
   return parsed_codes;
@@ -244,131 +204,6 @@ std::string formatParsedVisualCodeCategories(
   }
 
   return categories;
-}
-
-void hybridBinarization(const cv::Mat &src, cv::Mat &dst)
-{
-  static constexpr int kBlockSize = 8;
-  static constexpr int kBlockSizePower = 3;
-  static constexpr int kBlockSizeMask = kBlockSize - 1;
-  static constexpr int kMinDimension = kBlockSize * 5;
-  static constexpr int kMinDynamicRange = 24;
-
-  const int width = src.cols;
-  const int height = src.rows;
-
-  // Fallback to OTSU for images too small for block-based approach
-  if (width < kMinDimension || height < kMinDimension) {
-    cv::threshold(src, dst, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-    return;
-  }
-
-  // Convert to 1D luminance array for fast access
-  const std::vector<uchar> luminances(src.begin<uchar>(), src.end<uchar>());
-
-  // Sub-image dimensions (number of 8x8 blocks)
-  int sub_width = width >> kBlockSizePower;
-
-  if ((width & kBlockSizeMask) != 0) { sub_width++; }
-
-  int sub_height = height >> kBlockSizePower;
-
-  if ((height & kBlockSizeMask) != 0) { sub_height++; }
-
-  // Step 1: calculate black point (local threshold) for each 8x8 block
-  cv::Mat black_points(sub_height, sub_width, CV_8UC1);
-  const int max_y_offset = height - kBlockSize;
-  const int max_x_offset = width - kBlockSize;
-
-  for (int y = 0; y < sub_height; y++) {
-    int y_offset = y << kBlockSizePower;
-    if (y_offset > max_y_offset) { y_offset = max_y_offset; }
-
-    for (int x = 0; x < sub_width; x++) {
-      int x_offset = x << kBlockSizePower;
-      if (x_offset > max_x_offset) { x_offset = max_x_offset; }
-
-      int sum = 0;
-      int min = 0xFF;
-      int max = 0;
-
-      for (int yy = 0, offset = y_offset * width + x_offset; yy < kBlockSize; yy++, offset += width) {
-        for (int xx = 0; xx < kBlockSize; xx++) {
-          const int pixel = luminances[offset + xx];
-          sum += pixel;
-          if (pixel < min) { min = pixel; }
-          if (pixel > max) { max = pixel; }
-        }
-
-        // Early exit once dynamic range is met
-        if (max - min > kMinDynamicRange) {
-          for (yy++, offset += width; yy < kBlockSize; yy++, offset += width) {
-            for (int xx = 0; xx < kBlockSize; xx++) {
-              sum += luminances[offset + xx];
-            }
-          }
-        }
-      }
-
-      int average = sum >> (kBlockSizePower * 2);
-
-      // Low-contrast block: assume background, use half-min or neighbor estimate
-      if (max - min <= kMinDynamicRange) {
-        average = min / 2;
-
-        if (y > 0 && x > 0) {
-          const int neighbor_avg =
-              (static_cast<int>(black_points.at<uchar>(y - 1, x)) +
-               2 * static_cast<int>(black_points.at<uchar>(y, x - 1)) +
-               static_cast<int>(black_points.at<uchar>(y - 1, x - 1))) / 4;
-
-          if (min < neighbor_avg) { average = neighbor_avg; }
-        }
-      }
-
-      black_points.at<uchar>(y, x) = static_cast<uchar>(average);
-    }
-  }
-
-  // Step 2: apply local thresholds to produce binary output
-  dst.create(src.size(), src.type());
-
-  for (int y = 0; y < sub_height; y++) {
-    const int y_offset = std::min(y << kBlockSizePower, max_y_offset);
-    const int top = std::max(2, std::min(y, sub_height - 3));
-
-    for (int x = 0; x < sub_width; x++) {
-      const int x_offset = std::min(x << kBlockSizePower, max_x_offset);
-      const int left = std::max(2, std::min(x, sub_width - 3));
-
-      // Average black point over 5x5 block neighborhood
-      int sum = 0;
-      const uchar *bp_row = black_points.ptr<uchar>(top - 2);
-
-      for (int z = 0; z <= 4; z++) {
-        sum += bp_row[left - 2] + bp_row[left - 1] + bp_row[left] + bp_row[left + 1] + bp_row[left + 2];
-        bp_row += black_points.cols;
-      }
-
-      const int average = sum / 25;
-
-      // Apply threshold to each pixel in this 8x8 block
-      for (int yy = 0, offset = y_offset * width + x_offset; yy < kBlockSize; yy++, offset += width) {
-        uchar *dst_row = dst.ptr<uchar>(y_offset + yy);
-
-        for (int xx = 0; xx < kBlockSize; xx++) {
-          dst_row[x_offset + xx] = (luminances[offset + xx] <= average) ? 0 : 255;
-        }
-      }
-    }
-  }
-}
-
-void preprocessBarcodeRoi(cv::Mat &gray_roi)
-{
-  cv::Mat denoised_roi;
-  cv::GaussianBlur(gray_roi, denoised_roi, cv::Size(3, 3), 0.0);
-  hybridBinarization(denoised_roi, gray_roi);
 }
 #endif
 }  // namespace
@@ -397,9 +232,8 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s decode_mode=%s yolo_bpu=%s ocr_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
+      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
       use_rgbd_ ? "rgbd" : "synced",
-      use_barcode_format_ ? "barcode" : "qr",
       enable_bpu_ ? "true" : "false",
       enable_bpu_ocr_ ? "true" : "false",
       color_topic_.c_str(),
@@ -429,7 +263,6 @@ void QrVisionNode::declareParameters()
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
-  use_barcode_format_ = this->declare_parameter<bool>("use_barcode_format", false);
   use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   sample_radius_px_ = this->declare_parameter<int>(
@@ -450,19 +283,13 @@ void QrVisionNode::declareParameters()
       DRONE_PERCEPTION_HAS_BPU != 0);
   bpu_model_path_ = this->declare_parameter<std::string>(
       "bpu_model_path",
-      "/home/sunrise/drone_ws/src/drone_perception/rdk_best_bayese_640x640_nv12.bin");
-  ocr_det_model_path_ = this->declare_parameter<std::string>(
-      "ocr_det_model_path",
-      "/home/sunrise/drone_ws/src/drone_perception/en_PP-OCRv3_det_640x640_nv12.bin");
+      "/home/sunrise/drone_ws/src/drone_perception/best_bayese_640x640_nv12.bin");
   ocr_rec_model_path_ = this->declare_parameter<std::string>(
       "ocr_rec_model_path",
       "/home/sunrise/drone_ws/src/drone_perception/en_PP-OCRv3_rec_48x320_rgb.bin");
-  ocr_det_threshold_ = this->declare_parameter<double>(
-      "ocr_det_threshold",
-      0.5);
-  ocr_det_min_area_px_ = this->declare_parameter<int>(
-      "ocr_det_min_area_px",
-      100);
+  ocr_yolo_padding_ratio_ = static_cast<float>(this->declare_parameter<double>(
+      "ocr_yolo_padding_ratio",
+      kDefaultOcrYoloPaddingRatio));
 
   if (log_throttle_ms_ <= 0)
   {
@@ -497,6 +324,15 @@ void QrVisionNode::declareParameters()
         "shelf_code_lost_tolerance_frames must be greater than or equal to 0, reset to %d",
         kDefaultShelfCodeLostToleranceFrames);
     shelf_code_lost_tolerance_frames_ = kDefaultShelfCodeLostToleranceFrames;
+  }
+
+  if (ocr_yolo_padding_ratio_ < 0.0F)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "ocr_yolo_padding_ratio must be greater than or equal to 0, reset to %.2f",
+        kDefaultOcrYoloPaddingRatio);
+    ocr_yolo_padding_ratio_ = kDefaultOcrYoloPaddingRatio;
   }
 }
 
@@ -550,17 +386,15 @@ void QrVisionNode::initializeBpuOcrPipeline()
 
   try {
     BpuOcrConfig config{};
-    config.det_model_path = ocr_det_model_path_;
     config.rec_model_path = ocr_rec_model_path_;
-    config.det_threshold = ocr_det_threshold_;
-    config.det_min_area_px = ocr_det_min_area_px_;
+    config.enable_detection_model = false;
     bpu_ocr_pipeline_ = std::make_unique<BpuOcrPipeline>(config);
 
     RCLCPP_INFO(
         get_logger(),
-        "BPU OCR pipeline initialized. det_model=%s rec_model=%s",
-        config.det_model_path.empty() ? "<auto>" : config.det_model_path.c_str(),
-        config.rec_model_path.empty() ? "<auto>" : config.rec_model_path.c_str());
+        "BPU OCR rec pipeline initialized. rec_model=%s yolo_padding_ratio=%.2f",
+        config.rec_model_path.empty() ? "<auto>" : config.rec_model_path.c_str(),
+        ocr_yolo_padding_ratio_);
   } catch (const std::exception &e) {
     bpu_ocr_pipeline_.reset();
     enable_bpu_ocr_ = false;
@@ -682,15 +516,15 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
 void QrVisionNode::updateVisualCodeStability(
     const std::vector<DecodedVisualCode> &decoded_codes)
 {
-  updateVisualCodeCategoryStability(decoded_codes, "shelf", shelf_code_state_);
-  updateVisualCodeCategoryStability(decoded_codes, "sku", sku_code_state_);
-  updateVisualCodeCategoryStability(decoded_codes, "pkg", pkg_code_state_);
+  updateVisualCodeCategoryStability(decoded_codes, "sku", sku_code_state_, "qr");
+  updateVisualCodeCategoryStability(decoded_codes, "pkg", pkg_code_state_, "qr");
 }
 
 void QrVisionNode::updateVisualCodeCategoryStability(
     const std::vector<DecodedVisualCode> &decoded_codes,
     const std::string &category,
-    CodeStabilityState &state)
+    CodeStabilityState &state,
+    const char *source_name)
 {
   const auto selected_code = std::find_if(
       decoded_codes.begin(),
@@ -734,7 +568,8 @@ void QrVisionNode::updateVisualCodeCategoryStability(
       get_logger(),
       *get_clock(),
       log_throttle_ms_,
-      "stable visual code category=%s symbol_type=%s code=%s stable_frames=%d",
+      "stable %s code category=%s symbol_type=%s code=%s stable_frames=%d",
+      source_name,
       category.c_str(),
       state.stable_symbol_type.c_str(),
       state.stable_code.c_str(),
@@ -753,13 +588,17 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
   }
 
   zbar::ImageScanner scanner;
-  configureVisualCodeScanner(scanner, use_barcode_format_);
+  configureVisualCodeScanner(scanner);
 
   const cv::Point2f image_center(
       static_cast<float>(color_image.cols) * 0.5F,
       static_cast<float>(color_image.rows) * 0.5F);
 
   for (const BpuYoloDetection &detection : detections) {
+    if (detection.class_id != kYoloClassQrcode) {
+      continue;
+    }
+
     const BpuImageRect image_rect = mapBpuDetectionToImageRect(
         detection,
         color_image.cols,
@@ -797,8 +636,6 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     if (!raw_gray_roi.isContinuous()) {
       raw_gray_roi = raw_gray_roi.clone();
     }
-
-    const bool barcode_detection = use_barcode_format_ && detection.class_id == 0;
 
     auto scan_gray_roi = [&](
         const cv::Mat &scan_roi,
@@ -840,8 +677,6 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
         const std::string code = trimAndUppercase(raw_code);
         const std::string symbol_type = symbol->get_type_name();
         const bool is_qr_code = symbol_type.find("QR") != std::string::npos;
-        const bool symbol_matches_mode =
-            use_barcode_format_ ? !is_qr_code : is_qr_code;
         const std::vector<ParsedVisualCode> parsed_codes = parseVisualCodes(code);
         const std::string categories = formatParsedVisualCodeCategories(parsed_codes);
 
@@ -853,11 +688,10 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             get_logger(),
             *get_clock(),
             log_throttle_ms_,
-            "zbar raw code scan=%s decode_mode=%s symbol_type=%s mode_match=%s raw=%s normalized=%s category=%s roi=%dx%d at=%d,%d",
+            "zbar raw qr scan=%s symbol_type=%s qr_match=%s raw=%s normalized=%s category=%s roi=%dx%d at=%d,%d",
             scan_mode,
-            use_barcode_format_ ? "barcode" : "qr",
             symbol_type.c_str(),
-            symbol_matches_mode ? "true" : "false",
+            is_qr_code ? "true" : "false",
             raw_code.c_str(),
             code.c_str(),
             categories.c_str(),
@@ -866,7 +700,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             roi.x,
             roi.y);
 
-        if (!symbol_matches_mode || parsed_codes.empty()) {
+        if (!is_qr_code || parsed_codes.empty()) {
           continue;
         }
 
@@ -940,24 +774,6 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
           kVisualCodeFarRetryScale,
           cv::INTER_CUBIC,
           "raw_gray_scale4");
-    }
-
-    if (barcode_detection) {
-      cv::Mat barcode_gray_roi = raw_gray_roi.clone();
-      preprocessBarcodeRoi(barcode_gray_roi);
-      debug_barcode_roi_ = barcode_gray_roi.clone();
-
-      if (scan_stats.accepted_count <= 0) {
-        scan_stats = scan_gray_roi(barcode_gray_roi, 1.0F, "barcode_binary");
-      }
-
-      if (scan_stats.accepted_count <= 0) {
-        scan_stats = scan_scaled_gray_roi(
-            barcode_gray_roi,
-            kVisualCodeRetryScale,
-            cv::INTER_NEAREST,
-            "barcode_binary_scale2");
-      }
     }
   }
 
@@ -1129,9 +945,9 @@ void QrVisionNode::processFrame(
       sample_radius_px_);
 
 #if DRONE_PERCEPTION_HAS_BPU
-  if (enable_bpu_ && bpu_detector_) {
-    last_bpu_detections_.clear();
+  last_bpu_detections_.clear();
 
+  if (enable_bpu_ && bpu_detector_) {
     const auto preprocess_t0 = SteadyClock::now();
     const bool input_ready = prepareBpuInput(color_bridge->image);
     const auto preprocess_t1 = SteadyClock::now();
@@ -1146,18 +962,35 @@ void QrVisionNode::processFrame(
         last_bpu_detections_ = detections;
 
         const auto infer_t1 = SteadyClock::now();
+        int qrcode_count = 0;
+        int package_count = 0;
+        int shelf_tag_count = 0;
+
+        for (const BpuYoloDetection &detection : detections) {
+          if (detection.class_id == kYoloClassQrcode) {
+            ++qrcode_count;
+          } else if (detection.class_id == kYoloClassPackage) {
+            ++package_count;
+          } else if (detection.class_id == kYoloClassShelfTag) {
+            ++shelf_tag_count;
+          }
+        }
 
         RCLCPP_INFO_THROTTLE(
             get_logger(),
             *get_clock(),
             log_throttle_ms_,
             "BPU inference ok. mode=%s preprocess_ms=%.2f infer_ms=%.2f "
-            "input_size=%zu detections=%zu letterbox_scale=%.4f letterbox_pad=%d,%d",
+            "input_size=%zu detections=%zu qrcode=%d package=%d shelf_tag=%d "
+            "letterbox_scale=%.4f letterbox_pad=%d,%d",
             input_mode,
             elapsedMs(preprocess_t0, preprocess_t1),
             elapsedMs(infer_t0, infer_t1),
             bpu_input_nv12_.size(),
             detections.size(),
+            qrcode_count,
+            package_count,
+            shelf_tag_count,
             bpu_letterbox_.scale,
             bpu_letterbox_.pad_x,
             bpu_letterbox_.pad_y);
@@ -1173,25 +1006,15 @@ void QrVisionNode::processFrame(
   }
 
   if (enable_bpu_ocr_ && bpu_ocr_pipeline_) {
-    last_ocr_regions_.clear();
-
     try {
-      last_ocr_regions_ = bpu_ocr_pipeline_->infer(color_bridge->image);
-      const OcrTimingStats &ocr_timing = bpu_ocr_pipeline_->lastTiming();
-
-      RCLCPP_INFO_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          log_throttle_ms_,
-          "BPU OCR ok. mode=%s det_pre_ms=%.2f det_infer_ms=%.2f det_post_ms=%.2f rec_total_ms=%.2f rec_boxes=%d regions=%zu",
-          input_mode,
-          ocr_timing.det_preprocess_ms,
-          ocr_timing.det_infer_ms,
-          ocr_timing.det_postprocess_ms,
-          ocr_timing.rec_total_ms,
-          ocr_timing.rec_box_count,
-          last_ocr_regions_.size());
+      recognizeShelfTagFromDetections(
+          color_bridge->image,
+          last_bpu_detections_,
+          input_mode);
     } catch (const std::exception &e) {
+      last_ocr_regions_.clear();
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+
       RCLCPP_ERROR_THROTTLE(
           get_logger(),
           *get_clock(),
@@ -1199,6 +1022,9 @@ void QrVisionNode::processFrame(
           "BPU OCR failed: %s",
           e.what());
     }
+  } else {
+    last_ocr_regions_.clear();
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
   }
 #endif
 
@@ -1207,6 +1033,7 @@ void QrVisionNode::processFrame(
       decodeVisualCodesFromDetections(color_bridge->image, last_bpu_detections_));
 #else
   updateVisualCodeStability({});
+  updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
 #endif
 
   if (debug_view_)
@@ -1312,9 +1139,8 @@ void QrVisionNode::displayDebugFrame(
       return y;
     }
 
-    const bool is_qr_code =
-        state.stable_symbol_type.find("QR") != std::string::npos;
-    const char *kind = is_qr_code ? "QR" : "Barcode";
+    const bool is_ocr_code = state.stable_symbol_type == "OCR";
+    const char *kind = is_ocr_code ? "OCR" : "QR";
     const std::string line = fit_status_text(cv::format(
         "%s %s: %s",
         kind,
@@ -1327,7 +1153,7 @@ void QrVisionNode::displayDebugFrame(
         cv::Point(24, y),
         cv::FONT_HERSHEY_SIMPLEX,
         0.5,
-        is_qr_code ? cv::Scalar(120, 220, 255) : cv::Scalar(120, 255, 160),
+        is_ocr_code ? cv::Scalar(255, 210, 120) : cv::Scalar(120, 220, 255),
         1);
 
     return y + 22;
@@ -1380,40 +1206,6 @@ void QrVisionNode::displayDebugFrame(
       }
     }
   }
-
-  // Show preprocessed barcode ROI as picture-in-picture in bottom-right corner
-  if (!debug_barcode_roi_.empty()) {
-    const double roi_scale = std::min(
-        200.0 / static_cast<double>(debug_barcode_roi_.cols),
-        120.0 / static_cast<double>(debug_barcode_roi_.rows));
-    const int thumb_w = std::max(1, static_cast<int>(debug_barcode_roi_.cols * roi_scale));
-    const int thumb_h = std::max(1, static_cast<int>(debug_barcode_roi_.rows * roi_scale));
-
-    cv::Mat thumb;
-    cv::resize(debug_barcode_roi_, thumb, cv::Size(thumb_w, thumb_h), 0.0, 0.0, cv::INTER_NEAREST);
-
-    cv::Mat thumb_bgr;
-    cv::cvtColor(thumb, thumb_bgr, cv::COLOR_GRAY2BGR);
-
-    const int ox = display.cols - thumb_w - 12;
-    const int oy = display.rows - thumb_h - 12;
-    thumb_bgr.copyTo(display(cv::Rect(ox, oy, thumb_w, thumb_h)));
-
-    cv::rectangle(
-        display,
-        cv::Point(ox - 1, oy - 1),
-        cv::Point(ox + thumb_w + 1, oy + thumb_h + 1),
-        cv::Scalar(0, 255, 0), 1);
-
-    cv::putText(
-        display,
-        "Barcode ROI",
-        cv::Point(ox, oy - 6),
-        cv::FONT_HERSHEY_SIMPLEX,
-        0.4,
-        cv::Scalar(0, 255, 0),
-        1);
-  }
 #endif
 
   cv::imshow(window_name_, display);
@@ -1447,6 +1239,119 @@ QrVisionNode::BpuImageRect QrVisionNode::mapBpuDetectionToImageRect(
       std::clamp(std::max(y_min, y_max), 0.0F, image_height_f)};
 }
 
+QrVisionNode::BpuImageRect QrVisionNode::expandImageRect(
+    const BpuImageRect &image_rect,
+    float padding_ratio,
+    int image_width,
+    int image_height) const
+{
+  const float width_px = image_rect.x_max - image_rect.x_min;
+  const float height_px = image_rect.y_max - image_rect.y_min;
+
+  if (width_px <= 1.0F || height_px <= 1.0F || image_width <= 0 || image_height <= 0) {
+    return {};
+  }
+
+  const float pad_x_px = width_px * padding_ratio;
+  const float pad_y_px = height_px * padding_ratio;
+  const float image_width_f = static_cast<float>(image_width);
+  const float image_height_f = static_cast<float>(image_height);
+
+  return {
+      std::clamp(image_rect.x_min - pad_x_px, 0.0F, image_width_f),
+      std::clamp(image_rect.y_min - pad_y_px, 0.0F, image_height_f),
+      std::clamp(image_rect.x_max + pad_x_px, 0.0F, image_width_f),
+      std::clamp(image_rect.y_max + pad_y_px, 0.0F, image_height_f)};
+}
+
+void QrVisionNode::recognizeShelfTagFromDetections(
+    const cv::Mat &color_image,
+    const std::vector<BpuYoloDetection> &detections,
+    const char *input_mode)
+{
+  last_ocr_regions_.clear();
+
+  if (!bpu_ocr_pipeline_ || color_image.empty()) {
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    return;
+  }
+
+  const BpuYoloDetection *best_shelf_tag = nullptr;
+
+  for (const BpuYoloDetection &detection : detections) {
+    if (detection.class_id != kYoloClassShelfTag) {
+      continue;
+    }
+
+    if (best_shelf_tag == nullptr || detection.score > best_shelf_tag->score) {
+      best_shelf_tag = &detection;
+    }
+  }
+
+  if (best_shelf_tag == nullptr) {
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    return;
+  }
+
+  const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+      *best_shelf_tag,
+      color_image.cols,
+      color_image.rows);
+  const BpuImageRect padded_rect = expandImageRect(
+      image_rect,
+      ocr_yolo_padding_ratio_,
+      color_image.cols,
+      color_image.rows);
+
+  if (padded_rect.x_max - padded_rect.x_min <= 1.0F ||
+      padded_rect.y_max - padded_rect.y_min <= 1.0F) {
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    return;
+  }
+
+  const std::array<cv::Point2f, 4> shelf_tag_box = {
+      cv::Point2f(padded_rect.x_min, padded_rect.y_min),
+      cv::Point2f(padded_rect.x_max, padded_rect.y_min),
+      cv::Point2f(padded_rect.x_max, padded_rect.y_max),
+      cv::Point2f(padded_rect.x_min, padded_rect.y_max)};
+
+  last_ocr_regions_ = bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
+
+  std::vector<DecodedVisualCode> ocr_codes;
+  std::string ocr_text = "none";
+  float ocr_score = 0.0F;
+
+  if (!last_ocr_regions_.empty()) {
+    const OcrTextRegion &region = last_ocr_regions_.front();
+    ocr_text = region.text;
+    ocr_score = region.score;
+    ocr_codes.push_back({region.text, "shelf", "OCR", 0.0});
+  }
+
+  updateVisualCodeCategoryStability(ocr_codes, "shelf", shelf_code_state_, "ocr");
+
+  const OcrTimingStats &ocr_timing = bpu_ocr_pipeline_->lastTiming();
+  RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      log_throttle_ms_,
+      "BPU OCR shelf_tag mode=%s shelf_tag_score=%.3f roi=[%.0f,%.0f,%.0f,%.0f] "
+      "text=%s text_score=%.3f rec[crop=%.2f pre=%.2f infer=%.2f decode=%.2f total=%.2f]",
+      input_mode,
+      best_shelf_tag->score,
+      padded_rect.x_min,
+      padded_rect.y_min,
+      padded_rect.x_max,
+      padded_rect.y_max,
+      ocr_text.c_str(),
+      ocr_score,
+      ocr_timing.rec_crop_ms,
+      ocr_timing.rec_preprocess_ms,
+      ocr_timing.rec_infer_ms,
+      ocr_timing.rec_decode_ms,
+      ocr_timing.rec_total_ms);
+}
+
 void QrVisionNode::drawBpuDetections(cv::Mat &display) const
 {
   for (const BpuYoloDetection &detection : last_bpu_detections_) {
@@ -1467,16 +1372,26 @@ void QrVisionNode::drawBpuDetections(cv::Mat &display) const
         static_cast<int>(image_rect.x_max),
         static_cast<int>(image_rect.y_max));
 
+    cv::Scalar box_color(0, 255, 0);
+
+    if (detection.class_id == kYoloClassQrcode) {
+      box_color = cv::Scalar(120, 220, 255);
+    } else if (detection.class_id == kYoloClassPackage) {
+      box_color = cv::Scalar(120, 255, 160);
+    } else if (detection.class_id == kYoloClassShelfTag) {
+      box_color = cv::Scalar(255, 210, 120);
+    }
+
     cv::rectangle(
         display,
         top_left,
         bottom_right,
-        cv::Scalar(0, 255, 0),
+        box_color,
         2);
 
     const std::string label = cv::format(
-        "cls%d %.2f",
-        detection.class_id,
+        "%s %.2f",
+        BpuYoloDetector::className(detection.class_id),
         detection.score);
     const int label_y = top_left.y > 18 ? top_left.y - 6 : top_left.y + 18;
 
@@ -1486,7 +1401,7 @@ void QrVisionNode::drawBpuDetections(cv::Mat &display) const
         cv::Point(top_left.x, label_y),
         cv::FONT_HERSHEY_SIMPLEX,
         0.5,
-        cv::Scalar(0, 255, 0),
+        box_color,
         1);
   }
 }

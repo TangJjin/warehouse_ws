@@ -164,6 +164,20 @@ float clampFloat(float value, float min_value, float max_value)
   return value;
 }
 
+float contourUnclipDistance(
+    const std::vector<cv::Point> &contour,
+    float unclip_ratio)
+{
+  const double contour_area = std::abs(cv::contourArea(contour));
+  const double contour_perimeter = cv::arcLength(contour, true);
+
+  if (contour_area <= 0.0 || contour_perimeter <= 0.0) {
+    return 0.0F;
+  }
+
+  return static_cast<float>(contour_area * static_cast<double>(unclip_ratio) / contour_perimeter);
+}
+
 }  // namespace
 
 class BpuOcrPipeline::BpuDnnModel
@@ -430,15 +444,18 @@ private:
 BpuOcrPipeline::BpuOcrPipeline(const BpuOcrConfig &config)
     : _config(config)
 {
-  if (_config.det_model_path.empty()) {
-    _config.det_model_path = defaultDetectionModelPath();
-  }
-
   if (_config.rec_model_path.empty()) {
     _config.rec_model_path = defaultRecognitionModelPath();
   }
 
-  _det_model = std::make_unique<BpuDnnModel>(_config.det_model_path);
+  if (_config.enable_detection_model && _config.det_model_path.empty()) {
+    _config.det_model_path = defaultDetectionModelPath();
+  }
+
+  if (_config.enable_detection_model) {
+    _det_model = std::make_unique<BpuDnnModel>(_config.det_model_path);
+  }
+
   _rec_model = std::make_unique<BpuDnnModel>(_config.rec_model_path);
 
   const hbDNNTensorShape &rec_shape = _rec_model->inputProperties().validShape;
@@ -457,6 +474,10 @@ std::vector<OcrTextRegion> BpuOcrPipeline::infer(const cv::Mat &bgr_image)
 
   if (bgr_image.empty()) {
     return {};
+  }
+
+  if (!_det_model) {
+    throw std::runtime_error("OCR detection model is not loaded");
   }
 
   const auto det_preprocess_t0 = SteadyClock::now();
@@ -483,7 +504,53 @@ std::vector<OcrTextRegion> BpuOcrPipeline::infer(const cv::Mat &bgr_image)
   const auto rec_total_t0 = SteadyClock::now();
 
   for (const DetectionBox &box : boxes) {
+    const auto rec_crop_t0 = SteadyClock::now();
     const cv::Mat crop = cropAndRectify(bgr_image, box);
+    const auto rec_crop_t1 = SteadyClock::now();
+    _last_timing.rec_crop_ms += elapsedMs(rec_crop_t0, rec_crop_t1);
+
+    if (crop.empty()) {
+      continue;
+    }
+
+    const RecognitionResult result = recognizeText(crop);
+
+    if (result.text.empty()) {
+      continue;
+    }
+
+    regions.push_back({box.points, result.text, result.score});
+  }
+
+  const auto rec_total_t1 = SteadyClock::now();
+  _last_timing.rec_total_ms = elapsedMs(rec_total_t0, rec_total_t1);
+
+  return regions;
+}
+
+std::vector<OcrTextRegion> BpuOcrPipeline::recognizeTextBoxes(
+    const cv::Mat &bgr_image,
+    const std::vector<std::array<cv::Point2f, 4>> &boxes)
+{
+  _last_timing = {};
+
+  if (bgr_image.empty() || boxes.empty()) {
+    return {};
+  }
+
+  _last_timing.rec_box_count = static_cast<int>(boxes.size());
+
+  std::vector<OcrTextRegion> regions;
+  regions.reserve(boxes.size());
+  const auto rec_total_t0 = SteadyClock::now();
+
+  for (const std::array<cv::Point2f, 4> &points : boxes) {
+    const DetectionBox box{points};
+
+    const auto rec_crop_t0 = SteadyClock::now();
+    const cv::Mat crop = cropAndRectify(bgr_image, box);
+    const auto rec_crop_t1 = SteadyClock::now();
+    _last_timing.rec_crop_ms += elapsedMs(rec_crop_t0, rec_crop_t1);
 
     if (crop.empty()) {
       continue;
@@ -506,7 +573,10 @@ std::vector<OcrTextRegion> BpuOcrPipeline::infer(const cv::Mat &bgr_image)
 
 void BpuOcrPipeline::printModelInfo() const
 {
-  _det_model->printModelInfo();
+  if (_det_model) {
+    _det_model->printModelInfo();
+  }
+
   _rec_model->printModelInfo();
 }
 
@@ -585,30 +655,36 @@ std::vector<BpuOcrPipeline::DetectionBox> BpuOcrPipeline::detectTextBoxes(
   cv::threshold(score_map, binary_mask, _config.det_threshold, 255.0, cv::THRESH_BINARY);
   binary_mask.convertTo(binary_mask, CV_8UC1);
 
-  cv::Mat dilated_mask;
-  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-  cv::dilate(binary_mask, dilated_mask, kernel);
-
   std::vector<std::vector<cv::Point>> contours;
-  cv::findContours(dilated_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+  cv::findContours(binary_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
   std::vector<DetectionBox> boxes;
   boxes.reserve(contours.size());
+  const float output_to_model_x =
+      static_cast<float>(detection_input.model_width_px) / static_cast<float>(output_width_px);
+  const float output_to_model_y =
+      static_cast<float>(detection_input.model_height_px) / static_cast<float>(output_height_px);
+  const float output_to_model_scale = (output_to_model_x + output_to_model_y) * 0.5F;
 
   for (const std::vector<cv::Point> &contour : contours) {
     if (cv::contourArea(contour) < static_cast<double>(_config.det_min_area_px)) {
       continue;
     }
 
+    const float unclip_distance_output =
+        contourUnclipDistance(contour, _config.det_unclip_ratio);
+    const float unclip_distance_image =
+        unclip_distance_output * output_to_model_scale / detection_input.scale;
+
     std::vector<cv::Point2f> mapped_contour;
     mapped_contour.reserve(contour.size());
 
     for (const cv::Point &point : contour) {
       const float x =
-          (static_cast<float>(point.x) - static_cast<float>(detection_input.pad_x)) /
+          (static_cast<float>(point.x) * output_to_model_x - static_cast<float>(detection_input.pad_x)) /
           detection_input.scale;
       const float y =
-          (static_cast<float>(point.y) - static_cast<float>(detection_input.pad_y)) /
+          (static_cast<float>(point.y) * output_to_model_y - static_cast<float>(detection_input.pad_y)) /
           detection_input.scale;
       mapped_contour.emplace_back(
           clampFloat(x, 0.0F, static_cast<float>(image_size.width - 1)),
@@ -616,12 +692,15 @@ std::vector<BpuOcrPipeline::DetectionBox> BpuOcrPipeline::detectTextBoxes(
     }
 
     const cv::RotatedRect rect = cv::minAreaRect(mapped_contour);
+    cv::RotatedRect unclipped_rect = rect;
+    unclipped_rect.size.width += unclip_distance_image * 2.0F;
+    unclipped_rect.size.height += unclip_distance_image * 2.0F;
 
-    if (rect.size.width <= 2.0F || rect.size.height <= 2.0F) {
+    if (unclipped_rect.size.width <= 2.0F || unclipped_rect.size.height <= 2.0F) {
       continue;
     }
 
-    boxes.push_back({rectToOrderedPoints(rect)});
+    boxes.push_back({rectToOrderedPoints(unclipped_rect)});
   }
 
   std::sort(
@@ -636,8 +715,9 @@ std::vector<BpuOcrPipeline::DetectionBox> BpuOcrPipeline::detectTextBoxes(
   return boxes;
 }
 
-BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &crop_bgr) const
+BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &crop_bgr)
 {
+  const auto rec_preprocess_t0 = SteadyClock::now();
   cv::Mat resized_image;
   cv::resize(
       crop_bgr,
@@ -668,16 +748,22 @@ BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &c
       nchw_input[plane_size * 2U + plane_offset] = pixel[2];
     }
   }
+  const auto rec_preprocess_t1 = SteadyClock::now();
+  _last_timing.rec_preprocess_ms += elapsedMs(rec_preprocess_t0, rec_preprocess_t1);
 
+  const auto rec_infer_t0 = SteadyClock::now();
   const std::vector<std::vector<float>> rec_outputs =
       _rec_model->infer(
       nchw_input.data(),
       nchw_input.size() * sizeof(float));
+  const auto rec_infer_t1 = SteadyClock::now();
+  _last_timing.rec_infer_ms += elapsedMs(rec_infer_t0, rec_infer_t1);
 
   if (rec_outputs.empty()) {
     return {};
   }
 
+  const auto rec_decode_t0 = SteadyClock::now();
   const hbDNNTensorShape &shape = _rec_model->outputProperties()[0].validShape;
   const auto [time_steps, class_count] = resolveSequenceShape(shape);
   float mean_score = 0.0F;
@@ -686,6 +772,8 @@ BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &c
       time_steps,
       class_count,
       &mean_score));
+  const auto rec_decode_t1 = SteadyClock::now();
+  _last_timing.rec_decode_ms += elapsedMs(rec_decode_t0, rec_decode_t1);
 
   if (!isValidShelfCode(text)) {
     return {};

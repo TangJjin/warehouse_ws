@@ -91,7 +91,8 @@ private:
   void updateVisualCodeCategoryStability(
       const std::vector<DecodedVisualCode> &decoded_codes,
       const std::string &category,
-      CodeStabilityState &state);
+      CodeStabilityState &state,
+      const char *source_name);
 
   void handleSyncedFrame(
       const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
@@ -121,6 +122,17 @@ private:
       int image_width,
       int image_height) const;
 
+  BpuImageRect expandImageRect(
+      const BpuImageRect &image_rect,
+      float padding_ratio,
+      int image_width,
+      int image_height) const;
+
+  void recognizeShelfTagFromDetections(
+      const cv::Mat &color_image,
+      const std::vector<BpuYoloDetection> &detections,
+      const char *input_mode);
+
   std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
       const cv::Mat &color_image,
       const std::vector<BpuYoloDetection> &detections);
@@ -137,7 +149,6 @@ private:
   std::string window_name_;
 
   std::string bpu_model_path_;
-  std::string ocr_det_model_path_;
   std::string ocr_rec_model_path_;
 
   std::vector<uint8_t> bpu_input_nv12_;
@@ -146,15 +157,13 @@ private:
   bool debug_view_ = true;
   bool enable_bpu_ = false;
   bool enable_bpu_ocr_ = false;
-  bool use_barcode_format_ = false;
   bool use_rgbd_ = false;
   mutable bool debug_window_created_ = false;
   int log_throttle_ms_ = 500;
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
   int shelf_code_lost_tolerance_frames_ = 2;
-  int ocr_det_min_area_px_ = 100;
-  float ocr_det_threshold_ = 0.5F;
+  float ocr_yolo_padding_ratio_ = 0.15F;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
@@ -170,7 +179,6 @@ private:
   std::unique_ptr<BpuOcrPipeline> bpu_ocr_pipeline_;
   std::vector<BpuYoloDetection> last_bpu_detections_;
   std::vector<OcrTextRegion> last_ocr_regions_;
-  cv::Mat debug_barcode_roi_;
   std::string debug_raw_symbol_;
   std::string debug_raw_symbol_type_;
 #endif

@@ -16,11 +16,12 @@ static constexpr int32_t kSingleModelFileCount = 1;
 static constexpr int32_t kMinModelCount = 1;
 
 static constexpr int32_t kExpectedOutputCount = 6;
-static constexpr int32_t kClassCount = 2;
+static constexpr int32_t kClassCount = 3;
 static constexpr int32_t kDflBinCount = 16;
 static constexpr int32_t kBoxSideCount = 4;
 static constexpr int32_t kModelInputSizePx = 640;
 static constexpr float kModelInputSizePxFloat = 640.0F;
+static constexpr const char *kClassNames[] = {"qrcode", "package", "shelf_tag"};
 
 struct BpuYoloOutputGroup
 {
@@ -324,6 +325,15 @@ BpuYoloDetector::BpuYoloDetector(const std::string &model_path)
 BpuYoloDetector::~BpuYoloDetector()
 {
   releaseModel();
+}
+
+const char *BpuYoloDetector::className(int32_t class_id)
+{
+  if (class_id < 0 || class_id >= kClassCount) {
+    return "unknown";
+  }
+
+  return kClassNames[static_cast<std::size_t>(class_id)];
 }
 
 void BpuYoloDetector::releaseModel()

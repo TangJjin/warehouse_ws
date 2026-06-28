@@ -26,6 +26,8 @@ public:
   BpuYoloDetector(const BpuYoloDetector &) = delete;
   BpuYoloDetector &operator=(const BpuYoloDetector &) = delete;
 
+  static const char *className(int32_t class_id);
+
   void printModelInfo() const;
   std::vector<BpuYoloDetection> inferNv12(
       const uint8_t *nv12_data,
