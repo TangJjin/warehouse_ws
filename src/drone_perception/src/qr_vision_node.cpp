@@ -17,6 +17,7 @@
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <zbar.h>
 
@@ -28,7 +29,12 @@ static constexpr int kBpuInputHeightPx = 640;
 static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr int kDefaultShelfCodeStableFrames = 3;
 static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
+static constexpr int kDefaultBarcodeCaptureJpegQuality = 90;
 static constexpr float kDefaultOcrYoloPaddingRatio = 0.15F;
+static constexpr float kDefaultPackageCapturePaddingRatio = 0.05F;
+static constexpr const char *kDefaultBarcodeCaptureTopic = "/drone/image";
+static constexpr const char *kNoPackageBarcodeText = "NAN";
+static constexpr const char *kJpegImageFormat = "jpeg";
 static constexpr std::size_t kCameraExposureControlIndex = 0U;
 static constexpr std::size_t kCameraGainControlIndex = 1U;
 static constexpr std::size_t kCameraWhiteBalanceControlIndex = 2U;
@@ -60,6 +66,68 @@ double elapsedMs(
     const SteadyClock::time_point &end)
 {
   return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+bool isValidCapturePrefixedCode(
+    const std::string &code,
+    const std::string &prefix)
+{
+  if (code.rfind(prefix, 0U) != 0U || code.size() <= prefix.size()) {
+    return false;
+  }
+
+  bool has_payload = false;
+
+  for (std::size_t i = prefix.size(); i < code.size(); ++i) {
+    const unsigned char value = static_cast<unsigned char>(code[i]);
+
+    if (std::isalnum(value) != 0 || code[i] == '_') {
+      has_payload = true;
+      continue;
+    }
+
+    return false;
+  }
+
+  return has_payload;
+}
+
+bool isValidShelfCaptureCode(const std::string &code)
+{
+  if (code.size() < 5U) {
+    return false;
+  }
+
+  if (code[0] != 'A' && code[0] != 'B') {
+    return false;
+  }
+
+  const std::size_t first_dash = code.find('-');
+  const std::size_t second_dash = code.find(
+      '-',
+      first_dash == std::string::npos ? 0U : first_dash + 1U);
+
+  if (first_dash != 1U || second_dash == std::string::npos) {
+    return false;
+  }
+
+  if (code.find('-', second_dash + 1U) != std::string::npos) {
+    return false;
+  }
+
+  const std::string middle = code.substr(first_dash + 1U, second_dash - first_dash - 1U);
+  const std::string tail = code.substr(second_dash + 1U);
+
+  if (middle.empty() || tail.empty()) {
+    return false;
+  }
+
+  const auto is_digit = [](char value) {
+    return std::isdigit(static_cast<unsigned char>(value)) != 0;
+  };
+
+  return std::all_of(middle.begin(), middle.end(), is_digit) &&
+      std::all_of(tail.begin(), tail.end(), is_digit);
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
@@ -223,6 +291,9 @@ QrVisionNode::QrVisionNode()
     : Node("qr_vision_node")
 {
   declareParameters();
+  barcode_capture_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
+      barcode_capture_topic_,
+      rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
   initializeBpuDetector();
   initializeBpuOcrPipeline();
   initializeSubscriptions();
@@ -295,6 +366,9 @@ void QrVisionNode::declareParameters()
   camera_controls_window_name_ = this->declare_parameter<std::string>(
       "camera_controls_window_name",
       "D435i Controls");
+  barcode_capture_topic_ = this->declare_parameter<std::string>(
+      "barcode_capture_topic",
+      kDefaultBarcodeCaptureTopic);
   use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   sample_radius_px_ = this->declare_parameter<int>(
@@ -306,6 +380,9 @@ void QrVisionNode::declareParameters()
   shelf_code_lost_tolerance_frames_ = this->declare_parameter<int>(
       "shelf_code_lost_tolerance_frames",
       kDefaultShelfCodeLostToleranceFrames);
+  barcode_capture_jpeg_quality_ = this->declare_parameter<int>(
+      "barcode_capture_jpeg_quality",
+      kDefaultBarcodeCaptureJpegQuality);
 
   enable_bpu_ = this->declare_parameter<bool>(
       "enable_bpu",
@@ -322,6 +399,9 @@ void QrVisionNode::declareParameters()
   ocr_yolo_padding_ratio_ = static_cast<float>(this->declare_parameter<double>(
       "ocr_yolo_padding_ratio",
       kDefaultOcrYoloPaddingRatio));
+  package_capture_padding_ratio_ = static_cast<float>(this->declare_parameter<double>(
+      "package_capture_padding_ratio",
+      kDefaultPackageCapturePaddingRatio));
 
   if (log_throttle_ms_ <= 0)
   {
@@ -365,6 +445,24 @@ void QrVisionNode::declareParameters()
         "ocr_yolo_padding_ratio must be greater than or equal to 0, reset to %.2f",
         kDefaultOcrYoloPaddingRatio);
     ocr_yolo_padding_ratio_ = kDefaultOcrYoloPaddingRatio;
+  }
+
+  if (package_capture_padding_ratio_ < 0.0F)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "package_capture_padding_ratio must be greater than or equal to 0, reset to %.2f",
+        kDefaultPackageCapturePaddingRatio);
+    package_capture_padding_ratio_ = kDefaultPackageCapturePaddingRatio;
+  }
+
+  if (barcode_capture_jpeg_quality_ < 1 || barcode_capture_jpeg_quality_ > 100)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "barcode_capture_jpeg_quality must be in [1, 100], reset to %d",
+        kDefaultBarcodeCaptureJpegQuality);
+    barcode_capture_jpeg_quality_ = kDefaultBarcodeCaptureJpegQuality;
   }
 }
 
@@ -550,6 +648,78 @@ void QrVisionNode::updateVisualCodeStability(
 {
   updateVisualCodeCategoryStability(decoded_codes, "sku", sku_code_state_, "qr");
   updateVisualCodeCategoryStability(decoded_codes, "pkg", pkg_code_state_, "qr");
+}
+
+std::string QrVisionNode::composeStablePackageBarcode() const
+{
+  if (!isValidCapturePrefixedCode(pkg_code_state_.stable_code, "PKG-")) {
+    return {};
+  }
+
+  if (!isValidCapturePrefixedCode(sku_code_state_.stable_code, "SKU-")) {
+    return {};
+  }
+
+  if (!isValidShelfCaptureCode(shelf_code_state_.stable_code)) {
+    return {};
+  }
+
+  return pkg_code_state_.stable_code + "|" +
+      sku_code_state_.stable_code + "|" +
+      shelf_code_state_.stable_code;
+}
+
+void QrVisionNode::publishNanBarcodeCapture()
+{
+  if (!barcode_capture_pub_) {
+    return;
+  }
+
+  drone_msgs::msg::BarcodeCapture msg;
+  msg.stamp = this->now();
+  msg.barcode = kNoPackageBarcodeText;
+  barcode_capture_pub_->publish(msg);
+}
+
+void QrVisionNode::publishBarcodeCapture(const cv::Mat &color_image)
+{
+  if (!barcode_capture_pub_) {
+    return;
+  }
+
+  const std::string barcode = composeStablePackageBarcode();
+
+  if (barcode.empty() || barcode == last_published_package_barcode_) {
+    publishNanBarcodeCapture();
+    return;
+  }
+
+#if DRONE_PERCEPTION_HAS_BPU
+  std::vector<uint8_t> jpeg_data;
+
+  if (!encodePackageCaptureJpeg(color_image, jpeg_data)) {
+    publishNanBarcodeCapture();
+    return;
+  }
+
+  drone_msgs::msg::BarcodeCapture msg;
+  msg.stamp = this->now();
+  msg.barcode = barcode;
+  msg.image_format = kJpegImageFormat;
+  msg.image_data = std::move(jpeg_data);
+
+  barcode_capture_pub_->publish(msg);
+  last_published_package_barcode_ = barcode;
+
+  RCLCPP_INFO(
+      get_logger(),
+      "published package barcode capture barcode=%s bytes=%zu",
+      barcode.c_str(),
+      msg.image_data.size());
+#else
+  (void)color_image;
+  publishNanBarcodeCapture();
+#endif
 }
 
 void QrVisionNode::updateVisualCodeCategoryStability(
@@ -834,6 +1004,90 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
   return decoded_codes;
 }
+
+const BpuYoloDetection *QrVisionNode::selectBestPackageDetection() const
+{
+  const BpuYoloDetection *best_package = nullptr;
+
+  for (const BpuYoloDetection &detection : last_bpu_detections_) {
+    if (detection.class_id != kYoloClassPackage) {
+      continue;
+    }
+
+    if (best_package == nullptr || detection.score > best_package->score) {
+      best_package = &detection;
+    }
+  }
+
+  return best_package;
+}
+
+bool QrVisionNode::encodePackageCaptureJpeg(
+    const cv::Mat &color_image,
+    std::vector<uint8_t> &jpeg_data) const
+{
+  jpeg_data.clear();
+
+  if (color_image.empty()) {
+    return false;
+  }
+
+  const BpuYoloDetection *best_package = selectBestPackageDetection();
+
+  if (best_package == nullptr) {
+    return false;
+  }
+
+  const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+      *best_package,
+      color_image.cols,
+      color_image.rows);
+  const BpuImageRect padded_rect = expandImageRect(
+      image_rect,
+      package_capture_padding_ratio_,
+      color_image.cols,
+      color_image.rows);
+
+  const int x_min = std::clamp(
+      static_cast<int>(std::floor(padded_rect.x_min)),
+      0,
+      std::max(0, color_image.cols - 1));
+  const int y_min = std::clamp(
+      static_cast<int>(std::floor(padded_rect.y_min)),
+      0,
+      std::max(0, color_image.rows - 1));
+  const int x_max = std::clamp(
+      static_cast<int>(std::ceil(padded_rect.x_max)),
+      x_min + 1,
+      color_image.cols);
+  const int y_max = std::clamp(
+      static_cast<int>(std::ceil(padded_rect.y_max)),
+      y_min + 1,
+      color_image.rows);
+  const cv::Rect roi(x_min, y_min, x_max - x_min, y_max - y_min);
+
+  if (roi.width <= 1 || roi.height <= 1) {
+    return false;
+  }
+
+  try {
+    const std::vector<int> encode_params = {
+        cv::IMWRITE_JPEG_QUALITY,
+        barcode_capture_jpeg_quality_};
+
+    return cv::imencode(".jpg", color_image(roi), jpeg_data, encode_params) &&
+        !jpeg_data.empty();
+  } catch (const cv::Exception &e) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "package capture jpeg encode failed: %s",
+        e.what());
+  }
+
+  return false;
+}
 #endif
 
 void QrVisionNode::initializeSubscriptions()
@@ -1083,6 +1337,8 @@ void QrVisionNode::processFrame(
   updateVisualCodeStability({});
   updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
 #endif
+
+  publishBarcodeCapture(color_bridge->image);
 
   if (debug_view_)
   {
