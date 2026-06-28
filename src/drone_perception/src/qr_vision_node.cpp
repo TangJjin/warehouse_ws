@@ -2317,40 +2317,33 @@ void QrVisionNode::drawCameraControlsPanel(cv::Mat &display)
     return;
   }
 
-  static constexpr int kPanelMarginPx = 12;
-  static constexpr int kMinimumPanelWidthPx = 600;
-  static constexpr int kMinimumPanelHeightPx = 340;
+  const int video_width = display.cols;
+  const int video_height = display.rows;
+  const int panel_width = std::max(kCameraControlsPanelWidthPx, video_width);
+  const int panel_height = kCameraControlsPanelHeightPx;
 
-  const int panel_width = std::min(
-      kCameraControlsPanelWidthPx,
-      display.cols - kPanelMarginPx * 2);
-  const int panel_height = std::min(
-      kCameraControlsPanelHeightPx,
-      display.rows - kPanelMarginPx * 2);
-
-  if (panel_width < kMinimumPanelWidthPx ||
-      panel_height < kMinimumPanelHeightPx) {
-    return;
-  }
-
+  cv::Mat canvas(
+      video_height + panel_height,
+      panel_width,
+      display.type(),
+      cv::Scalar(12, 14, 18));
+  display.copyTo(canvas(cv::Rect(0, 0, video_width, video_height)));
   camera_controls_panel_rect_ = cv::Rect(
-      kPanelMarginPx,
-      display.rows - panel_height - kPanelMarginPx,
+      0,
+      video_height,
       panel_width,
       panel_height);
 
   try {
-    cv::Mat panel = display(camera_controls_panel_rect_);
-    cv::Mat background = panel.clone();
-    background.setTo(cv::Scalar(24, 28, 32));
+    cv::Mat panel = canvas(camera_controls_panel_rect_);
+    panel.setTo(cv::Scalar(24, 28, 32));
 
     cv::rectangle(
-        background,
+        panel,
         cv::Point(0, 0),
         cv::Point(panel.cols, 58),
         cv::Scalar(38, 45, 51),
         cv::FILLED);
-    cv::addWeighted(background, 0.88, panel, 0.12, 0.0, panel);
 
     cv::putText(
         panel,
@@ -2437,6 +2430,8 @@ void QrVisionNode::drawCameraControlsPanel(cv::Mat &display)
         panel,
         camera_bool_controls_[kCameraAutoExposurePriorityControlIndex],
         330);
+
+    display = canvas;
   } catch (const cv::Exception &e) {
     camera_controls_panel_rect_ = cv::Rect();
     RCLCPP_WARN_THROTTLE(
