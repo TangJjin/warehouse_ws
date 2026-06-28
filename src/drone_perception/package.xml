@@ -15,6 +15,7 @@
   <depend>cv_bridge</depend>
   <depend>image_geometry</depend>
   <depend>message_filters</depend>
+  <depend>rcl_interfaces</depend>
   <depend>realsense2_camera_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>zbar</depend>

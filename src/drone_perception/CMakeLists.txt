@@ -111,6 +111,7 @@ ament_target_dependencies(qr_vision_node
   cv_bridge
   image_geometry
   message_filters
+  rcl_interfaces
   rclcpp
   realsense2_camera_msgs
   sensor_msgs
