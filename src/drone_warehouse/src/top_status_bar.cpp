@@ -44,8 +44,10 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     execute_button_->hide();
     scheduled_check_button_->hide();
 
+    exit_long_press_timer_ = new QTimer(this);
+    exit_long_press_timer_->setSingleShot(true);
+
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
-    connect(connection_button_, &QPushButton::clicked, this, &TopStatusBar::connectionClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
@@ -76,6 +78,29 @@ TopStatusBar::TopStatusBar(QWidget *parent)
         /******************************************************/
     });
 
+    connect(connection_button_, &QPushButton::pressed, this, [this]() {
+        stop_button_pressed_ = true;
+        long_press_triggered_ = false;
+
+        const int current_token = ++stop_press_token_;
+
+        QTimer::singleShot(1500, this, [this, current_token]() {
+            if (!stop_button_pressed_) {
+                return;
+            }
+
+            if (current_token != stop_press_token_) {
+                return;
+            }
+
+            if (connection_button_ && connection_button_->isDown()) {
+                long_press_triggered_ = true;
+
+                emit exitRequested();
+            }
+        });
+    });
+
     clock_timer_->start(1000);
 
     setStyleSheet(
@@ -89,6 +114,12 @@ TopStatusBar::TopStatusBar(QWidget *parent)
         "border: none;"//按钮无边框
         "color: #d7e3f4;"//按钮文字颜色
         "padding: 6px 10px;"//按钮内边距
+        "}"
+        "#topStatusBar QLabel {"
+        "background: transparent;"//背景透明
+        "border: none;"//无边框
+        "color: #d7e3f4;"//文字颜色
+        "padding: 6px 10px;"//内边距
         "}"
         "#topStatusBar QPushButton:hover {"//按钮悬停效果
         "background: rgba(70, 110, 160, 80);"//悬停时背景变亮

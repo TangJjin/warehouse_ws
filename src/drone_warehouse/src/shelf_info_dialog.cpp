@@ -1,5 +1,6 @@
 #include "drone_warehouse/shelf_info_dialog.hpp"
 
+#include <QDebug>
 #include <limits>
 #include <QColor>
 #include <QGridLayout>
@@ -33,33 +34,44 @@ namespace
 
     QColor slotStatusColor(const ShelfSlotItem &slot)
     {
-        if (!slot.has_image)
-        {
-            return QColor("#7f8c9a");//灰：没图
-        }
-
         const bool has_manual_data =
             !slot.category_id.isEmpty() && !slot.package_id.isEmpty();
         const bool has_observed_data =
             !slot.observed_category_id.isEmpty() && !slot.observed_package_id.isEmpty();
 
-        if (!has_manual_data || !has_observed_data)
+        // 1. 台账没有、巡检也没有：灰
+        if (!has_manual_data && !has_observed_data)
         {
-            return QColor("#f0b429");//黄：有图但还不能比较
+            return QColor("#7f8c9a");
         }
 
+        // 2. 巡检有、台账没有：红
+        if (!has_manual_data && has_observed_data)
+        {
+            return QColor("#ff5c5c");
+        }
+
+        // 3. 台账有、巡检没有：黄
+        if (has_manual_data && !has_observed_data)
+        {
+            return QColor("#f0b429");
+        }
+
+        // 4. 两边都有，完全一致：绿
         if (slot.category_id == slot.observed_category_id &&
             slot.package_id == slot.observed_package_id)
         {
-            return QColor("#00d48a");//绿：一致
+            return QColor("#00d48a");
         }
 
-        return QColor("#ff5c5c");//红：不一致
+        // 5. 两边都有，但不一致：红
+        return QColor("#ff5c5c");
     }
 
     QColor shelfStatusColor(const ShelfPanelData &shelf)
     {
         bool has_red = false;
+        bool has_yellow = false;
         bool all_gray = true;
 
         auto check_slots = [&](const QVector<ShelfSlotItem> &slot_items)
@@ -72,6 +84,10 @@ namespace
                 {
                     has_red = true;
                 }
+                else if (color == QColor("#f0b429"))
+                {
+                    has_yellow = true;
+                }
 
                 if (color != QColor("#7f8c9a"))
                 {
@@ -83,17 +99,22 @@ namespace
         check_slots(shelf.front_slots);
         check_slots(shelf.back_slots);
 
-        if (has_red)
-        {
-            return QColor("#ff5c5c");//只要有一个红槽位，整架红
-        }
-
         if (all_gray)
         {
-            return QColor("#7f8c9a");//全部灰，整架灰
+            return QColor("#7f8c9a");
         }
 
-        return QColor("#00d48a");//其余情况整架绿
+        if (has_red)
+        {
+            return QColor("#ff5c5c");
+        }
+
+        if (has_yellow)
+        {
+            return QColor("#f0b429");
+        }
+
+        return QColor("#00d48a");
     }
 
     uint16_t crc16_ccitt(const uint8_t *data, int length)
@@ -119,8 +140,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
-    resize(600, 500);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
-    setMinimumSize(380, 380);//限制最小尺寸，避免窗口过小导致控件挤压
+    resize(380, 470);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
+    setMinimumSize(380, 470);//限制最小尺寸，避免窗口过小导致控件挤压
     setModal(false);//这里先用非模态窗口，点击后可与主界面同时操作
 
     setupSerial();//打开串口
@@ -431,6 +452,7 @@ void ShelfInfoDialog::updateSlotGrid()
     {
         return;
     }
+    
 
     const ShelfPanelData &current_shelf = shelf_panel_data_[current_shelf_index_];//先取当前货架
     const QVector<ShelfSlotItem> &current_slots =
@@ -460,6 +482,13 @@ void ShelfInfoDialog::updateSlotGrid()
             // }
             button->setIcon(makeStatusIcon(slotStatusColor(slot)));
 
+            const bool is_selected = (row == current_slot_row_ && col == current_slot_col_);
+            if (is_selected) {
+                button->setStyleSheet("background: rgba(70, 110, 160, 160); border: 1px solid rgba(120, 180, 255, 180); border-radius:8px; color: #e7f3ff;");
+            } else {
+                button->setStyleSheet("background: rgba(42, 58, 82, 120); border: 1px solid rgba(90, 130, 180, 80); border-radius:8px; color: #d7e3f4;");
+            }
+
             button->setToolTip(
             QString("台账: %1 | %2\n巡检: %3 | %4")
                 .arg(slot.category_id.isEmpty() ? "——" : slot.category_id)
@@ -486,6 +515,8 @@ void ShelfInfoDialog::handleSlotClicked(int row, int col)
 {
     current_slot_row_ = row;//记录当前选中的行
     current_slot_col_ = col;//记录当前选中的列
+
+    updateSlotGrid();
 
     // 如果当前还没有任何货架数据，就不要继续往下取点位了。
     if (shelf_panel_data_.isEmpty() || current_shelf_index_ < 0 || current_shelf_index_ >= shelf_panel_data_.size())
@@ -561,24 +592,25 @@ void ShelfInfoDialog::setupSerial()
         // 1. 先走 `uart_read(...)`，把带 `31 01` 包头的 ACK 帧从串口流里切出来，再交给 `handleSerialFrame(...)` 判断。
         // 2. ACK 之后，扫码枪会继续直接吐出纯文本 `CAT01|PKG88`，这部分不是协议帧，所以继续从串口剩余字节里攒文本。
         // 3. 一旦文本里已经形成完整的 `类别|包裹` 格式，就交给 `processManualScanText(...)` 往主窗口回传。
-        while (uart_read(deviceId, status, payload)) {
-            handleSerialFrame(deviceId, status, payload);
-        }
-
-        if (waiting_manual_scan_result_) {
+        if (waiting_manual_scan_result_ && manual_scan_ack_received_) {
             raw_serial_buffer_.append(serial_.readAll());
             const qsizetype newline_index = raw_serial_buffer_.indexOf('\n');
             if (newline_index >= 0) {
                 const QByteArray line = raw_serial_buffer_.left(newline_index);
                 raw_serial_buffer_.remove(0, newline_index + 1);
-                processManualScanText(QString::fromUtf8(line).trimmed());
+                processManualScanText(QString::fromLatin1(line).trimmed());
             } else if (!raw_serial_buffer_.isEmpty()) {
-                const QString scan_text = QString::fromUtf8(raw_serial_buffer_).trimmed();
-                if (scan_text.contains('|')) {
+                const QString scan_text = QString::fromLatin1(raw_serial_buffer_).trimmed();
+                if (raw_serial_buffer_.contains('\r')) {
+                    QByteArray line = raw_serial_buffer_.left(raw_serial_buffer_.indexOf('\r'));
                     raw_serial_buffer_.clear();
                     processManualScanText(scan_text);
                 }
             }
+        }
+
+        while (uart_read(deviceId, status, payload)) {
+            handleSerialFrame(deviceId, status, payload);
         }
     });
 }
@@ -599,6 +631,7 @@ void ShelfInfoDialog::startManualStockIn()
     pending_row_ = current_slot_row_;
     pending_col_ = current_slot_col_;
     waiting_manual_scan_result_ = true;
+    manual_scan_ack_received_ = false;
     raw_serial_buffer_.clear();
 
     uart_write(0x00, 0x00, QByteArray::fromHex("0A020001"));
@@ -622,6 +655,8 @@ void ShelfInfoDialog::handleSerialFrame(uint8_t deviceId, uint8_t status, const 
     // 当前协议里，设备会先返回一帧 `31 01 ...` 的确认帧，status 仍然是 0x00。
     // 这一步不落库，只表示设备已经收到命令，真正的扫码结果还要继续等后面的纯文本串口输出。
     if (status == 0x00 && waiting_manual_scan_result_) {
+        manual_scan_ack_received_ = true;
+        raw_serial_buffer_.clear();
         return;
     }
 }
@@ -636,10 +671,12 @@ void ShelfInfoDialog::processManualScanText(const QString &scan_text)
     if (parts.size() < 2) {
         return;
     }
+    const QString package_id = parts[0].trimmed();
+    const QString category_id = parts[1].trimmed();
 
     waiting_manual_scan_result_ = false;
     emit manualStockInScanned(pending_shelf_index_, pending_side_, pending_row_, pending_col_,
-                              parts[0].trimmed(), parts[1].trimmed());
+                              category_id, package_id);
 }
 
 int ShelfInfoDialog::slotIndex(int row, int col) const

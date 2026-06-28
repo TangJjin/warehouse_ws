@@ -34,7 +34,11 @@ MainWindow::MainWindow(QWidget *parent)
     /******************************************************/
     //setWindowFlags(Qt::Window | Qt::FramelessWindowHint);//去掉主窗口系统标题栏，不再显示上方 warehouse_gcs 那一层
     //resize(1024, 600);
-    setFixedSize(1024, 540);//设置初始窗口大小
+    //setFixedSize(1024, 540);//设置初始窗口大小
+    showFullScreen();
+    activateWindow();
+    setWindowFlags(Qt::FramelessWindowHint);
+    raise();
 
     setupUi();
     setupFloatingWidgets();
@@ -50,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent)
     top_status_bar_->setTriggerTime(mission_trigger_time_text_);//传入想要定的时间
     top_status_bar_->setTimeTriggerEnabled(mission_time_trigger_enabled_);//传入是否开启时间定时
     /******************************************************/
-
+    top_status_bar_->setConnected(true);
     updateOverlayGeometry();
 
     /*********************ros移植部分***********************/
@@ -200,6 +204,10 @@ void MainWindow::setupFloatingWidgets()
 
 void MainWindow::setupConnections()
 {
+    connect(top_status_bar_, &TopStatusBar::exitRequested, this, [this]() {
+        close();
+    });
+
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次日志文本
         run_log_view_->clear();
         clock_timer_->stop();
@@ -262,7 +270,7 @@ void MainWindow::setupConnections()
         //取出货物信息左下角的x，y坐标
         const QPoint button_bottom_left = top_status_bar_->shelfButtonBottomLeftGlobal();
 
-        const int margin = 8;//让弹窗和顶部状态栏之间留一点空隙
+        const int margin = 20;//让弹窗和顶部状态栏之间留一点空隙
 
         shelf_info_dialog_->adjustSize();
         shelf_info_dialog_->move(button_bottom_left.x(), button_bottom_left.y() + margin);//先把弹窗移动到货物信息下方
@@ -1149,14 +1157,14 @@ void MainWindow::setupDemoData()
     // 下面这些就是货架1的演示数据。
     // 下标规则是：index = row * 4 + col。
     // 例如：R1C1 -> 0，R2C3 -> 6，R3C2 -> 9。
-    shelf1_panel.front_slots[0].category_id = "FOOD-001";
-    shelf1_panel.front_slots[0].package_id = "PKG-0001";
+    // shelf1_panel.front_slots[0].category_id = "FOOD-001";
+    // shelf1_panel.front_slots[0].package_id = "PKG-0001";
 
-    shelf1_panel.front_slots[6].category_id = "MED-002";
-    shelf1_panel.front_slots[6].package_id = "PKG-0008";
+    // shelf1_panel.front_slots[6].category_id = "MED-002";
+    // shelf1_panel.front_slots[6].package_id = "PKG-0008";
 
-    shelf1_panel.back_slots[9].category_id = "ELEC-003";
-    shelf1_panel.back_slots[9].package_id = "PKG-0016";
+    // shelf1_panel.back_slots[9].category_id = "ELEC-003";
+    // shelf1_panel.back_slots[9].package_id = "PKG-0016";
 
     // -------------------- 货架2数据 --------------------
     ShelfPanelData shelf2_panel;
@@ -1166,8 +1174,8 @@ void MainWindow::setupDemoData()
     shelf2_panel.back_slots.resize(12);
 
     // 这里也给货架2先放一组演示数据，方便切换到第二个货架时能看出内容确实发生了变化。
-    shelf2_panel.front_slots[3].category_id = "BOOK-005";
-    shelf2_panel.front_slots[3].package_id = "PKG-0021";
+    // shelf2_panel.front_slots[3].category_id = "BOOK-005";
+    // shelf2_panel.front_slots[3].package_id = "PKG-0021";
 
     // 把两个货架的数据一起压进总列表。
     shelf_panel_data_.push_back(shelf1_panel);

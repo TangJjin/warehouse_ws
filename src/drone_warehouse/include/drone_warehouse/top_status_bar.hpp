@@ -36,6 +36,8 @@ signals:
     void shelfButtonClicked();//货架按钮被点击
     void executeButtonClicked();//执行按钮被点击
 
+    void exitRequested();//退出信号
+
     /*********************ros移植部分***********************/
     void triggerTimeReached(const QString &time_text);//顶部时钟到达目标时刻时发出信号，交给主窗口决定是否执行上传
     /******************************************************/
@@ -56,4 +58,9 @@ private:
     QString last_triggered_time_text_;//记录最近一次已经触发过的时刻文本，避免同一秒重复触发
     bool time_trigger_enabled_ = false;//当前是否启用到点触发上传
     /******************************************************/
+
+    QTimer *exit_long_press_timer_{nullptr};
+    bool stop_button_pressed_{false};
+    bool long_press_triggered_{false};
+    int stop_press_token_{0};
 };
