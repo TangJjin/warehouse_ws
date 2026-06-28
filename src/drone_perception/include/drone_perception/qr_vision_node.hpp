@@ -173,7 +173,7 @@ private:
 
   void initializeCameraControlDefaults();
 
-  void displayCameraControlsWindow();
+  void drawCameraControlsPanel(cv::Mat &display);
 
   void updateCameraControlClient();
 
@@ -263,7 +263,6 @@ private:
   std::string rgbd_topic_;
   std::string window_name_;
   std::string camera_param_node_;
-  std::string camera_controls_window_name_;
   std::string barcode_capture_topic_;
 
   std::string bpu_model_path_;
@@ -279,7 +278,7 @@ private:
   bool qr_preprocess_enabled_ = true;
   bool camera_controls_enabled_ = false;
   mutable bool debug_window_created_ = false;
-  bool camera_controls_window_created_ = false;
+  bool camera_controls_attached_ = false;
   bool camera_controls_updating_trackbar_ = false;
   bool camera_param_node_online_ = false;
   bool camera_param_describe_requested_ = false;
@@ -288,6 +287,7 @@ private:
   bool camera_param_get_in_flight_ = false;
   bool camera_param_set_in_flight_ = false;
   int log_throttle_ms_ = 500;
+  int camera_controls_update_period_ms_ = 200;
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
   int shelf_code_lost_tolerance_frames_ = 2;
@@ -306,9 +306,11 @@ private:
   DepthProcessor depth_processor_;
 
   rclcpp::AsyncParametersClient::SharedPtr camera_param_client_;
+  rclcpp::TimerBase::SharedPtr camera_controls_timer_;
   std::array<CameraNumericControl, kCameraNumericControlCount> camera_numeric_controls_{};
   std::array<CameraBoolControl, kCameraBoolControlCount> camera_bool_controls_{};
   std::array<CameraTrackbarContext, kCameraNumericControlCount> camera_trackbar_contexts_{};
+  cv::Rect camera_controls_panel_rect_{};
   cv::Rect camera_reset_button_rect_{};
   rclcpp::Time last_camera_param_send_time_;
   std::string camera_controls_status_text_;
