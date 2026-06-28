@@ -87,6 +87,7 @@ private:
 
     QByteArray raw_serial_buffer_;
     bool waiting_manual_scan_result_ = false;
+    bool manual_scan_ack_received_ = false;
     int pending_shelf_index_ = -1;
     QString pending_side_;
     int pending_row_ = -1;
