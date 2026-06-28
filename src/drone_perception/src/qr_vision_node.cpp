@@ -330,10 +330,7 @@ QrVisionNode::QrVisionNode()
 
 QrVisionNode::~QrVisionNode()
 {
-  if (camera_controls_window_created_)
-  {
-    cv::destroyWindow(camera_controls_window_name_);
-  }
+  camera_controls_timer_.reset();
 
   if (debug_window_created_)
   {
@@ -363,9 +360,12 @@ void QrVisionNode::declareParameters()
   camera_param_node_ = this->declare_parameter<std::string>(
       "camera_param_node",
       "/camera/camera");
-  camera_controls_window_name_ = this->declare_parameter<std::string>(
+  (void)this->declare_parameter<std::string>(
       "camera_controls_window_name",
       "D435i Controls");
+  camera_controls_update_period_ms_ = this->declare_parameter<int>(
+      "camera_controls_update_period_ms",
+      200);
   barcode_capture_topic_ = this->declare_parameter<std::string>(
       "barcode_capture_topic",
       kDefaultBarcodeCaptureTopic);
@@ -409,6 +409,14 @@ void QrVisionNode::declareParameters()
         get_logger(),
         "log_throttle_ms must be greater than 0, reset to 2000");
     log_throttle_ms_ = 2000;
+  }
+
+  if (camera_controls_update_period_ms_ < 30)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_controls_update_period_ms must be at least 30, reset to 200");
+    camera_controls_update_period_ms_ = 200;
   }
 
   if (sample_radius_px_ < 0)
@@ -1513,8 +1521,8 @@ void QrVisionNode::displayDebugFrame(
   }
 #endif
 
+  drawCameraControlsPanel(display);
   cv::imshow(window_name_, display);
-  displayCameraControlsWindow();
   cv::waitKey(1);
 }
 
@@ -1627,9 +1635,6 @@ void QrVisionNode::initializeCameraControls()
     camera_param_client_ =
         std::make_shared<rclcpp::AsyncParametersClient>(this, camera_param_node_);
 
-    cv::namedWindow(camera_controls_window_name_, cv::WINDOW_AUTOSIZE);
-    camera_controls_window_created_ = true;
-
     for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
       CameraNumericControl &control = camera_numeric_controls_[i];
       control.current_value = std::clamp(
@@ -1641,7 +1646,7 @@ void QrVisionNode::initializeCameraControls()
 
       cv::createTrackbar(
           control.label,
-          camera_controls_window_name_,
+          window_name_,
           nullptr,
           std::max(1, control.max_value - control.min_value),
           &QrVisionNode::handleCameraTrackbarCallback,
@@ -1650,26 +1655,32 @@ void QrVisionNode::initializeCameraControls()
     }
 
     cv::setMouseCallback(
-        camera_controls_window_name_,
+        window_name_,
         &QrVisionNode::handleCameraControlsMouseCallback,
         this);
 
+    camera_controls_attached_ = true;
     camera_controls_status_text_ = "camera param node offline";
-    displayCameraControlsWindow();
-    cv::waitKey(1);
+
+    camera_controls_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(camera_controls_update_period_ms_),
+        [this]() {
+          updateCameraControlClient();
+        });
 
     RCLCPP_INFO(
         get_logger(),
-        "D435i RGB control window enabled. window=%s camera_param_node=%s",
-        camera_controls_window_name_.c_str(),
-        camera_param_node_.c_str());
+        "D435i RGB controls embedded in debug_view. window=%s camera_param_node=%s refresh_ms=%d",
+        window_name_.c_str(),
+        camera_param_node_.c_str(),
+        camera_controls_update_period_ms_);
   } catch (const cv::Exception &e) {
     camera_controls_enabled_ = false;
-    camera_controls_window_created_ = false;
+    camera_controls_attached_ = false;
 
     RCLCPP_WARN(
         get_logger(),
-        "Cannot open D435i control window: %s",
+        "Cannot attach D435i controls to debug window: %s",
         e.what());
   }
 }
@@ -1853,10 +1864,10 @@ void QrVisionNode::applyCameraControlDescriptors(
           control.min_value,
           control.max_value);
 
-      if (camera_controls_window_created_) {
+      if (camera_controls_attached_) {
         cv::setTrackbarMax(
             control.label,
-            camera_controls_window_name_,
+            window_name_,
             std::max(1, control.max_value - control.min_value));
         updateCameraTrackbarPosition(i);
       }
@@ -2113,7 +2124,15 @@ void QrVisionNode::handleCameraTrackbarChange(std::size_t index, int position)
 
 void QrVisionNode::handleCameraControlsClick(int x, int y)
 {
-  const cv::Point point(x, y);
+  const cv::Point window_point(x, y);
+
+  if (!camera_controls_panel_rect_.contains(window_point)) {
+    return;
+  }
+
+  const cv::Point point(
+      window_point.x - camera_controls_panel_rect_.x,
+      window_point.y - camera_controls_panel_rect_.y);
 
   if (camera_reset_button_rect_.contains(point)) {
     resetCameraControlsToDefaults();
@@ -2164,7 +2183,7 @@ void QrVisionNode::setCameraBoolControl(std::size_t index, bool value)
 
 void QrVisionNode::updateCameraTrackbarPosition(std::size_t index)
 {
-  if (index >= camera_numeric_controls_.size() || !camera_controls_window_created_) {
+  if (index >= camera_numeric_controls_.size() || !camera_controls_attached_) {
     return;
   }
 
@@ -2177,7 +2196,7 @@ void QrVisionNode::updateCameraTrackbarPosition(std::size_t index)
   camera_controls_updating_trackbar_ = true;
   cv::setTrackbarPos(
       control.label,
-      camera_controls_window_name_,
+      window_name_,
       position);
   camera_controls_updating_trackbar_ = false;
   control.trackbar_value = position;
@@ -2255,7 +2274,7 @@ void QrVisionNode::drawCameraBoolControl(
 void QrVisionNode::drawCameraResetButton(cv::Mat &panel)
 {
   camera_reset_button_rect_ = cv::Rect(
-      kCameraControlsPanelWidthPx - 198,
+      std::max(24, panel.cols - 198),
       16,
       174,
       30);
@@ -2290,27 +2309,49 @@ void QrVisionNode::drawCameraResetButton(cv::Mat &panel)
       1);
 }
 
-void QrVisionNode::displayCameraControlsWindow()
+void QrVisionNode::drawCameraControlsPanel(cv::Mat &display)
 {
-  if (!camera_controls_enabled_ || !camera_controls_window_created_) {
+  camera_controls_panel_rect_ = cv::Rect();
+
+  if (!camera_controls_enabled_ || !camera_controls_attached_ || display.empty()) {
     return;
   }
 
-  try {
-    updateCameraControlClient();
+  static constexpr int kPanelMarginPx = 12;
+  static constexpr int kMinimumPanelWidthPx = 600;
+  static constexpr int kMinimumPanelHeightPx = 340;
 
-    cv::Mat panel(
-        kCameraControlsPanelHeightPx,
-        kCameraControlsPanelWidthPx,
-        CV_8UC3,
-        cv::Scalar(24, 28, 32));
+  const int panel_width = std::min(
+      kCameraControlsPanelWidthPx,
+      display.cols - kPanelMarginPx * 2);
+  const int panel_height = std::min(
+      kCameraControlsPanelHeightPx,
+      display.rows - kPanelMarginPx * 2);
+
+  if (panel_width < kMinimumPanelWidthPx ||
+      panel_height < kMinimumPanelHeightPx) {
+    return;
+  }
+
+  camera_controls_panel_rect_ = cv::Rect(
+      kPanelMarginPx,
+      display.rows - panel_height - kPanelMarginPx,
+      panel_width,
+      panel_height);
+
+  try {
+    cv::Mat panel = display(camera_controls_panel_rect_);
+    cv::Mat background = panel.clone();
+    background.setTo(cv::Scalar(24, 28, 32));
 
     cv::rectangle(
-        panel,
+        background,
         cv::Point(0, 0),
-        cv::Point(kCameraControlsPanelWidthPx, 58),
+        cv::Point(panel.cols, 58),
         cv::Scalar(38, 45, 51),
         cv::FILLED);
+    cv::addWeighted(background, 0.88, panel, 0.12, 0.0, panel);
+
     cv::putText(
         panel,
         "D435i RGB Controls",
@@ -2343,7 +2384,7 @@ void QrVisionNode::displayCameraControlsWindow()
 
     cv::putText(
         panel,
-        "Numeric sliders are OpenCV trackbars below this panel.",
+        "Numeric sliders are attached to this debug window.",
         cv::Point(28, 134),
         cv::FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -2380,7 +2421,7 @@ void QrVisionNode::displayCameraControlsWindow()
     cv::line(
         panel,
         cv::Point(24, 232),
-        cv::Point(kCameraControlsPanelWidthPx - 24, 232),
+        cv::Point(panel.cols - 24, 232),
         cv::Scalar(60, 68, 75),
         1);
 
@@ -2396,14 +2437,13 @@ void QrVisionNode::displayCameraControlsWindow()
         panel,
         camera_bool_controls_[kCameraAutoExposurePriorityControlIndex],
         330);
-
-    cv::imshow(camera_controls_window_name_, panel);
   } catch (const cv::Exception &e) {
+    camera_controls_panel_rect_ = cv::Rect();
     RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "Failed to draw D435i control window: %s",
+        "Failed to draw D435i controls in debug view: %s",
         e.what());
   }
 }
