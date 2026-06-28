@@ -92,6 +92,8 @@ private:
     rclcpp::ParameterType parameter_type{rclcpp::ParameterType::PARAMETER_INTEGER};
     bool enabled{true};
     bool send_pending{false};
+    int restore_value{0};
+    bool restore_value_initialized{false};
   };
 
   struct CameraBoolControl
@@ -102,6 +104,8 @@ private:
     bool last_sent_value{false};
     bool enabled{true};
     bool send_pending{false};
+    bool restore_value{false};
+    bool restore_value_initialized{false};
     cv::Rect true_rect{};
     cv::Rect false_rect{};
   };
@@ -178,6 +182,10 @@ private:
 
   void updateCameraControlEnableStates();
 
+  void captureCameraControlRestoreSnapshot();
+
+  void resetCameraControlsToDefaults();
+
   void sendPendingCameraControlParameters();
 
   void handleCameraParameterSetResults(
@@ -196,6 +204,8 @@ private:
       cv::Mat &panel,
       CameraBoolControl &control,
       int y);
+
+  void drawCameraResetButton(cv::Mat &panel);
 
   static void handleCameraTrackbarCallback(int position, void *userdata);
 
@@ -230,6 +240,8 @@ private:
       const std::vector<BpuYoloDetection> &detections);
 
   void drawOcrRegions(cv::Mat &display) const;
+
+  void drawQrPreprocessPreview(cv::Mat &display) const;
 #endif
 
   void updateFps();
@@ -252,6 +264,7 @@ private:
   bool enable_bpu_ = false;
   bool enable_bpu_ocr_ = false;
   bool use_rgbd_ = false;
+  bool qr_preprocess_enabled_ = true;
   bool camera_controls_enabled_ = false;
   mutable bool debug_window_created_ = false;
   bool camera_controls_window_created_ = false;
@@ -262,6 +275,7 @@ private:
   bool camera_param_get_requested_ = false;
   bool camera_param_get_in_flight_ = false;
   bool camera_param_set_in_flight_ = false;
+  bool camera_restore_snapshot_captured_ = false;
   int log_throttle_ms_ = 500;
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
@@ -281,6 +295,7 @@ private:
   std::array<CameraNumericControl, kCameraNumericControlCount> camera_numeric_controls_{};
   std::array<CameraBoolControl, kCameraBoolControlCount> camera_bool_controls_{};
   std::array<CameraTrackbarContext, kCameraNumericControlCount> camera_trackbar_contexts_{};
+  cv::Rect camera_reset_button_rect_{};
   rclcpp::Time last_camera_param_send_time_;
   std::string camera_controls_status_text_;
 
@@ -291,6 +306,8 @@ private:
   std::vector<OcrTextRegion> last_ocr_regions_;
   std::string debug_raw_symbol_;
   std::string debug_raw_symbol_type_;
+  cv::Mat debug_qr_preprocess_preview_;
+  std::string debug_qr_preprocess_mode_;
 #endif
 
   bool has_camera_info_ = false;
