@@ -29,7 +29,8 @@ signals:
     void slotDoubleClicked(int shelf_index, const QString &side, int row, int col);//双击某个点位时通知主窗口弹图
     void manualStockInScanned(int shelf_index, const QString &side, int row, int col,
                               const QString &category_id, const QString &package_id);
-    void manualStockOutRequested(int shelf_index, const QString &side, int row, int col);
+    void manualStockOutRequested(int shelf_index, const QString &side, int row, int col,
+                                const QString &category_id, const QString &package_id);
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;//监听槽位按钮双击事件
@@ -97,4 +98,6 @@ private:
     int current_slot_row_ = 0;//当前选中的行
     int current_slot_col_ = 0;//当前选中的列
     int current_shelf_index_ = 0;//当前显示的是第几个货架
+
+    int stock_outgoing_ = -1;//0代表是入库按钮触发扫码，1则为出库
 };

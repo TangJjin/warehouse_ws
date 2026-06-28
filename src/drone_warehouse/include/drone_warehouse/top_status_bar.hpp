@@ -35,6 +35,7 @@ signals:
     void taskClicked();//任务状态按钮被点击
     void shelfButtonClicked();//货架按钮被点击
     void executeButtonClicked();//执行按钮被点击
+    void scheduledcheckbuttonnClicked();//巡检按钮被点击
 
     void exitRequested();//退出信号
 
