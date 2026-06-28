@@ -25,6 +25,7 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
+#include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_perception/depth_processor.hpp"
 
 #ifndef DRONE_PERCEPTION_HAS_BPU
@@ -136,6 +137,12 @@ private:
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
 
+  std::string composeStablePackageBarcode() const;
+
+  void publishBarcodeCapture(const cv::Mat &color_image);
+
+  void publishNanBarcodeCapture();
+
   void updateVisualCodeCategoryStability(
       const std::vector<DecodedVisualCode> &decoded_codes,
       const std::string &category,
@@ -237,6 +244,12 @@ private:
       const cv::Mat &color_image,
       const std::vector<BpuYoloDetection> &detections);
 
+  const BpuYoloDetection *selectBestPackageDetection() const;
+
+  bool encodePackageCaptureJpeg(
+      const cv::Mat &color_image,
+      std::vector<uint8_t> &jpeg_data) const;
+
   void drawOcrRegions(cv::Mat &display) const;
 
   void drawQrPreprocessPreview(cv::Mat &display) const;
@@ -251,6 +264,7 @@ private:
   std::string window_name_;
   std::string camera_param_node_;
   std::string camera_controls_window_name_;
+  std::string barcode_capture_topic_;
 
   std::string bpu_model_path_;
   std::string ocr_rec_model_path_;
@@ -277,10 +291,13 @@ private:
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
   int shelf_code_lost_tolerance_frames_ = 2;
+  int barcode_capture_jpeg_quality_ = 90;
   float ocr_yolo_padding_ratio_ = 0.15F;
+  float package_capture_padding_ratio_ = 0.05F;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
+  std::string last_published_package_barcode_;
 
   CodeStabilityState shelf_code_state_;
   CodeStabilityState sku_code_state_;
@@ -314,4 +331,5 @@ private:
   std::shared_ptr<message_filters::Synchronizer<ColorDepthSyncPolicy>> color_depth_sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
   rclcpp::Subscription<realsense2_camera_msgs::msg::RGBD>::SharedPtr rgbd_sub_;
+  rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_capture_pub_;
 };

@@ -109,6 +109,7 @@ target_compile_options(qr_vision_node
 
 ament_target_dependencies(qr_vision_node
   cv_bridge
+  drone_msgs
   image_geometry
   message_filters
   rcl_interfaces
