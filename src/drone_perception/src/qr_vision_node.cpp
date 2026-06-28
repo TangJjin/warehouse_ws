@@ -34,8 +34,6 @@ static constexpr int32_t kYoloClassPackage = 1;
 static constexpr int32_t kYoloClassShelfTag = 2;
 static constexpr float kVisualCodeRoiPaddingXRatio = 0.45F;
 static constexpr float kVisualCodeRoiPaddingYRatio = 0.20F;
-static constexpr double kVisualCodeRetryScale = 2.0;
-static constexpr double kVisualCodeFarRetryScale = 4.0;
 
 #endif
 static constexpr std::size_t kBpuInputYSize =
@@ -742,39 +740,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       return stats;
     };
 
-    VisualCodeScanStats scan_stats = scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
-
-    auto scan_scaled_gray_roi = [&](
-        const cv::Mat &scan_roi,
-        double scale,
-        int interpolation,
-        const char *scan_mode) {
-      cv::Mat scaled_roi;
-      cv::resize(
-          scan_roi,
-          scaled_roi,
-          cv::Size(),
-          scale,
-          scale,
-          interpolation);
-      return scan_gray_roi(scaled_roi, static_cast<float>(scale), scan_mode);
-    };
-
-    if (scan_stats.accepted_count <= 0) {
-      scan_stats = scan_scaled_gray_roi(
-          raw_gray_roi,
-          kVisualCodeRetryScale,
-          cv::INTER_CUBIC,
-          "raw_gray_scale2");
-    }
-
-    if (scan_stats.accepted_count <= 0) {
-      scan_stats = scan_scaled_gray_roi(
-          raw_gray_roi,
-          kVisualCodeFarRetryScale,
-          cv::INTER_CUBIC,
-          "raw_gray_scale4");
-    }
+    (void)scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
   }
 
   std::sort(
