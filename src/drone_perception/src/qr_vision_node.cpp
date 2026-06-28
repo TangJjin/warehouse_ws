@@ -312,20 +312,16 @@ QrVisionNode::QrVisionNode()
     }
   }
 
-  initializeCameraControls();
-
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s camera_controls=%s camera_param_node=%s",
+      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
       use_rgbd_ ? "rgbd" : "synced",
       enable_bpu_ ? "true" : "false",
       enable_bpu_ocr_ ? "true" : "false",
       color_topic_.c_str(),
       depth_topic_.c_str(),
       rgbd_topic_.c_str(),
-      camera_info_topic_.c_str(),
-      camera_controls_enabled_ ? "true" : "false",
-      camera_param_node_.c_str());
+      camera_info_topic_.c_str());
 }
 
 QrVisionNode::~QrVisionNode()
@@ -356,7 +352,7 @@ void QrVisionNode::declareParameters()
       true);
   camera_controls_enabled_ = this->declare_parameter<bool>(
       "camera_controls_enabled",
-      debug_view_);
+      false);
   camera_param_node_ = this->declare_parameter<std::string>(
       "camera_param_node",
       "/camera/camera");
@@ -1521,7 +1517,6 @@ void QrVisionNode::displayDebugFrame(
   }
 #endif
 
-  drawCameraControlsPanel(display);
   cv::imshow(window_name_, display);
   cv::waitKey(1);
 }
