@@ -248,7 +248,7 @@ private:
 
   bool encodePackageCaptureJpeg(
       const cv::Mat &color_image,
-      std::vector<uint8_t> &jpeg_data) const;
+      std::vector<uint8_t> &jpeg_data);
 
   void drawOcrRegions(cv::Mat &display) const;
 
