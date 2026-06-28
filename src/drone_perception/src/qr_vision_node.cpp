@@ -42,8 +42,11 @@ static constexpr int kCameraControlsSendDebounceMs = 120;
 static constexpr int32_t kYoloClassQrcode = 0;
 static constexpr int32_t kYoloClassPackage = 1;
 static constexpr int32_t kYoloClassShelfTag = 2;
-static constexpr float kVisualCodeRoiPaddingXRatio = 0.45F;
-static constexpr float kVisualCodeRoiPaddingYRatio = 0.20F;
+static constexpr float kVisualCodeRoiPaddingXRatio = 0.15F;
+static constexpr float kVisualCodeRoiPaddingYRatio = 0.15F;
+static constexpr int kQrAdaptiveThresholdBlockSizePx = 31;
+static constexpr double kQrAdaptiveThresholdOffset = 5.0;
+static constexpr int kQrPreprocessPreviewMaxSizePx = 180;
 
 #endif
 static constexpr std::size_t kBpuInputYSize =
@@ -280,6 +283,9 @@ void QrVisionNode::declareParameters()
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
+  qr_preprocess_enabled_ = this->declare_parameter<bool>(
+      "qr_preprocess_enabled",
+      true);
   camera_controls_enabled_ = this->declare_parameter<bool>(
       "camera_controls_enabled",
       debug_view_);
@@ -608,6 +614,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     const std::vector<BpuYoloDetection> &detections)
 {
   std::vector<DecodedVisualCode> decoded_codes;
+  debug_qr_preprocess_preview_.release();
+  debug_qr_preprocess_mode_.clear();
 
   if (color_image.empty() || detections.empty()) {
     return decoded_codes;
@@ -672,6 +680,9 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       if (!continuous_roi.isContinuous()) {
         continuous_roi = continuous_roi.clone();
       }
+
+      debug_qr_preprocess_preview_ = continuous_roi.clone();
+      debug_qr_preprocess_mode_ = scan_mode;
 
       zbar::Image zbar_image(
           static_cast<unsigned int>(continuous_roi.cols),
@@ -768,7 +779,50 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       return stats;
     };
 
-    (void)scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
+    VisualCodeScanStats scan_stats = scan_gray_roi(raw_gray_roi, 1.0F, "raw_gray");
+
+    if (scan_stats.accepted_count > 0 || !qr_preprocess_enabled_) {
+      continue;
+    }
+
+    try {
+      cv::Mat clahe_roi;
+      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
+      clahe->apply(raw_gray_roi, clahe_roi);
+
+      scan_stats = scan_gray_roi(clahe_roi, 1.0F, "clahe_gray");
+
+      if (scan_stats.accepted_count > 0) {
+        continue;
+      }
+
+      const int min_side_px = std::min(clahe_roi.cols, clahe_roi.rows);
+      int adaptive_block_size_px = std::min(kQrAdaptiveThresholdBlockSizePx, min_side_px);
+
+      if (adaptive_block_size_px % 2 == 0) {
+        --adaptive_block_size_px;
+      }
+
+      if (adaptive_block_size_px >= 3) {
+        cv::Mat adaptive_binary_roi;
+        cv::adaptiveThreshold(
+            clahe_roi,
+            adaptive_binary_roi,
+            255.0,
+            cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv::THRESH_BINARY,
+            adaptive_block_size_px,
+            kQrAdaptiveThresholdOffset);
+        (void)scan_gray_roi(adaptive_binary_roi, 1.0F, "adaptive_binary");
+      }
+    } catch (const cv::Exception &e) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          log_throttle_ms_,
+          "QR preprocess failed: %s",
+          e.what());
+    }
   }
 
   std::sort(
@@ -1176,6 +1230,7 @@ void QrVisionNode::displayDebugFrame(
 
   drawBpuDetections(display);
   drawOcrRegions(display);
+  drawQrPreprocessPreview(display);
 
   if (enable_bpu_ocr_ && !last_ocr_regions_.empty()) {
     int ocr_text_y = visual_code_y + 48;
@@ -1273,6 +1328,16 @@ void QrVisionNode::initializeCameraControlDefaults()
       false,
       true,
       false};
+
+  for (CameraNumericControl &control : camera_numeric_controls_) {
+    control.restore_value = control.fallback_default;
+    control.restore_value_initialized = true;
+  }
+
+  for (CameraBoolControl &control : camera_bool_controls_) {
+    control.restore_value = control.current_value;
+    control.restore_value_initialized = true;
+  }
 
   for (std::size_t i = 0U; i < camera_trackbar_contexts_.size(); ++i) {
     camera_trackbar_contexts_[i].node = this;
@@ -1585,6 +1650,10 @@ void QrVisionNode::applyCameraControlValues(
   }
 
   updateCameraControlEnableStates();
+
+  if (!camera_restore_snapshot_captured_) {
+    captureCameraControlRestoreSnapshot();
+  }
 }
 
 void QrVisionNode::updateCameraControlEnableStates()
@@ -1601,6 +1670,51 @@ void QrVisionNode::updateCameraControlEnableStates()
   camera_numeric_controls_[kCameraExposureControlIndex].enabled = !auto_exposure;
   camera_numeric_controls_[kCameraGainControlIndex].enabled = !auto_exposure;
   camera_numeric_controls_[kCameraWhiteBalanceControlIndex].enabled = !auto_white_balance;
+}
+
+void QrVisionNode::captureCameraControlRestoreSnapshot()
+{
+  for (CameraNumericControl &control : camera_numeric_controls_) {
+    control.restore_value = control.current_value;
+    control.restore_value_initialized = true;
+  }
+
+  for (CameraBoolControl &control : camera_bool_controls_) {
+    control.restore_value = control.current_value;
+    control.restore_value_initialized = true;
+  }
+
+  camera_restore_snapshot_captured_ = true;
+}
+
+void QrVisionNode::resetCameraControlsToDefaults()
+{
+  for (CameraBoolControl &control : camera_bool_controls_) {
+    const bool restore_value = control.restore_value_initialized
+        ? control.restore_value
+        : control.current_value;
+
+    control.current_value = restore_value;
+    control.send_pending = control.current_value != control.last_sent_value;
+  }
+
+  updateCameraControlEnableStates();
+
+  for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
+    CameraNumericControl &control = camera_numeric_controls_[i];
+    const int restore_value = control.restore_value_initialized
+        ? control.restore_value
+        : control.fallback_default;
+
+    control.current_value = std::clamp(
+        restore_value,
+        control.min_value,
+        control.max_value);
+    control.send_pending = control.enabled && control.current_value != control.last_sent_value;
+    updateCameraTrackbarPosition(i);
+  }
+
+  camera_controls_status_text_ = "reset defaults pending";
 }
 
 void QrVisionNode::sendPendingCameraControlParameters()
@@ -1763,6 +1877,11 @@ void QrVisionNode::handleCameraControlsClick(int x, int y)
 {
   const cv::Point point(x, y);
 
+  if (camera_reset_button_rect_.contains(point)) {
+    resetCameraControlsToDefaults();
+    return;
+  }
+
   for (std::size_t i = 0U; i < camera_bool_controls_.size(); ++i) {
     const CameraBoolControl &control = camera_bool_controls_[i];
 
@@ -1895,6 +2014,44 @@ void QrVisionNode::drawCameraBoolControl(
   }
 }
 
+void QrVisionNode::drawCameraResetButton(cv::Mat &panel)
+{
+  camera_reset_button_rect_ = cv::Rect(
+      kCameraControlsPanelWidthPx - 198,
+      16,
+      174,
+      30);
+
+  const cv::Scalar fill_color = camera_param_node_online_
+      ? cv::Scalar(65, 95, 115)
+      : cv::Scalar(62, 68, 74);
+  const cv::Scalar border_color = camera_param_node_online_
+      ? cv::Scalar(130, 205, 235)
+      : cv::Scalar(105, 112, 120);
+  const cv::Scalar text_color = camera_param_node_online_
+      ? cv::Scalar(230, 245, 255)
+      : cv::Scalar(185, 190, 195);
+
+  cv::rectangle(
+      panel,
+      camera_reset_button_rect_,
+      fill_color,
+      cv::FILLED);
+  cv::rectangle(
+      panel,
+      camera_reset_button_rect_,
+      border_color,
+      1);
+  cv::putText(
+      panel,
+      "Reset Defaults",
+      cv::Point(camera_reset_button_rect_.x + 18, camera_reset_button_rect_.y + 21),
+      cv::FONT_HERSHEY_SIMPLEX,
+      0.52,
+      text_color,
+      1);
+}
+
 void QrVisionNode::displayCameraControlsWindow()
 {
   if (!camera_controls_enabled_ || !camera_controls_window_created_) {
@@ -1924,6 +2081,7 @@ void QrVisionNode::displayCameraControlsWindow()
         0.72,
         cv::Scalar(230, 245, 255),
         2);
+    drawCameraResetButton(panel);
 
     const std::string status = camera_controls_status_text_.empty()
         ? std::string("camera param node offline")
@@ -2274,7 +2432,95 @@ void QrVisionNode::drawOcrRegions(cv::Mat &display) const
         cv::FONT_HERSHEY_SIMPLEX,
         0.5,
         cv::Scalar(255, 200, 120),
-        1);
+      1);
   }
+}
+
+void QrVisionNode::drawQrPreprocessPreview(cv::Mat &display) const
+{
+  if (display.empty() || debug_qr_preprocess_preview_.empty()) {
+    return;
+  }
+
+  cv::Mat preview_bgr;
+
+  if (debug_qr_preprocess_preview_.channels() == 1) {
+    cv::cvtColor(debug_qr_preprocess_preview_, preview_bgr, cv::COLOR_GRAY2BGR);
+  } else {
+    preview_bgr = debug_qr_preprocess_preview_.clone();
+  }
+
+  if (preview_bgr.empty()) {
+    return;
+  }
+
+  const double scale = std::min(
+      static_cast<double>(kQrPreprocessPreviewMaxSizePx) / static_cast<double>(preview_bgr.cols),
+      static_cast<double>(kQrPreprocessPreviewMaxSizePx) / static_cast<double>(preview_bgr.rows));
+  const int preview_width = std::max(1, static_cast<int>(std::round(static_cast<double>(preview_bgr.cols) * scale)));
+  const int preview_height = std::max(1, static_cast<int>(std::round(static_cast<double>(preview_bgr.rows) * scale)));
+
+  cv::Mat resized_preview;
+  cv::resize(
+      preview_bgr,
+      resized_preview,
+      cv::Size(preview_width, preview_height),
+      0.0,
+      0.0,
+      cv::INTER_NEAREST);
+
+  const int margin_px = 16;
+  const int label_height_px = 24;
+  const int panel_width = resized_preview.cols + margin_px;
+  const int panel_height = resized_preview.rows + label_height_px + margin_px;
+  const int panel_x = std::max(0, display.cols - panel_width - margin_px);
+  const int panel_y = std::max(0, display.rows - panel_height - margin_px);
+  const cv::Rect panel_rect(
+      panel_x,
+      panel_y,
+      std::min(panel_width, display.cols - panel_x),
+      std::min(panel_height, display.rows - panel_y));
+
+  if (panel_rect.width <= margin_px || panel_rect.height <= label_height_px) {
+    return;
+  }
+
+  cv::Mat overlay = display.clone();
+  cv::rectangle(
+      overlay,
+      panel_rect,
+      cv::Scalar(20, 20, 20),
+      cv::FILLED);
+  cv::addWeighted(overlay, 0.58, display, 0.42, 0.0, display);
+
+  const std::string label = debug_qr_preprocess_mode_.empty()
+      ? std::string("QR preprocess")
+      : cv::format("QR preprocess: %s", debug_qr_preprocess_mode_.c_str());
+  cv::putText(
+      display,
+      label,
+      cv::Point(panel_x + 8, panel_y + 17),
+      cv::FONT_HERSHEY_SIMPLEX,
+      0.45,
+      cv::Scalar(120, 220, 255),
+      1);
+
+  const cv::Rect image_rect(
+      panel_x + 8,
+      panel_y + label_height_px,
+      std::min(resized_preview.cols, display.cols - panel_x - 8),
+      std::min(resized_preview.rows, display.rows - panel_y - label_height_px - 8));
+
+  if (image_rect.width <= 0 || image_rect.height <= 0) {
+    return;
+  }
+
+  resized_preview(cv::Rect(0, 0, image_rect.width, image_rect.height))
+      .copyTo(display(image_rect));
+  cv::rectangle(
+      display,
+      image_rect,
+      cv::Scalar(120, 220, 255),
+      1);
 }
 #endif
