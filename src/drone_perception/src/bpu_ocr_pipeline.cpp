@@ -718,17 +718,32 @@ std::vector<BpuOcrPipeline::DetectionBox> BpuOcrPipeline::detectTextBoxes(
 BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &crop_bgr)
 {
   const auto rec_preprocess_t0 = SteadyClock::now();
+  const float height_scale =
+      static_cast<float>(_config.rec_input_height_px) / static_cast<float>(crop_bgr.rows);
+  const int resized_width_px = std::clamp(
+      static_cast<int>(std::ceil(static_cast<float>(crop_bgr.cols) * height_scale)),
+      1,
+      _config.rec_input_width_px);
+
   cv::Mat resized_image;
   cv::resize(
       crop_bgr,
       resized_image,
-      cv::Size(_config.rec_input_width_px, _config.rec_input_height_px),
+      cv::Size(resized_width_px, _config.rec_input_height_px),
       0.0,
       0.0,
       cv::INTER_LINEAR);
 
-  resized_image.convertTo(resized_image, CV_32FC3, 1.0 / 255.0);
-  cv::cvtColor(resized_image, resized_image, cv::COLOR_BGR2RGB);
+  cv::Mat padded_image(
+      _config.rec_input_height_px,
+      _config.rec_input_width_px,
+      crop_bgr.type(),
+      cv::Scalar(0, 0, 0));
+  resized_image.copyTo(
+      padded_image(cv::Rect(0, 0, resized_width_px, _config.rec_input_height_px)));
+
+  padded_image.convertTo(padded_image, CV_32FC3, 1.0 / 255.0);
+  cv::cvtColor(padded_image, padded_image, cv::COLOR_BGR2RGB);
 
   std::vector<float> nchw_input(
       static_cast<std::size_t>(_config.rec_input_height_px) *
@@ -736,7 +751,7 @@ BpuOcrPipeline::RecognitionResult BpuOcrPipeline::recognizeText(const cv::Mat &c
 
   for (int y = 0; y < _config.rec_input_height_px; ++y) {
     for (int x = 0; x < _config.rec_input_width_px; ++x) {
-      const cv::Vec3f pixel = resized_image.at<cv::Vec3f>(y, x);
+      const cv::Vec3f pixel = padded_image.at<cv::Vec3f>(y, x);
       const std::size_t plane_offset =
           static_cast<std::size_t>(y) * static_cast<std::size_t>(_config.rec_input_width_px) +
           static_cast<std::size_t>(x);
