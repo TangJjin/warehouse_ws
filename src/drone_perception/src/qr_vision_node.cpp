@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cv_bridge/cv_bridge.h>
@@ -28,6 +29,15 @@ static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr int kDefaultShelfCodeStableFrames = 3;
 static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
 static constexpr float kDefaultOcrYoloPaddingRatio = 0.15F;
+static constexpr std::size_t kCameraExposureControlIndex = 0U;
+static constexpr std::size_t kCameraGainControlIndex = 1U;
+static constexpr std::size_t kCameraWhiteBalanceControlIndex = 2U;
+static constexpr std::size_t kCameraAutoExposureControlIndex = 0U;
+static constexpr std::size_t kCameraAutoWhiteBalanceControlIndex = 1U;
+static constexpr std::size_t kCameraAutoExposurePriorityControlIndex = 2U;
+static constexpr int kCameraControlsPanelWidthPx = 720;
+static constexpr int kCameraControlsPanelHeightPx = 360;
+static constexpr int kCameraControlsSendDebounceMs = 120;
 #if DRONE_PERCEPTION_HAS_BPU
 static constexpr int32_t kYoloClassQrcode = 0;
 static constexpr int32_t kYoloClassPackage = 1;
@@ -228,20 +238,29 @@ QrVisionNode::QrVisionNode()
     }
   }
 
+  initializeCameraControls();
+
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
+      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s camera_controls=%s camera_param_node=%s",
       use_rgbd_ ? "rgbd" : "synced",
       enable_bpu_ ? "true" : "false",
       enable_bpu_ocr_ ? "true" : "false",
       color_topic_.c_str(),
       depth_topic_.c_str(),
       rgbd_topic_.c_str(),
-      camera_info_topic_.c_str());
+      camera_info_topic_.c_str(),
+      camera_controls_enabled_ ? "true" : "false",
+      camera_param_node_.c_str());
 }
 
 QrVisionNode::~QrVisionNode()
 {
+  if (camera_controls_window_created_)
+  {
+    cv::destroyWindow(camera_controls_window_name_);
+  }
+
   if (debug_window_created_)
   {
     cv::destroyWindow(window_name_);
@@ -261,6 +280,15 @@ void QrVisionNode::declareParameters()
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
+  camera_controls_enabled_ = this->declare_parameter<bool>(
+      "camera_controls_enabled",
+      debug_view_);
+  camera_param_node_ = this->declare_parameter<std::string>(
+      "camera_param_node",
+      "/camera/camera");
+  camera_controls_window_name_ = this->declare_parameter<std::string>(
+      "camera_controls_window_name",
+      "D435i Controls");
   use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   sample_radius_px_ = this->declare_parameter<int>(
@@ -1175,7 +1203,846 @@ void QrVisionNode::displayDebugFrame(
 #endif
 
   cv::imshow(window_name_, display);
+  displayCameraControlsWindow();
   cv::waitKey(1);
+}
+
+void QrVisionNode::initializeCameraControlDefaults()
+{
+  camera_numeric_controls_[kCameraExposureControlIndex] = {
+      "rgb_camera.exposure",
+      "exposure",
+      1,
+      10000,
+      100,
+      1,
+      10000,
+      100,
+      100,
+      99,
+      rclcpp::ParameterType::PARAMETER_INTEGER,
+      true,
+      false};
+  camera_numeric_controls_[kCameraGainControlIndex] = {
+      "rgb_camera.gain",
+      "gain",
+      0,
+      128,
+      64,
+      0,
+      128,
+      64,
+      64,
+      64,
+      rclcpp::ParameterType::PARAMETER_INTEGER,
+      true,
+      false};
+  camera_numeric_controls_[kCameraWhiteBalanceControlIndex] = {
+      "rgb_camera.white_balance",
+      "white_balance",
+      2800,
+      6500,
+      4600,
+      2800,
+      6500,
+      4600,
+      4600,
+      1800,
+      rclcpp::ParameterType::PARAMETER_DOUBLE,
+      true,
+      false};
+
+  camera_bool_controls_[kCameraAutoExposureControlIndex] = {
+      "rgb_camera.enable_auto_exposure",
+      "enable_auto_exposure",
+      true,
+      true,
+      true,
+      false};
+  camera_bool_controls_[kCameraAutoWhiteBalanceControlIndex] = {
+      "rgb_camera.enable_auto_white_balance",
+      "enable_auto_white_balance",
+      true,
+      true,
+      true,
+      false};
+  camera_bool_controls_[kCameraAutoExposurePriorityControlIndex] = {
+      "rgb_camera.auto_exposure_priority",
+      "auto_exposure_priority",
+      false,
+      false,
+      true,
+      false};
+
+  for (std::size_t i = 0U; i < camera_trackbar_contexts_.size(); ++i) {
+    camera_trackbar_contexts_[i].node = this;
+    camera_trackbar_contexts_[i].index = i;
+  }
+
+  updateCameraControlEnableStates();
+}
+
+void QrVisionNode::initializeCameraControls()
+{
+  initializeCameraControlDefaults();
+
+  if (!camera_controls_enabled_) {
+    return;
+  }
+
+  if (!debug_view_) {
+    camera_controls_enabled_ = false;
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_controls_enabled requires debug_view=true because it uses OpenCV HighGUI");
+    return;
+  }
+
+  if (camera_param_node_.empty()) {
+    camera_param_node_ = "/camera/camera";
+  }
+
+  try {
+    camera_param_client_ =
+        std::make_shared<rclcpp::AsyncParametersClient>(this, camera_param_node_);
+
+    cv::namedWindow(camera_controls_window_name_, cv::WINDOW_AUTOSIZE);
+    camera_controls_window_created_ = true;
+
+    for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
+      CameraNumericControl &control = camera_numeric_controls_[i];
+      control.current_value = std::clamp(
+          control.current_value,
+          control.min_value,
+          control.max_value);
+      control.last_sent_value = control.current_value;
+      control.trackbar_value = control.current_value - control.min_value;
+
+      cv::createTrackbar(
+          control.label,
+          camera_controls_window_name_,
+          nullptr,
+          std::max(1, control.max_value - control.min_value),
+          &QrVisionNode::handleCameraTrackbarCallback,
+          &camera_trackbar_contexts_[i]);
+      updateCameraTrackbarPosition(i);
+    }
+
+    cv::setMouseCallback(
+        camera_controls_window_name_,
+        &QrVisionNode::handleCameraControlsMouseCallback,
+        this);
+
+    camera_controls_status_text_ = "camera param node offline";
+    displayCameraControlsWindow();
+    cv::waitKey(1);
+
+    RCLCPP_INFO(
+        get_logger(),
+        "D435i RGB control window enabled. window=%s camera_param_node=%s",
+        camera_controls_window_name_.c_str(),
+        camera_param_node_.c_str());
+  } catch (const cv::Exception &e) {
+    camera_controls_enabled_ = false;
+    camera_controls_window_created_ = false;
+
+    RCLCPP_WARN(
+        get_logger(),
+        "Cannot open D435i control window: %s",
+        e.what());
+  }
+}
+
+void QrVisionNode::updateCameraControlClient()
+{
+  if (!camera_controls_enabled_ || !camera_param_client_) {
+    return;
+  }
+
+  const bool service_ready = camera_param_client_->service_is_ready();
+
+  if (!service_ready) {
+    camera_param_node_online_ = false;
+    camera_controls_status_text_ = "camera param node offline";
+    return;
+  }
+
+  if (!camera_param_node_online_) {
+    camera_param_node_online_ = true;
+    camera_param_describe_requested_ = false;
+    camera_param_get_requested_ = false;
+    camera_controls_status_text_ = "camera param node online";
+  }
+
+  if (!camera_param_describe_requested_ && !camera_param_describe_in_flight_) {
+    requestCameraControlDescriptors();
+  }
+
+  if (!camera_param_get_requested_ && !camera_param_get_in_flight_) {
+    requestCameraControlValues();
+  }
+
+  sendPendingCameraControlParameters();
+}
+
+void QrVisionNode::requestCameraControlDescriptors()
+{
+  if (!camera_param_client_) {
+    return;
+  }
+
+  std::vector<std::string> parameter_names;
+  parameter_names.reserve(camera_numeric_controls_.size() + camera_bool_controls_.size());
+
+  for (const CameraNumericControl &control : camera_numeric_controls_) {
+    parameter_names.push_back(control.parameter_name);
+  }
+
+  for (const CameraBoolControl &control : camera_bool_controls_) {
+    parameter_names.push_back(control.parameter_name);
+  }
+
+  camera_param_describe_requested_ = true;
+  camera_param_describe_in_flight_ = true;
+
+  try {
+    camera_param_client_->describe_parameters(
+        parameter_names,
+        [this](auto future) {
+          camera_param_describe_in_flight_ = false;
+
+          try {
+            applyCameraControlDescriptors(future.get());
+            camera_controls_status_text_ = "camera descriptors loaded";
+          } catch (const std::exception &e) {
+            camera_controls_status_text_ = "describe failed";
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to describe D435i RGB parameters: %s",
+                e.what());
+          }
+        });
+  } catch (const std::exception &e) {
+    camera_param_describe_in_flight_ = false;
+    camera_controls_status_text_ = "describe request failed";
+
+    RCLCPP_WARN(
+        get_logger(),
+        "Failed to request D435i RGB parameter descriptors: %s",
+        e.what());
+  }
+}
+
+void QrVisionNode::requestCameraControlValues()
+{
+  if (!camera_param_client_) {
+    return;
+  }
+
+  std::vector<std::string> parameter_names;
+  parameter_names.reserve(camera_numeric_controls_.size() + camera_bool_controls_.size());
+
+  for (const CameraNumericControl &control : camera_numeric_controls_) {
+    parameter_names.push_back(control.parameter_name);
+  }
+
+  for (const CameraBoolControl &control : camera_bool_controls_) {
+    parameter_names.push_back(control.parameter_name);
+  }
+
+  camera_param_get_requested_ = true;
+  camera_param_get_in_flight_ = true;
+
+  try {
+    camera_param_client_->get_parameters(
+        parameter_names,
+        [this](auto future) {
+          camera_param_get_in_flight_ = false;
+
+          try {
+            applyCameraControlValues(future.get());
+            camera_controls_status_text_ = "camera parameters loaded";
+          } catch (const std::exception &e) {
+            camera_controls_status_text_ = "get parameters failed";
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to read D435i RGB parameters: %s",
+                e.what());
+          }
+        });
+  } catch (const std::exception &e) {
+    camera_param_get_in_flight_ = false;
+    camera_controls_status_text_ = "get request failed";
+
+    RCLCPP_WARN(
+        get_logger(),
+        "Failed to request D435i RGB parameter values: %s",
+        e.what());
+  }
+}
+
+void QrVisionNode::applyCameraControlDescriptors(
+    const std::vector<rcl_interfaces::msg::ParameterDescriptor> &descriptors)
+{
+  for (const rcl_interfaces::msg::ParameterDescriptor &descriptor : descriptors) {
+    for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
+      CameraNumericControl &control = camera_numeric_controls_[i];
+
+      if (descriptor.name != control.parameter_name) {
+        continue;
+      }
+
+      const auto descriptor_type = static_cast<rclcpp::ParameterType>(descriptor.type);
+
+      if (descriptor_type == rclcpp::ParameterType::PARAMETER_INTEGER ||
+          descriptor_type == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+        control.parameter_type = descriptor_type;
+      }
+
+      int descriptor_min = control.fallback_min;
+      int descriptor_max = control.fallback_max;
+
+      if (!descriptor.integer_range.empty()) {
+        descriptor_min = static_cast<int>(descriptor.integer_range.front().from_value);
+        descriptor_max = static_cast<int>(descriptor.integer_range.front().to_value);
+      } else if (!descriptor.floating_point_range.empty()) {
+        descriptor_min = static_cast<int>(std::round(
+            descriptor.floating_point_range.front().from_value));
+        descriptor_max = static_cast<int>(std::round(
+            descriptor.floating_point_range.front().to_value));
+      }
+
+      if (descriptor_min > descriptor_max) {
+        std::swap(descriptor_min, descriptor_max);
+      }
+
+      if (descriptor_min == descriptor_max) {
+        descriptor_min = control.fallback_min;
+        descriptor_max = control.fallback_max;
+      }
+
+      control.min_value = descriptor_min;
+      control.max_value = descriptor_max;
+      control.current_value = std::clamp(
+          control.current_value,
+          control.min_value,
+          control.max_value);
+      control.last_sent_value = std::clamp(
+          control.last_sent_value,
+          control.min_value,
+          control.max_value);
+
+      if (camera_controls_window_created_) {
+        cv::setTrackbarMax(
+            control.label,
+            camera_controls_window_name_,
+            std::max(1, control.max_value - control.min_value));
+        updateCameraTrackbarPosition(i);
+      }
+    }
+  }
+}
+
+void QrVisionNode::applyCameraControlValues(
+    const std::vector<rclcpp::Parameter> &parameters)
+{
+  for (const rclcpp::Parameter &parameter : parameters) {
+    for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
+      CameraNumericControl &control = camera_numeric_controls_[i];
+
+      if (parameter.get_name() != control.parameter_name) {
+        continue;
+      }
+
+      int value = control.current_value;
+
+      if (parameter.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+        value = static_cast<int>(parameter.as_int());
+        control.parameter_type = rclcpp::ParameterType::PARAMETER_INTEGER;
+      } else if (parameter.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+        value = static_cast<int>(std::round(parameter.as_double()));
+        control.parameter_type = rclcpp::ParameterType::PARAMETER_DOUBLE;
+      } else {
+        continue;
+      }
+
+      control.current_value = std::clamp(value, control.min_value, control.max_value);
+      control.last_sent_value = control.current_value;
+      control.send_pending = false;
+      updateCameraTrackbarPosition(i);
+    }
+
+    for (CameraBoolControl &control : camera_bool_controls_) {
+      if (parameter.get_name() != control.parameter_name ||
+          parameter.get_type() != rclcpp::ParameterType::PARAMETER_BOOL) {
+        continue;
+      }
+
+      control.current_value = parameter.as_bool();
+      control.last_sent_value = control.current_value;
+      control.send_pending = false;
+    }
+  }
+
+  updateCameraControlEnableStates();
+}
+
+void QrVisionNode::updateCameraControlEnableStates()
+{
+  const bool auto_exposure =
+      camera_bool_controls_[kCameraAutoExposureControlIndex].current_value;
+  const bool auto_white_balance =
+      camera_bool_controls_[kCameraAutoWhiteBalanceControlIndex].current_value;
+
+  camera_bool_controls_[kCameraAutoExposureControlIndex].enabled = true;
+  camera_bool_controls_[kCameraAutoWhiteBalanceControlIndex].enabled = true;
+  camera_bool_controls_[kCameraAutoExposurePriorityControlIndex].enabled = auto_exposure;
+
+  camera_numeric_controls_[kCameraExposureControlIndex].enabled = !auto_exposure;
+  camera_numeric_controls_[kCameraGainControlIndex].enabled = !auto_exposure;
+  camera_numeric_controls_[kCameraWhiteBalanceControlIndex].enabled = !auto_white_balance;
+}
+
+void QrVisionNode::sendPendingCameraControlParameters()
+{
+  if (!camera_controls_enabled_ ||
+      !camera_param_node_online_ ||
+      !camera_param_client_ ||
+      camera_param_set_in_flight_) {
+    return;
+  }
+
+  const rclcpp::Time now_time = this->now();
+
+  if (last_camera_param_send_time_.nanoseconds() > 0) {
+    const int64_t elapsed_ms =
+        (now_time - last_camera_param_send_time_).nanoseconds() / 1000000;
+
+    if (elapsed_ms < kCameraControlsSendDebounceMs) {
+      return;
+    }
+  }
+
+  std::vector<rclcpp::Parameter> parameters;
+
+  for (const CameraBoolControl &control : camera_bool_controls_) {
+    if (!control.enabled ||
+        !control.send_pending ||
+        control.current_value == control.last_sent_value) {
+      continue;
+    }
+
+    parameters.emplace_back(control.parameter_name, control.current_value);
+  }
+
+  if (parameters.empty()) {
+    for (const CameraNumericControl &control : camera_numeric_controls_) {
+      if (!control.enabled ||
+          !control.send_pending ||
+          control.current_value == control.last_sent_value) {
+        continue;
+      }
+
+      if (control.parameter_type == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+        parameters.emplace_back(
+            control.parameter_name,
+            static_cast<double>(control.current_value));
+      } else {
+        parameters.emplace_back(
+            control.parameter_name,
+            static_cast<int64_t>(control.current_value));
+      }
+    }
+  }
+
+  if (parameters.empty()) {
+    return;
+  }
+
+  camera_param_set_in_flight_ = true;
+  last_camera_param_send_time_ = now_time;
+
+  try {
+    camera_param_client_->set_parameters(
+        parameters,
+        [this, parameters](auto future) {
+          camera_param_set_in_flight_ = false;
+
+          try {
+            handleCameraParameterSetResults(parameters, future.get());
+          } catch (const std::exception &e) {
+            camera_controls_status_text_ = "set parameters failed";
+            RCLCPP_WARN(
+                get_logger(),
+                "Failed to set D435i RGB parameters: %s",
+                e.what());
+          }
+        });
+  } catch (const std::exception &e) {
+    camera_param_set_in_flight_ = false;
+    camera_controls_status_text_ = "set request failed";
+
+    RCLCPP_WARN(
+        get_logger(),
+        "Failed to send D435i RGB parameter request: %s",
+        e.what());
+  }
+}
+
+void QrVisionNode::handleCameraParameterSetResults(
+    const std::vector<rclcpp::Parameter> &parameters,
+    const std::vector<rcl_interfaces::msg::SetParametersResult> &results)
+{
+  const std::size_t result_count = std::min(parameters.size(), results.size());
+  bool all_success = result_count == parameters.size();
+
+  for (std::size_t i = 0U; i < result_count; ++i) {
+    const rclcpp::Parameter &parameter = parameters[i];
+    const rcl_interfaces::msg::SetParametersResult &result = results[i];
+
+    if (!result.successful) {
+      all_success = false;
+      RCLCPP_WARN(
+          get_logger(),
+          "D435i parameter rejected. name=%s reason=%s",
+          parameter.get_name().c_str(),
+          result.reason.c_str());
+    }
+
+    for (CameraNumericControl &control : camera_numeric_controls_) {
+      if (parameter.get_name() != control.parameter_name) {
+        continue;
+      }
+
+      if (result.successful) {
+        control.last_sent_value = control.current_value;
+      }
+
+      control.send_pending = false;
+    }
+
+    for (CameraBoolControl &control : camera_bool_controls_) {
+      if (parameter.get_name() != control.parameter_name) {
+        continue;
+      }
+
+      if (result.successful) {
+        control.last_sent_value = control.current_value;
+      }
+
+      control.send_pending = false;
+    }
+  }
+
+  camera_controls_status_text_ = all_success
+      ? "camera parameters applied"
+      : "camera parameter rejected";
+}
+
+void QrVisionNode::handleCameraTrackbarChange(std::size_t index, int position)
+{
+  if (camera_controls_updating_trackbar_ || index >= camera_numeric_controls_.size()) {
+    return;
+  }
+
+  CameraNumericControl &control = camera_numeric_controls_[index];
+  const int value = std::clamp(
+      control.min_value + position,
+      control.min_value,
+      control.max_value);
+
+  control.current_value = value;
+  control.trackbar_value = control.current_value - control.min_value;
+
+  if (control.enabled) {
+    control.send_pending = true;
+  }
+}
+
+void QrVisionNode::handleCameraControlsClick(int x, int y)
+{
+  const cv::Point point(x, y);
+
+  for (std::size_t i = 0U; i < camera_bool_controls_.size(); ++i) {
+    const CameraBoolControl &control = camera_bool_controls_[i];
+
+    if (!control.enabled) {
+      continue;
+    }
+
+    if (control.true_rect.contains(point)) {
+      setCameraBoolControl(i, true);
+      return;
+    }
+
+    if (control.false_rect.contains(point)) {
+      setCameraBoolControl(i, false);
+      return;
+    }
+  }
+}
+
+void QrVisionNode::setCameraBoolControl(std::size_t index, bool value)
+{
+  if (index >= camera_bool_controls_.size() ||
+      !camera_bool_controls_[index].enabled ||
+      camera_bool_controls_[index].current_value == value) {
+    return;
+  }
+
+  CameraBoolControl &control = camera_bool_controls_[index];
+  control.current_value = value;
+  control.send_pending = true;
+  updateCameraControlEnableStates();
+
+  if (index == kCameraAutoExposureControlIndex && !value) {
+    camera_numeric_controls_[kCameraExposureControlIndex].send_pending = true;
+    camera_numeric_controls_[kCameraGainControlIndex].send_pending = true;
+  }
+
+  if (index == kCameraAutoWhiteBalanceControlIndex && !value) {
+    camera_numeric_controls_[kCameraWhiteBalanceControlIndex].send_pending = true;
+  }
+}
+
+void QrVisionNode::updateCameraTrackbarPosition(std::size_t index)
+{
+  if (index >= camera_numeric_controls_.size() || !camera_controls_window_created_) {
+    return;
+  }
+
+  CameraNumericControl &control = camera_numeric_controls_[index];
+  const int position = std::clamp(
+      control.current_value - control.min_value,
+      0,
+      std::max(1, control.max_value - control.min_value));
+
+  camera_controls_updating_trackbar_ = true;
+  cv::setTrackbarPos(
+      control.label,
+      camera_controls_window_name_,
+      position);
+  camera_controls_updating_trackbar_ = false;
+  control.trackbar_value = position;
+}
+
+void QrVisionNode::drawCameraBoolControl(
+    cv::Mat &panel,
+    CameraBoolControl &control,
+    int y)
+{
+  const cv::Scalar text_color = control.enabled
+      ? cv::Scalar(230, 235, 235)
+      : cv::Scalar(115, 120, 125);
+  const cv::Scalar active_color(90, 220, 140);
+  const cv::Scalar inactive_color = control.enabled
+      ? cv::Scalar(90, 95, 105)
+      : cv::Scalar(70, 74, 78);
+  const cv::Scalar border_color = control.enabled
+      ? cv::Scalar(185, 195, 205)
+      : cv::Scalar(90, 94, 98);
+  const int true_x = 360;
+  const int false_x = 510;
+  const int radius = 9;
+
+  cv::putText(
+      panel,
+      control.label,
+      cv::Point(28, y + 6),
+      cv::FONT_HERSHEY_SIMPLEX,
+      0.55,
+      text_color,
+      1);
+
+  auto draw_option = [&](
+      bool option_value,
+      int center_x,
+      const char *label,
+      cv::Rect &rect) {
+    const cv::Point center(center_x, y);
+    rect = cv::Rect(center_x - 22, y - 18, 90, 36);
+
+    cv::circle(
+        panel,
+        center,
+        radius,
+        option_value == control.current_value ? active_color : inactive_color,
+        cv::FILLED);
+    cv::circle(panel, center, radius, border_color, 1);
+
+    cv::putText(
+        panel,
+        label,
+        cv::Point(center_x + 18, y + 5),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.5,
+        text_color,
+        1);
+  };
+
+  draw_option(true, true_x, "true", control.true_rect);
+  draw_option(false, false_x, "false", control.false_rect);
+
+  if (!control.enabled) {
+    cv::putText(
+        panel,
+        "(requires auto exposure=true)",
+        cv::Point(590, y + 5),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.42,
+        cv::Scalar(105, 110, 116),
+        1);
+  }
+}
+
+void QrVisionNode::displayCameraControlsWindow()
+{
+  if (!camera_controls_enabled_ || !camera_controls_window_created_) {
+    return;
+  }
+
+  try {
+    updateCameraControlClient();
+
+    cv::Mat panel(
+        kCameraControlsPanelHeightPx,
+        kCameraControlsPanelWidthPx,
+        CV_8UC3,
+        cv::Scalar(24, 28, 32));
+
+    cv::rectangle(
+        panel,
+        cv::Point(0, 0),
+        cv::Point(kCameraControlsPanelWidthPx, 58),
+        cv::Scalar(38, 45, 51),
+        cv::FILLED);
+    cv::putText(
+        panel,
+        "D435i RGB Controls",
+        cv::Point(24, 34),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.72,
+        cv::Scalar(230, 245, 255),
+        2);
+
+    const std::string status = camera_controls_status_text_.empty()
+        ? std::string("camera param node offline")
+        : camera_controls_status_text_;
+    cv::putText(
+        panel,
+        cv::format("node: %s", camera_param_node_.c_str()),
+        cv::Point(28, 82),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.48,
+        cv::Scalar(190, 200, 205),
+        1);
+    cv::putText(
+        panel,
+        cv::format("status: %s", status.c_str()),
+        cv::Point(28, 104),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.48,
+        camera_param_node_online_ ? cv::Scalar(115, 225, 155) : cv::Scalar(100, 165, 255),
+        1);
+
+    cv::putText(
+        panel,
+        "Numeric sliders are OpenCV trackbars below this panel.",
+        cv::Point(28, 134),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.45,
+        cv::Scalar(160, 168, 174),
+        1);
+
+    const std::array<int, kCameraNumericControlCount> numeric_y = {162, 187, 212};
+
+    for (std::size_t i = 0U; i < camera_numeric_controls_.size(); ++i) {
+      const CameraNumericControl &control = camera_numeric_controls_[i];
+      const cv::Scalar text_color = control.enabled
+          ? cv::Scalar(225, 232, 235)
+          : cv::Scalar(115, 120, 125);
+      const std::string suffix = control.enabled
+          ? std::string("")
+          : std::string("  disabled by auto mode");
+
+      cv::putText(
+          panel,
+          cv::format(
+              "%s = %d  range [%d..%d]%s",
+              control.parameter_name.c_str(),
+              control.current_value,
+              control.min_value,
+              control.max_value,
+              suffix.c_str()),
+          cv::Point(28, numeric_y[i]),
+          cv::FONT_HERSHEY_SIMPLEX,
+          0.5,
+          text_color,
+          1);
+    }
+
+    cv::line(
+        panel,
+        cv::Point(24, 232),
+        cv::Point(kCameraControlsPanelWidthPx - 24, 232),
+        cv::Scalar(60, 68, 75),
+        1);
+
+    drawCameraBoolControl(
+        panel,
+        camera_bool_controls_[kCameraAutoExposureControlIndex],
+        262);
+    drawCameraBoolControl(
+        panel,
+        camera_bool_controls_[kCameraAutoWhiteBalanceControlIndex],
+        296);
+    drawCameraBoolControl(
+        panel,
+        camera_bool_controls_[kCameraAutoExposurePriorityControlIndex],
+        330);
+
+    cv::imshow(camera_controls_window_name_, panel);
+  } catch (const cv::Exception &e) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "Failed to draw D435i control window: %s",
+        e.what());
+  }
+}
+
+void QrVisionNode::handleCameraTrackbarCallback(int position, void *userdata)
+{
+  CameraTrackbarContext *context = static_cast<CameraTrackbarContext *>(userdata);
+
+  if (context == nullptr || context->node == nullptr) {
+    return;
+  }
+
+  context->node->handleCameraTrackbarChange(context->index, position);
+}
+
+void QrVisionNode::handleCameraControlsMouseCallback(
+    int event,
+    int x,
+    int y,
+    int flags,
+    void *userdata)
+{
+  (void)flags;
+
+  if (event != cv::EVENT_LBUTTONDOWN) {
+    return;
+  }
+
+  QrVisionNode *node = static_cast<QrVisionNode *>(userdata);
+
+  if (node == nullptr) {
+    return;
+  }
+
+  node->handleCameraControlsClick(x, y);
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
