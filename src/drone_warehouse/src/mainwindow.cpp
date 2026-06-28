@@ -20,6 +20,7 @@
 #include <QVBoxLayout>
 #include <QImage>
 #include <QPixmap>
+#include <QRegularExpression>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -275,6 +276,30 @@ void MainWindow::setupConnections()
         [this](int shelf_index, const QString &side, int row, int col)
         {
             showShelfSlotImage(shelf_index, side, row, col);
+        });
+
+    // 地面站手动入库链路：
+    // 1. 用户先在 ShelfInfoDialog 里选中一个格子。
+    // 2. Dialog 通过串口拿到扫码文本后，发出 `manualStockInScanned(...)`。
+    // 3. MainWindow 在这里接住信号，并把类别/包裹编号真正写回主数据 `shelf_panel_data_`。
+    // 4. 写回完成后，再统一调用 `setShelfPanelData(...)` 把最新结果刷新回弹窗。
+    connect(shelf_info_dialog_, &ShelfInfoDialog::manualStockInScanned,
+        this,
+        [this](int shelf_index, const QString &side, int row, int col,
+               const QString &category_id, const QString &package_id)
+        {
+            applyManualStockIn(shelf_index, side, row, col, category_id, package_id);
+        });
+
+    // 地面站手动出库链路：
+    // 1. 用户在弹窗里点击“出库”。
+    // 2. Dialog 把“当前选中的货架/前后面/行列”发给 MainWindow。
+    // 3. MainWindow 在这里统一执行清空，避免 Dialog 和主数据各改各的导致状态分叉。
+    connect(shelf_info_dialog_, &ShelfInfoDialog::manualStockOutRequested,
+        this,
+        [this](int shelf_index, const QString &side, int row, int col)
+        {
+            applyManualStockOut(shelf_index, side, row, col);
         });
 
     /*********************ros通信相关***********************/
@@ -658,32 +683,66 @@ void MainWindow::appendBarcodeRecord(
         return;
     }
 
-    //根据当前无人机姿态推断槽位
-    const SlotLocation location = resolveSlotFromPose(scene_data_.drone_state.pose);
+    // 机载巡检回填链路：
+    // 1. ROS 管理器把无人机识别结果转成 `barcodeCaptured(...)`，最终调用到这里。
+    // 2. `barcode` 正常格式是 `CAT01|PKG88|A-1-1`，前两段是识别出的类别/包裹编号，第三段是无人机返回的位置码。
+    // 3. 这里先拆条码，再同时准备两套定位来源：
+    //    - `code_location`：直接按第三段位置码解析格子。
+    //    - `pose_location`：按无人机当前位姿估算格子。
+    // 4. 规则上位置码优先，位姿只做兜底和冲突对照日志。
+    // 5. 最终定位到格子后，把巡检字段和图片都写进主数据，再刷新弹窗显示。
+    const QStringList parts = barcode.split('|', Qt::KeepEmptyParts);
+    const QString slot_code = (parts.size() >= 3) ? parts[2].trimmed() : QString();
+    const SlotLocation pose_location = resolveSlotFromPose(scene_data_.drone_state.pose);
+    const SlotLocation code_location = resolveSlotFromCode(slot_code);
 
-    if (!location.valid)
+    SlotLocation target_location;
+    if (code_location.valid)
     {
-        run_log_view_->appendPlainText("收到图片，无法映射");
-        //clock_timer_->start(5000);
+        target_location = code_location;
+        if (pose_location.valid &&
+            (pose_location.shelf_index != code_location.shelf_index ||
+             pose_location.side != code_location.side ||
+             pose_location.row != code_location.row ||
+             pose_location.col != code_location.col))
+        {
+            run_log_view_->appendPlainText(
+                QString("位置码%1与位姿映射不一致，采用位置码：货架%2 %3 R%4C%5，位姿映射为货架%6 %7 R%8C%9")
+                    .arg(slot_code)
+                    .arg(code_location.shelf_index + 1)
+                    .arg(code_location.side)
+                    .arg(code_location.row + 1)
+                    .arg(code_location.col + 1)
+                    .arg(pose_location.shelf_index + 1)
+                    .arg(pose_location.side)
+                    .arg(pose_location.row + 1)
+                    .arg(pose_location.col + 1));
+        }
+    }
+    else
+    {
+        target_location = pose_location;
+    }
+
+    if (!target_location.valid)
+    {
+        run_log_view_->appendPlainText(slot_code.isEmpty() ? "收到图片，无法映射" : QString("收到图片，位置码 %1 无法解析且位姿映射失败").arg(slot_code));
         return;
     }
 
     //根据槽位索引找到对应的货物信息
-    ShelfSlotItem *slot = findShelfSlot(location.shelf_index, location.side, location.row, location.col);
+    ShelfSlotItem *slot = findShelfSlot(target_location.shelf_index, target_location.side, target_location.row, target_location.col);
     if (!slot)
     {
         run_log_view_->appendPlainText("收到图片，目标货架槽位无效");
-        //clock_timer_->start(5000);
         return;
     }
 
-    //消息拆包
-    const QStringList parts = barcode.split('|', Qt::KeepEmptyParts);
-    if (parts.size() == 3)
+    if (parts.size() >= 3)
     {
         slot->observed_category_id = parts[0].trimmed();
         slot->observed_package_id = parts[1].trimmed();
-        slot->position_package_id = parts.mid(2).join("|").trimmed();
+        slot->position_package_id = slot_code;
     }
     else if (parts.size() == 2)
     {
@@ -707,13 +766,6 @@ void MainWindow::appendBarcodeRecord(
     slot->latest_image.time_text = time_text;
 
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
-    // run_log_view_->appendPlainText(
-    //     QString("图片已绑定到货架%1 %2 R%3C%4")
-    //         .arg(location.shelf_index + 1)
-    //         .arg(location.side)
-    //         .arg(location.row + 1)
-    //         .arg(location.col + 1));
-    // clock_timer_->start(5000);
 }
 
 void MainWindow::appendVisionBarcodeCount(
@@ -724,6 +776,83 @@ void MainWindow::appendVisionBarcodeCount(
     Q_UNUSED(time_text);
 
     // 当前轮次先不使用这条统计信号，只保留接口避免后续接线时再次改动。
+}
+
+void MainWindow::applyManualStockIn(int shelf_index, const QString &side, int row, int col,
+                                    const QString &category_id, const QString &package_id)
+{
+    // 地面站手动入库真正落库的地方：
+    // 1. Dialog 只负责把“当前选中格 + 扫码结果”发过来。
+    // 2. 这里根据格子坐标拿到主数据里的 `ShelfSlotItem`。
+    // 3. 只更新手动台账字段 `category_id/package_id`。
+    // 4. 更新完成后再统一刷新弹窗，保证主数据和界面显示始终一致。
+    ShelfSlotItem *slot = findShelfSlot(shelf_index, side, row, col);
+    if (!slot)
+    {
+        run_log_view_->appendPlainText("手动入库失败：目标槽位无效");
+        return;
+    }
+
+    slot->category_id = category_id;
+    slot->package_id = package_id;
+    shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+}
+
+void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int row, int col)
+{
+    // 地面站手动出库真正清空数据的地方：
+    // 1. 先按当前选中格定位到主数据里的槽位。
+    // 2. 再把手动台账、巡检结果、位置码、时间、图片统一清空。
+    // 3. 这样做的目的，是让“出库”后的格子完整回到空位状态，避免残留旧巡检痕迹误导界面。
+    ShelfSlotItem *slot = findShelfSlot(shelf_index, side, row, col);
+    if (!slot)
+    {
+        run_log_view_->appendPlainText("手动出库失败：目标槽位无效");
+        return;
+    }
+
+    slot->category_id.clear();
+    slot->package_id.clear();
+    slot->observed_category_id.clear();
+    slot->observed_package_id.clear();
+    slot->position_package_id.clear();
+    slot->observed_time_text.clear();
+    slot->has_image = false;
+    slot->latest_image = SlotImageData{};
+    shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+}
+
+SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
+{
+    SlotLocation location;
+    static const QRegularExpression pattern("^([A-Z])-([1-9]\\d*)-([1-9]\\d*)$");
+    const QRegularExpressionMatch match = pattern.match(slot_code.trimmed());
+    if (!match.hasMatch())
+    {
+        return location;
+    }
+
+    const QString shelf_code = match.captured(1);
+    const int encoded_row = match.captured(2).toInt();
+    const int encoded_col = match.captured(3).toInt();
+
+    if (encoded_row < 1 || encoded_row > 4 || encoded_col < 1 || encoded_col > 3)
+    {
+        return location;
+    }
+
+    const int shelf_bucket = shelf_code.at(0).unicode() - QChar('A').unicode();
+    if (shelf_bucket < 0)
+    {
+        return location;
+    }
+
+    location.shelf_index = shelf_bucket / 2;
+    location.side = (shelf_bucket % 2 == 0) ? "front" : "back";
+    location.row = encoded_row - 1;
+    location.col = encoded_col - 1;
+    location.valid = location.shelf_index >= 0 && location.shelf_index < shelf_panel_data_.size();
+    return location;
 }
 
 ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, int row, int col)
@@ -750,7 +879,7 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
         slot_list = &shelf_panel_data_[shelf_index].back_slots;
     }
 
-    const int index = row * 4 + col;//行列转一维下标
+    const int index = row * 3 + col;//行列转一维下标
     if (!slot_list || index < 0 || index >= slot_list->size())
     {
         return nullptr;

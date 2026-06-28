@@ -40,8 +40,12 @@ private:
     void applyWindowStyle();//设置整体的窗口和控件样式
 
     SlotLocation resolveSlotFromPose(const Pose3D &pose) const;//槽位判断函数
+    SlotLocation resolveSlotFromCode(const QString &slot_code) const;//根据位置码直接解析槽位
     ShelfSlotItem *findShelfSlot(int shelf_index, const QString &side, int row, int col);//根据槽位索引找到对应的货物信息
     void showShelfSlotImage(int shelf_index, const QString &side, int row, int col);
+    void applyManualStockIn(int shelf_index, const QString &side, int row, int col,
+                            const QString &category_id, const QString &package_id);
+    void applyManualStockOut(int shelf_index, const QString &side, int row, int col);
 
     /*********************ros移植部分***********************/
 
