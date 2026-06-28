@@ -182,8 +182,6 @@ private:
 
   void updateCameraControlEnableStates();
 
-  void captureCameraControlRestoreSnapshot();
-
   void resetCameraControlsToDefaults();
 
   void sendPendingCameraControlParameters();
@@ -275,7 +273,6 @@ private:
   bool camera_param_get_requested_ = false;
   bool camera_param_get_in_flight_ = false;
   bool camera_param_set_in_flight_ = false;
-  bool camera_restore_snapshot_captured_ = false;
   int log_throttle_ms_ = 500;
   int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;

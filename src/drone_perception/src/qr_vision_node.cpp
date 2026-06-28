@@ -1269,12 +1269,12 @@ void QrVisionNode::initializeCameraControlDefaults()
       "exposure",
       1,
       10000,
-      100,
+      999,
       1,
       10000,
-      100,
-      100,
-      99,
+      999,
+      999,
+      998,
       rclcpp::ParameterType::PARAMETER_INTEGER,
       true,
       false};
@@ -1310,8 +1310,8 @@ void QrVisionNode::initializeCameraControlDefaults()
   camera_bool_controls_[kCameraAutoExposureControlIndex] = {
       "rgb_camera.enable_auto_exposure",
       "enable_auto_exposure",
-      true,
-      true,
+      false,
+      false,
       true,
       false};
   camera_bool_controls_[kCameraAutoWhiteBalanceControlIndex] = {
@@ -1526,7 +1526,7 @@ void QrVisionNode::requestCameraControlValues()
 
           try {
             applyCameraControlValues(future.get());
-            camera_controls_status_text_ = "camera parameters loaded";
+            camera_controls_status_text_ = "fixed defaults pending";
           } catch (const std::exception &e) {
             camera_controls_status_text_ = "get parameters failed";
             RCLCPP_WARN(
@@ -1650,10 +1650,7 @@ void QrVisionNode::applyCameraControlValues(
   }
 
   updateCameraControlEnableStates();
-
-  if (!camera_restore_snapshot_captured_) {
-    captureCameraControlRestoreSnapshot();
-  }
+  resetCameraControlsToDefaults();
 }
 
 void QrVisionNode::updateCameraControlEnableStates()
@@ -1670,21 +1667,6 @@ void QrVisionNode::updateCameraControlEnableStates()
   camera_numeric_controls_[kCameraExposureControlIndex].enabled = !auto_exposure;
   camera_numeric_controls_[kCameraGainControlIndex].enabled = !auto_exposure;
   camera_numeric_controls_[kCameraWhiteBalanceControlIndex].enabled = !auto_white_balance;
-}
-
-void QrVisionNode::captureCameraControlRestoreSnapshot()
-{
-  for (CameraNumericControl &control : camera_numeric_controls_) {
-    control.restore_value = control.current_value;
-    control.restore_value_initialized = true;
-  }
-
-  for (CameraBoolControl &control : camera_bool_controls_) {
-    control.restore_value = control.current_value;
-    control.restore_value_initialized = true;
-  }
-
-  camera_restore_snapshot_captured_ = true;
 }
 
 void QrVisionNode::resetCameraControlsToDefaults()
