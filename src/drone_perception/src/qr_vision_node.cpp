@@ -1024,7 +1024,7 @@ const BpuYoloDetection *QrVisionNode::selectBestPackageDetection() const
 
 bool QrVisionNode::encodePackageCaptureJpeg(
     const cv::Mat &color_image,
-    std::vector<uint8_t> &jpeg_data) const
+    std::vector<uint8_t> &jpeg_data)
 {
   jpeg_data.clear();
 
