@@ -34,7 +34,7 @@ MainWindow::MainWindow(QWidget *parent)
     /******************************************************/
     //setWindowFlags(Qt::Window | Qt::FramelessWindowHint);//去掉主窗口系统标题栏，不再显示上方 warehouse_gcs 那一层
     //resize(1024, 600);
-    setFixedSize(1024, 600);//设置初始窗口大小
+    setFixedSize(1024, 540);//设置初始窗口大小
 
     setupUi();
     setupFloatingWidgets();
@@ -201,7 +201,7 @@ void MainWindow::setupFloatingWidgets()
 void MainWindow::setupConnections()
 {
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次日志文本
-        run_log_view_->hide();
+        run_log_view_->clear();
         clock_timer_->stop();
     });
 
@@ -421,8 +421,8 @@ void MainWindow::setupConnections()
             [this](double x, double y, double z, double qx, double qy, double qz, double qw)
             {
                 // 当前仓储项目没有移植 position_view_，所以这里改成直接更新当前场景里的无人机位置。
-                scene_data_.drone_state.pose.x = -1 * (y * 100 -150);
-                scene_data_.drone_state.pose.y = -1 * (x * 100 -100);
+                scene_data_.drone_state.pose.x = 1 * (x * 100 +150);
+                scene_data_.drone_state.pose.y = -1 * (y * 100 -100);
                 scene_data_.drone_state.pose.z = z;
 
                 const double siny_cosp = 2.0 * (qw * qz + qx * qy);
@@ -1202,7 +1202,7 @@ void MainWindow::updateOverlayGeometry()
     //左边距；上边距；宽度；高度
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
-    attitude_panel_->setGeometry(area.width() - 220, 84, 180, 120);
+    attitude_panel_->setGeometry(area.width() - 220, 84, 220, 160);
     view_mode_widget_->setGeometry(20, area.height() - 70, 160, 40);
     view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
     view_2D_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
