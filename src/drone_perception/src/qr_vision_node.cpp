@@ -701,7 +701,7 @@ void QrVisionNode::publishBarcodeCapture(const cv::Mat &color_image)
 #if DRONE_PERCEPTION_HAS_BPU
   std::vector<uint8_t> jpeg_data;
 
-  if (!encodePackageCaptureJpeg(color_image, jpeg_data)) {
+  if (!encodeFrameCaptureJpeg(color_image, jpeg_data)) {
     publishNanBarcodeCapture();
     return;
   }
@@ -717,7 +717,7 @@ void QrVisionNode::publishBarcodeCapture(const cv::Mat &color_image)
 
   RCLCPP_INFO(
       get_logger(),
-      "published package barcode capture barcode=%s bytes=%zu",
+      "published frame barcode capture barcode=%s bytes=%zu",
       barcode.c_str(),
       msg.image_data.size());
 #else
@@ -1009,24 +1009,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
   return decoded_codes;
 }
 
-const BpuYoloDetection *QrVisionNode::selectBestPackageDetection() const
-{
-  const BpuYoloDetection *best_package = nullptr;
-
-  for (const BpuYoloDetection &detection : last_bpu_detections_) {
-    if (detection.class_id != kYoloClassPackage) {
-      continue;
-    }
-
-    if (best_package == nullptr || detection.score > best_package->score) {
-      best_package = &detection;
-    }
-  }
-
-  return best_package;
-}
-
-bool QrVisionNode::encodePackageCaptureJpeg(
+bool QrVisionNode::encodeFrameCaptureJpeg(
     const cv::Mat &color_image,
     std::vector<uint8_t> &jpeg_data)
 {
@@ -1036,57 +1019,19 @@ bool QrVisionNode::encodePackageCaptureJpeg(
     return false;
   }
 
-  const BpuYoloDetection *best_package = selectBestPackageDetection();
-
-  if (best_package == nullptr) {
-    return false;
-  }
-
-  const BpuImageRect image_rect = mapBpuDetectionToImageRect(
-      *best_package,
-      color_image.cols,
-      color_image.rows);
-  const BpuImageRect padded_rect = expandImageRect(
-      image_rect,
-      package_capture_padding_ratio_,
-      color_image.cols,
-      color_image.rows);
-
-  const int x_min = std::clamp(
-      static_cast<int>(std::floor(padded_rect.x_min)),
-      0,
-      std::max(0, color_image.cols - 1));
-  const int y_min = std::clamp(
-      static_cast<int>(std::floor(padded_rect.y_min)),
-      0,
-      std::max(0, color_image.rows - 1));
-  const int x_max = std::clamp(
-      static_cast<int>(std::ceil(padded_rect.x_max)),
-      x_min + 1,
-      color_image.cols);
-  const int y_max = std::clamp(
-      static_cast<int>(std::ceil(padded_rect.y_max)),
-      y_min + 1,
-      color_image.rows);
-  const cv::Rect roi(x_min, y_min, x_max - x_min, y_max - y_min);
-
-  if (roi.width <= 1 || roi.height <= 1) {
-    return false;
-  }
-
   try {
     const std::vector<int> encode_params = {
         cv::IMWRITE_JPEG_QUALITY,
         barcode_capture_jpeg_quality_};
 
-    return cv::imencode(".jpg", color_image(roi), jpeg_data, encode_params) &&
+    return cv::imencode(".jpg", color_image, jpeg_data, encode_params) &&
         !jpeg_data.empty();
   } catch (const cv::Exception &e) {
     RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "package capture jpeg encode failed: %s",
+        "frame capture jpeg encode failed: %s",
         e.what());
   }
 

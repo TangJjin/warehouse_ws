@@ -244,9 +244,7 @@ private:
       const cv::Mat &color_image,
       const std::vector<BpuYoloDetection> &detections);
 
-  const BpuYoloDetection *selectBestPackageDetection() const;
-
-  bool encodePackageCaptureJpeg(
+  bool encodeFrameCaptureJpeg(
       const cv::Mat &color_image,
       std::vector<uint8_t> &jpeg_data);
 
