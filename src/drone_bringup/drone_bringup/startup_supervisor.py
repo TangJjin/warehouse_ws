@@ -64,21 +64,21 @@ class StartupSupervisor:
                 ready_qos_reliability='best_effort',
             ),
             StartupStep(
-                name='k230_animals_uart_ros2_node',
-                command=['ros2', 'run', 'drone_perception', 'k230_animals_uart_ros2_node'],
+                name='qr_vision_node',
+                command=['ros2', 'run', 'drone_perception', 'qr_vision_node'],
                 ready_topic='/mavros/local_position/pose',
                 ready_type='geometry_msgs/msg/PoseStamped',
                 timeout_sec=15,
                 ready_qos_reliability='best_effort',
             ),
-            StartupStep(
-                name='airborne_link_bridge',
-                command=['ros2', 'run', 'drone_qt_2', 'airborne_link_bridge'],
-                ready_topic='/mavros/state',
-                ready_type='mavros_msgs/msg/State',
-                timeout_sec=15,
-                ready_qos_reliability='best_effort',
-            ),
+#            StartupStep(
+#                name='airborne_link_bridge',
+#                command=['ros2', 'run', 'drone_qt_2', 'airborne_link_bridge'],
+#                ready_topic='/mavros/state',
+#                ready_type='mavros_msgs/msg/State',
+#                timeout_sec=15,
+#                ready_qos_reliability='best_effort',
+#            ),
             StartupStep(
                 name='compare_yaw',
                 command=['ros2', 'run', 'drone_localization', 'compare_yaw_node'],
@@ -87,14 +87,14 @@ class StartupSupervisor:
                 timeout_sec=15,
                 ready_qos_reliability='reliable',
             ),
-            # StartupStep(
-            #     name='airborne_node',
-            #     command=['ros2', 'run', 'drone_qt_2', 'airborne_node'],
-            #     ready_topic='/drone/status',
-            #     ready_type='drone_msgs/msg/DroneStatus',
-            #     timeout_sec=15,
-            #     ready_qos_reliability='best_effort',
-            # ),
+             StartupStep(
+                 name='airborne_node',
+                 command=['ros2', 'run', 'drone_qt_2', 'airborne_node'],
+                 ready_topic='/drone/status',
+                 ready_type='drone_msgs/msg/DroneStatus',
+                 timeout_sec=15,
+                 ready_qos_reliability='best_effort',
+             ),
         ]
 
     def log(self, message: str):
