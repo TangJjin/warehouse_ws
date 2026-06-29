@@ -1,8 +1,5 @@
 #include "drone_perception/yolo_postprocessor.hpp"
 
-#include <iostream>
-#include <limits>
-
 #include <opencv2/dnn.hpp>
 
 YoloPostprocessor::YoloPostprocessor(
@@ -77,16 +74,6 @@ std::vector<Detection> YoloPostprocessor::parseChannelData(
         return {};
     }
 
-    // 临时调试：每 30 帧打印一次 RKNN 输出里的最高分，方便判断是分数低还是框坐标异常。
-    static int debug_frame_count = 0;
-    float debug_max_score = -std::numeric_limits<float>::infinity();
-    int debug_max_class = -1;
-    int debug_max_index = -1;
-    float debug_x = 0.0F;
-    float debug_y = 0.0F;
-    float debug_w = 0.0F;
-    float debug_h = 0.0F;
-
     for (int i = 0; i < candidate_count; ++i)
     {
         const float x_center = bbox_data[0 * candidate_count + i];
@@ -105,17 +92,6 @@ std::vector<Detection> YoloPostprocessor::parseChannelData(
                 best_score = score;
                 best_class = class_id;
             }
-        }
-
-        if (best_score > debug_max_score)
-        {
-            debug_max_score = best_score;
-            debug_max_class = best_class;
-            debug_max_index = i;
-            debug_x = x_center;
-            debug_y = y_center;
-            debug_w = width;
-            debug_h = height;
         }
 
         if (best_score < confidence_threshold_ || best_class < 0)
@@ -142,20 +118,6 @@ std::vector<Detection> YoloPostprocessor::parseChannelData(
         boxes.push_back(box);
         scores.push_back(best_score);
         class_ids.push_back(best_class);
-    }
-
-    ++debug_frame_count;
-    if (debug_frame_count % 30 == 0)
-    {
-        std::cout << "[YOLO_DEBUG] max_score=" << debug_max_score
-                  << " class=" << debug_max_class
-                  << " index=" << debug_max_index
-                  << " xywh=(" << debug_x << ","
-                  << debug_y << ","
-                  << debug_w << ","
-                  << debug_h << ")"
-                  << " kept_before_nms=" << boxes.size()
-                  << std::endl;
     }
 
     std::vector<int> keep_indices;

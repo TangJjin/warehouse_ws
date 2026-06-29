@@ -24,6 +24,7 @@
 #include <realsense2_camera_msgs/msg/rgbd.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/bool.hpp>
 
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_perception/depth_processor.hpp"
@@ -137,11 +138,19 @@ private:
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
 
-  std::string composeStablePackageBarcode() const;
+  std::string composeCaptureBarcode(bool require_complete) const;
+
+  void handleHoverActive(const std_msgs::msg::Bool::SharedPtr msg);
+
+  void resetHoverCaptureState();
 
   void publishBarcodeCapture(const cv::Mat &color_image);
 
-  void publishNanBarcodeCapture();
+  void publishTextOnlyCapture(const std::string &barcode);
+
+  void publishFullFrameCapture(
+      const std::string &barcode,
+      const cv::Mat &color_image);
 
   void updateVisualCodeCategoryStability(
       const std::vector<DecodedVisualCode> &decoded_codes,
@@ -262,6 +271,7 @@ private:
   std::string window_name_;
   std::string camera_param_node_;
   std::string barcode_capture_topic_;
+  std::string hover_active_topic_;
 
   std::string bpu_model_path_;
   std::string ocr_rec_model_path_;
@@ -274,6 +284,8 @@ private:
   bool enable_bpu_ocr_ = false;
   bool use_rgbd_ = false;
   bool qr_preprocess_enabled_ = true;
+  bool hover_active_ = false;
+  bool full_capture_sent_in_hover_ = false;
   bool camera_controls_enabled_ = false;
   mutable bool debug_window_created_ = false;
   bool camera_controls_attached_ = false;
@@ -331,5 +343,6 @@ private:
   std::shared_ptr<message_filters::Synchronizer<ColorDepthSyncPolicy>> color_depth_sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
   rclcpp::Subscription<realsense2_camera_msgs::msg::RGBD>::SharedPtr rgbd_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr hover_active_sub_;
   rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_capture_pub_;
 };

@@ -116,6 +116,7 @@ ament_target_dependencies(qr_vision_node
   rclcpp
   realsense2_camera_msgs
   sensor_msgs
+  std_msgs
 )
 
 install(TARGETS

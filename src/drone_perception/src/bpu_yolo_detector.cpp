@@ -227,53 +227,6 @@ std::vector<BpuYoloDetection> runNms(
   return kept_detections;
 }
 
-void printClassOutputRange(const std::vector<hbDNNTensor> &output_tensors)
-{
-  static int32_t debug_frame_count = 0;
-  ++debug_frame_count;
-
-  if (debug_frame_count % 30 != 0) {
-    return;
-  }
-
-  std::cout << "[BPU_DEBUG] class output raw ranges:";
-
-  for (const BpuYoloOutputGroup &group : kOutputGroups) {
-    const hbDNNTensor &cls_tensor =
-        output_tensors[static_cast<std::size_t>(group.cls_output_index)];
-    const float *cls_data = static_cast<const float *>(cls_tensor.sysMem[0].virAddr);
-
-    const std::size_t value_count =
-        static_cast<std::size_t>(group.grid_size) *
-        static_cast<std::size_t>(group.grid_size) *
-        static_cast<std::size_t>(kClassCount);
-
-    if (value_count == 0) {
-      continue;
-    }
-
-    float min_value = cls_data[0];
-    float max_value = cls_data[0];
-
-    for (std::size_t i = 0; i < value_count; ++i) {
-      if (cls_data[i] < min_value) {
-        min_value = cls_data[i];
-      }
-
-      if (cls_data[i] > max_value) {
-        max_value = cls_data[i];
-      }
-    }
-
-    std::cout << " output" << group.cls_output_index
-              << "_min=" << min_value
-              << "_max=" << max_value
-              << "_sigmoid_max=" << sigmoid(max_value);
-  }
-
-  std::cout << std::endl;
-}
-
 std::vector<BpuYoloCandidate> collectCandidates(const std::vector<hbDNNTensor> &output_tensors)
 {
   std::vector<BpuYoloCandidate> candidates;
@@ -479,8 +432,6 @@ std::vector<BpuYoloDetection> BpuYoloDetector::inferNv12(
         hbSysFlushMem(&_output_tensors[i].sysMem[0], HB_SYS_MEM_CACHE_INVALIDATE),
         "hbSysFlushMem output[" + std::to_string(i) + "] invalidate");
   }
-
-  printClassOutputRange(_output_tensors);
 
   const std::vector<BpuYoloCandidate> candidates = collectCandidates(_output_tensors);
   std::vector<BpuYoloDetection> detections =
