@@ -104,10 +104,13 @@ namespace offboard_run {
         }
 
         // 工厂方法，创建 "悬停" 的动作
-        static std::shared_ptr<DroneAction> createHoverAction(double hover_time_s) {
+        static std::shared_ptr<DroneAction> createHoverAction(
+            double hover_time_s,
+            bool notify_vision_hover = false) {
             auto action = std::make_shared<DroneAction>(PrivateTag{});
             action->type_ = ActionType::HOVER;  // 设置动作类型为悬停
             action->hover_time_s_ = hover_time_s;  // 设置悬停时间
+            action->notify_vision_hover_ = notify_vision_hover;
             return action;
         }
 
@@ -161,6 +164,7 @@ namespace offboard_run {
         double getTargetAltitude() const { return target_altitude_; }
 
         double getHoverTime() const { return hover_time_s_; }
+        bool shouldNotifyVisionHover() const { return notify_vision_hover_; }
 
         geometry_msgs::msg::PoseStamped getTargetPose() const { return target_pose_; }
 
@@ -224,6 +228,9 @@ namespace offboard_run {
 
         // 悬停时间（秒）
         double hover_time_s_ = 0.0;
+
+        // 该悬停动作是否向视觉端发布任务窗口状态
+        bool notify_vision_hover_ = false;
 
         // 位置公差，用于判断是否到达目标位置
         double position_tolerance_ = 0.1;

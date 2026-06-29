@@ -7,6 +7,7 @@
 #include <mavros_msgs/srv/command_tol.hpp>
 #include <mavros_msgs/srv/set_mode.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <tf2/LinearMath/Matrix3x3.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -223,7 +224,10 @@ public:
         step_pub_ = node_->create_publisher<std_msgs::msg::String>("/step", 10);
         mission_status_pub_ =
             node_->create_publisher<std_msgs::msg::String>("/mission_status", 10);
-        
+
+        hover_active_pub_ = node_->create_publisher<std_msgs::msg::Bool>(
+            "/mission/hover_active", rclcpp::QoS(10).reliable().transient_local());
+
         scan_point_done_pub_ = node_->create_publisher<drone_msgs::msg::K230ScanPointDone>(
             "/k230/animals/scan_point_done", rclcpp::QoS(10).reliable());
         
@@ -276,6 +280,7 @@ public:
 
     void clearAction()
     {
+        publishVisionHoverActive(false);
         while (!action_queue_.empty())
         {
             action_queue_.pop();
@@ -449,6 +454,10 @@ private:
 
     void completeCurrentAction(const std::string &message)
     {
+        if (current_action_ && current_action_->getType() == ActionType::HOVER)
+        {
+            publishVisionHoverActive(false);
+        }
         if (current_action_)
         {
             current_action_->setStatus(ActionStatus::COMPLETED);
@@ -462,6 +471,10 @@ private:
 
     void failCurrentAction(const std::string &message)
     {
+        if (current_action_ && current_action_->getType() == ActionType::HOVER)
+        {
+            publishVisionHoverActive(false);
+        }
         if (current_action_)
         {
             current_action_->setStatus(ActionStatus::FAILED);
@@ -877,6 +890,7 @@ private:
 
     void executeHover(const std::shared_ptr<DroneAction> &action)
     {
+        publishVisionHoverActive(action->shouldNotifyVisionHover());
         sendPositionSetpoint(last_finish_pose_);
         const double elapsed = (node_->now() - action->getStartTime()).seconds();
         const double remaining = std::max(0.0, action->getHoverTime() - elapsed);
@@ -897,6 +911,20 @@ private:
             "悬停中（" + frame_text + "）：保持位置 " + hold_text +
             "，已悬停=" + formatSeconds(elapsed) + " s，剩余=" +
             formatSeconds(remaining) + " s。");
+    }
+
+    void publishVisionHoverActive(bool active)
+    {
+        if (vision_hover_active_published_ && vision_hover_active_ == active)
+        {
+            return;
+        }
+
+        std_msgs::msg::Bool msg;
+        msg.data = active;
+        hover_active_pub_->publish(msg);
+        vision_hover_active_ = active;
+        vision_hover_active_published_ = true;
     }
 
     void executeCameraAim(const std::shared_ptr<DroneAction> &action)
@@ -1720,6 +1748,7 @@ private:
     rclcpp::Publisher<drone_msgs::msg::K230CaptureReady>::SharedPtr capture_ready_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr step_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr mission_status_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr hover_active_pub_;
     rclcpp::Publisher<drone_msgs::msg::K230ScanPointDone>::SharedPtr scan_point_done_pub_;
     rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr state_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
@@ -1749,6 +1778,8 @@ private:
     double camera_aim_record_result_timeout_s_ = 5.0;
     double camera_aim_scan_point_timeout_s_ = 30.0;
     double land_setpoint_quiet_time_s_ = 0.2;
+    bool vision_hover_active_ = false;
+    bool vision_hover_active_published_ = false;
     Vec3dPID pid_cam_aim_;
 
     int aim_close_count_ = 0;
