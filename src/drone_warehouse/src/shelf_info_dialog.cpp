@@ -48,13 +48,13 @@ namespace
         // 2. 巡检有、台账没有：红
         if (!has_manual_data && has_observed_data)
         {
-            return QColor("#ffae00");
+            return QColor("#ffb300");
         }
 
         // 3. 台账有、巡检没有：黄
         if (has_manual_data && !has_observed_data)
         {
-            return QColor("#eed292");
+            return QColor("#eee0c0");
         }
 
         // 4. 两边都有，完全一致：绿
@@ -84,7 +84,7 @@ namespace
                 {
                     has_red = true;
                 }
-                else if (color == QColor("#f0b429"))
+                else if (color == QColor("#ffb300") || color == QColor("#eee0c0"))
                 {
                     has_yellow = true;
                 }
