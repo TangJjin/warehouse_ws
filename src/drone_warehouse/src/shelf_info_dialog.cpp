@@ -48,13 +48,13 @@ namespace
         // 2. 巡检有、台账没有：红
         if (!has_manual_data && has_observed_data)
         {
-            return QColor("#ff5c5c");
+            return QColor("#ffae00");
         }
 
         // 3. 台账有、巡检没有：黄
         if (has_manual_data && !has_observed_data)
         {
-            return QColor("#f0b429");
+            return QColor("#eed292");
         }
 
         // 4. 两边都有，完全一致：绿
