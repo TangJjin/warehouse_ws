@@ -9,9 +9,9 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 0.40]
+      position: [0.00, 0.00, 0.30]
       yaw: 0.00
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -22,9 +22,9 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [0.75, 0.00, 0.40]
+      position: [0.75, 0.00, 0.30]
       yaw: 0.00
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -36,9 +36,9 @@ mission:
       ########################################
     - type: "move"
       frame: "world_body"
-      position: [0.75, 0.00, 0.40]
+      position: [0.75, 0.00, 0.30]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -49,9 +49,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.25, 0.00, 0.40]
+      position: [1.25, 0.00, 0.30]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -62,9 +62,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.75, 0.00, 0.40]
+      position: [1.75, 0.00, 0.30]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -75,9 +75,9 @@ mission:
       ########################################
     - type: "move"
       frame: "world_body"
-      position: [1.75, 0.00, 0.80]
+      position: [1.75, 0.00, 0.70]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -88,9 +88,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.25, 0.00, 0.80]
+      position: [1.25, 0.00, 0.70]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -101,9 +101,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [0.75, 0.00, 0.80]
+      position: [0.75, 0.00, 0.70]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -114,9 +114,9 @@ mission:
       ########################################
     - type: "move"
       frame: "world_body"
-      position: [0.75, 0.00, 1.20]
+      position: [0.75, 0.00, 1.10]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -127,9 +127,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.25, 0.00, 1.20]
+      position: [1.25, 0.00, 1.10]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -140,9 +140,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.75, 0.00, 1.20]
+      position: [1.75, 0.00, 1.10]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -153,9 +153,9 @@ mission:
       ########################################
     - type: "move"
       frame: "world_body"
-      position: [1.75, 0.00, 1.60]
+      position: [1.75, 0.00, 1.50]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -166,9 +166,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [1.25, 0.00, 1.60]
+      position: [1.25, 0.00, 1.50]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -179,9 +179,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [0.75, 0.00, 1.60]
+      position: [0.75, 0.00, 1.50]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 4.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -193,9 +193,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 1.60]
+      position: [0.00, 0.00, 1.50]
       yaw: 1.57
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -206,9 +206,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 1.60]
+      position: [0.00, 0.00, 1.50]
       yaw: 0.00
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -219,9 +219,9 @@ mission:
       
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 0.80]
+      position: [0.00, 0.00, 0.70]
       yaw: 0.00
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
@@ -231,7 +231,7 @@ mission:
       frame: "world_body"
       position: [0.00, 0.00, 0.00]
       yaw: 0.00
-      tolerance: 0.08
+      tolerance: 0.10
       yaw_tolerance_deg: 5.0
       max_xy_speed_mps: 0.50
       max_z_speed_mps: 0.30
