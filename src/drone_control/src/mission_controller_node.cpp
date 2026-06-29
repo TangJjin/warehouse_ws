@@ -188,8 +188,11 @@ class MissionController {
       } else if (type == "hover") {
         const double duration =
             item["duration"] ? item["duration"].as<double>() : 1.0;
-        action = DroneAction::createHoverAction(duration);
-        RCLCPP_INFO(node_->get_logger(), "  %zu：悬停 %.2f s", i, duration);
+        const bool vision_hover =
+            item["vision_hover"] ? item["vision_hover"].as<bool>() : false;
+        action = DroneAction::createHoverAction(duration, vision_hover);
+        RCLCPP_INFO(node_->get_logger(), "  %zu：悬停 %.2f s，视觉悬停通知：%s",
+                    i, duration, vision_hover ? "true" : "false");
       } else if (type == "camera_aim") {
         if (use_camera_aim_) {
           action = parseCameraAimAction(item, i);
