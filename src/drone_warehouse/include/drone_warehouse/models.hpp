@@ -66,6 +66,8 @@ struct WorldCoord
 {
     double x = 0.0;//世界坐标系下的 x 坐标
     double y = 0.0;//世界坐标系下的 y 坐标
+    double z = 0.0;//世界坐标系下的 z 坐标
+    double yaw = 0.0;//世界坐标系下的 yaw 航向
 };
 Q_DECLARE_METATYPE(WorldCoord)
 Q_DECLARE_METATYPE(QVector<WorldCoord>)

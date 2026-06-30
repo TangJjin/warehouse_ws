@@ -31,6 +31,9 @@ signals:
                               const QString &category_id, const QString &package_id);
     void manualStockOutRequested(int shelf_index, const QString &side, int row, int col,
                                 const QString &category_id, const QString &package_id);
+            
+    void setWaypointRequested(int shelf_index, const QString &side, int row, int col);
+    void clearWaypointRequested();
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;//监听槽位按钮双击事件
@@ -49,6 +52,9 @@ private:
     void setupSerial();
     void startManualStockIn();
     void handleManualStockOut();
+    void setWaypoint();
+    void clearWaypoint();
+
     void handleSerialFrame(uint8_t deviceId, uint8_t status, const QByteArray &payload);
     void processManualScanText(const QString &scan_text);
     void uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload);
@@ -70,6 +76,8 @@ private:
     QPushButton *shelf2_button_ = nullptr;//顶部货架2切换按钮
     QPushButton *stock_in_button_ = nullptr;//入库按钮
     QPushButton *outgoing_button_ = nullptr;//出库按钮
+    QPushButton *add_button_ = nullptr;//添加航点按钮
+    QPushButton *clear_button_ = nullptr;//清空航点按钮
     QPushButton *close_button_ = nullptr;//关闭弹窗按钮
 
     QPushButton *front_button_ = nullptr;//切换到前面货位网格

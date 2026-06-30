@@ -22,6 +22,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     shelf_button_ = new QPushButton("货架信息", this);
     task_button_ = new QPushButton("任务待命", this);
     execute_button_ = new QPushButton("执行", this);
+    waypoint_button_ = new QPushButton("航点飞行", this);
     scheduled_check_button_ = new QPushButton("定时巡检", this);
     time_label_ = new QLabel("00:00:00", this);
 
@@ -35,6 +36,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(task_button_);
     layout->addStretch();
     layout->addWidget(execute_button_);
+    layout->addWidget(waypoint_button_);
     layout->addWidget(scheduled_check_button_);
     layout->addWidget(time_label_);
 
@@ -42,6 +44,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     //shelf_button_->hide();
     task_button_->hide();
     execute_button_->hide();
+    waypoint_button_->hide();
     scheduled_check_button_->hide();
 
     exit_long_press_timer_ = new QTimer(this);
@@ -50,6 +53,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
+    connect(waypoint_button_, &QPushButton::clicked, this, &TopStatusBar::waypointButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
     connect(scheduled_check_button_, &QPushButton::clicked, this, &TopStatusBar::scheduledcheckbuttonnClicked);
 
@@ -138,6 +142,7 @@ void TopStatusBar::setConnected(bool connected)
     //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
     execute_button_->setVisible(connected);
+    waypoint_button_->setVisible(connected);
     scheduled_check_button_->setVisible(connected);
     connection_button_->setText(connected ? "已连接" : "未连接");
 }

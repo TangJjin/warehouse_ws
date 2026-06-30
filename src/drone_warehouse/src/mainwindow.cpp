@@ -339,6 +339,23 @@ void MainWindow::setupConnections()
             triggerMissionUpload("time");
         });
 
+        connect(top_status_bar_, &TopStatusBar::waypointButtonClicked, this, [this]() {
+            triggerMissionUpload("waypoint");
+        });
+
+        //清空航点
+        connect(shelf_info_dialog_, &ShelfInfoDialog::clearWaypointRequested, this, [this]() {
+            clearWaypointRequest();
+        });
+
+        //设置航点
+        connect(shelf_info_dialog_, &ShelfInfoDialog::setWaypointRequested, 
+            this, 
+            [this](int shelf_index, const QString &side, int row, int col)
+            {
+                setWaypointRequest(shelf_index, side, row, col);
+            });
+
         //查看任务yaml上传服务返回的内容
         connect(ros_manager_, &RosManager::missionUploadFinished,
             this,
@@ -499,8 +516,6 @@ void MainWindow::setupConnections()
 
 void MainWindow::triggerMissionUpload(const QString &trigger_source)
 {
-    Q_UNUSED(trigger_source);
-
     if (!ros_manager_)
     {
         run_log_view_->appendPlainText("初始化失败,rosmanager未就绪");
@@ -524,7 +539,7 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     summary.takeoff_hover_duration = 0.0;//起飞悬停时长
     summary.landing_hover_duration = 3.0;//降落悬停时长
     summary.move_hover_duration = 0.5;//移动悬停时长
-    summary.add_hover_between_takeoff = true;//是否在起飞后添加悬停
+    summary.add_hover_between_takeoff = false;//是否在起飞后添加悬停
     summary.add_hover_between_landing = true;//是否在降落前添加悬停
     summary.add_hover_between_moves = true;//是否在移动之间添加悬停
     summary.use_camera_aim = false;//是否开启相机
@@ -544,15 +559,75 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     summary.camera_aim_record_result_timeout_s = 10.0;
     summary.camera_aim_scan_point_timeout_s = 30.0;
 
-    QVector<WorldCoord> path_points = {
-        {140.0, 125.0},
-        {140.0, -125.0},
-        {0.0, -125.0},
-        {0.0, 125.0}
-    };
+    if(trigger_source == "waypoint"){
+        summary.compress_straight_segments = true;
 
-    mission_upload_in_progress_ = true;
-    ros_manager_->uploadMissionSummary(path_points, summary);
+        if(path_points_.isEmpty()){
+            run_log_view_->appendPlainText("航点为空，不允许航点飞行");
+            return;
+        }
+        mission_upload_in_progress_ = true;
+        ros_manager_->uploadMissionSummary(path_points_, summary);
+    }
+    else{
+        summary.compress_straight_segments = false;
+        QVector<WorldCoord> empty_points;
+        mission_upload_in_progress_ = true;
+        ros_manager_->uploadMissionSummary(empty_points, summary);
+    }
+}
+
+void MainWindow::clearWaypointRequest()
+{
+    path_points_.clear();
+    run_log_view_->appendPlainText("已清空航点");
+}
+
+void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int row, int col)
+{
+    if (shelf_index < 0) {
+        run_log_view_->appendPlainText("添加航点失败：货架索引非法");
+        return;
+    }
+
+    if (side != "front" && side != "back") {
+        run_log_view_->appendPlainText(QString("添加航点失败：side 非法：%1").arg(side));
+        return;
+    }
+
+    if (row < 0 || row > 3) {
+        run_log_view_->appendPlainText(QString("添加航点失败：row 非法：%1").arg(row));
+        return;
+    }
+
+    if (col < 0 || col > 2) {
+        run_log_view_->appendPlainText(QString("添加航点失败：col 非法：%1").arg(col));
+        return;
+    }
+
+    static const double z_map[4] = {1.50, 1.10, 0.70, 0.30};
+    static const double x_front_map[3] = {0.75, 1.25, 1.75};
+    static const double x_back_map[3]  = {1.75, 1.25, 0.75};
+
+    const double y = (side == "front")
+        ? static_cast<double>(shelf_index) * 1.5
+        : static_cast<double>(shelf_index + 1) * 1.5;
+
+    const double x = (side == "front")
+        ? x_front_map[col]
+        : x_back_map[col];
+
+    const double z = z_map[row];
+    const double yaw = (side == "front") ? 1.57 : 4.71;
+
+    path_points_.push_back({x, y, z, yaw});
+
+    run_log_view_->appendPlainText(
+        QString("已添加航点：x=%5 y=%6 z=%7 yaw=%8")
+            .arg(x, 0, 'f', 2)
+            .arg(y, 0, 'f', 2)
+            .arg(z, 0, 'f', 2)
+            .arg(yaw, 0, 'f', 2));
 }
 
 void MainWindow::handleMissionUploadFinished(bool success, const QString &message, const QString &saved_path)
