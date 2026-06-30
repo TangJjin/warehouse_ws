@@ -120,4 +120,6 @@ private:
     bool unlock_flag_{false};//是否是从开锁到解锁的状态
     bool auto_stop_flag_{false};//判断是否自动执行过stop
     int disarm_stable_count_{0};    // 连续收到 armed == false 的次数
+
+    bool waypoint_or_button_{false};//判断是否是航点上传
 };

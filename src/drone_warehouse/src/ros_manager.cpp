@@ -390,12 +390,6 @@ void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
         return;
     }
 
-    if (path_points.isEmpty())
-    {
-        emit missionUploadFinished(false, "路径为空，不能上传 mission summary", "");
-        return;
-    }
-
     auto request = std::make_shared<drone_msgs::srv::UploadMissionSummary::Request>();
     request->summary = summary;//先把整份 mission 参数摘要写进请求体
 
@@ -404,6 +398,8 @@ void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
         drone_msgs::msg::WorldPoint world_point;
         world_point.x = point.x;
         world_point.y = point.y;
+        world_point.z = point.z;
+        world_point.yaw = point.yaw;
         request->points.push_back(world_point);//再把每一个世界坐标点追加进 points 列表
     }
 

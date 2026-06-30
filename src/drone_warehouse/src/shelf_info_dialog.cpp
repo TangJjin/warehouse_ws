@@ -242,11 +242,15 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
 
     stock_in_button_ = new QPushButton("入库", this);
     outgoing_button_ = new QPushButton("出库", this);
+    add_button_ = new QPushButton("航点", this);
+    clear_button_ = new QPushButton("清空", this);
     close_button_ = new QPushButton("关闭", this);
 
     button_layout->addWidget(stock_in_button_);
     button_layout->addWidget(outgoing_button_);
     button_layout->addStretch();
+    button_layout->addWidget(add_button_);
+    button_layout->addWidget(clear_button_);
     button_layout->addWidget(close_button_);
 
     main_layout->addLayout(button_layout);
@@ -265,6 +269,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     connect(close_button_, &QPushButton::clicked, this, &ShelfInfoDialog::close);
     connect(stock_in_button_, &QPushButton::clicked, this, &ShelfInfoDialog::startManualStockIn);
     connect(outgoing_button_, &QPushButton::clicked, this, &ShelfInfoDialog::handleManualStockOut);
+    connect(add_button_, &QPushButton::clicked, this, &ShelfInfoDialog::setWaypoint);
+    connect(clear_button_, &QPushButton::clicked, this, &ShelfInfoDialog::clearWaypoint);
 
     setStyleSheet(
         "QDialog {"
@@ -909,4 +915,20 @@ bool ShelfInfoDialog::validateFrame(const QByteArray &frame,
     payload = frame.mid(8, static_cast<int>(payloadLen));
 
     return true;
+}
+
+void ShelfInfoDialog::setWaypoint()
+{
+    //将当前选中的格子信息发送给mainwindow去添加航点
+    const int Waypoint_shelf_index_ = current_shelf_index_;
+    const QString Waypoint_side_ = current_side_;
+    const int Waypoint_row_ = current_slot_row_;
+    const int Waypoint_col_ = current_slot_col_;
+    emit setWaypointRequested(Waypoint_shelf_index_, Waypoint_side_, Waypoint_row_, Waypoint_col_);
+}
+
+void ShelfInfoDialog::clearWaypoint()
+{
+    //发送清空航点信号
+    emit clearWaypointRequested();
 }

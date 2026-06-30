@@ -420,7 +420,10 @@ void AirborneNode::handleUploadMissionSummary(
         return;
     }
 
-    if (request->points.empty()) {
+    //保存当前上传方式内容
+    waypoint_or_button_ = request->summary.compress_straight_segments;
+
+    if (request->points.empty() && waypoint_or_button_ == true) {
         response->success = false;
         response->message = "路线点为空";
         response->saved_path = "";
@@ -431,37 +434,47 @@ void AirborneNode::handleUploadMissionSummary(
     std::vector<AirborneWorldCoord> path_points;
     path_points.reserve(request->points.size());
     for (const auto &point : request->points) {
-        path_points.push_back(AirborneWorldCoord{point.x, point.y});
+        path_points.push_back(AirborneWorldCoord{point.x, point.y, point.z, point.yaw});
     }
 
-    //从mission summary中提取选项参数，并使用路径点和选项参数生成mission yaml文本，同时统计mission action的数量
-    const auto options = AirborneMissionYamlBuilder::fromMissionSummary(request->summary);
-    const QString mission_yaml = AirborneMissionYamlBuilder::buildMissionYaml(path_points, options);
-    const uint32_t action_count = AirborneMissionYamlBuilder::countMissionActions(path_points, options);
+    if(waypoint_or_button_ == true){
+        //从mission summary中提取选项参数，并使用路径点和选项参数生成mission yaml文本，同时统计mission action的数量
+        const auto options = AirborneMissionYamlBuilder::fromMissionSummary(request->summary);
+        const QString mission_yaml = AirborneMissionYamlBuilder::buildMissionYaml(path_points, options);
+        const uint32_t action_count = AirborneMissionYamlBuilder::countMissionActions(path_points, options);
 
-    std::string saved_path;
-    std::string error_message;
-    //将生成的mission yaml文本保存到文件中，并获取保存路径和错误信息
-    const bool ok = saveMissionYamlToFile(mission_yaml.toStdString(), saved_path, error_message);
+        std::string saved_path;
+        std::string error_message;
+        //将生成的mission yaml文本保存到文件中，并获取保存路径和错误信息
+        const bool ok = saveMissionYamlToFile(mission_yaml.toStdString(), saved_path, error_message);
 
-    if (!ok) {
-        response->success = false;
-        response->message = error_message;
-        response->saved_path = "";
-        response->action_count = 0;
-        mission_uploaded_ = false;
-        current_mission_path_.clear();
-        return;
+        if (!ok) {
+            response->success = false;
+            response->message = error_message;
+            response->saved_path = "";
+            response->action_count = 0;
+            mission_uploaded_ = false;
+            current_mission_path_.clear();
+            return;
+        }
     }
 
     mission_uploaded_ = true;
-    current_mission_path_ = saved_path;
+
+    if(waypoint_or_button_ == false)
+    {
+        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/warehouse/mission.yaml";
+    }
+    else
+    {
+        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/config/ground_mission.yaml";
+    }
 
     response->success = true;
     //response->message = "mission 摘要上传成功，机载端已生成 YAML";
     response->message = "正在初始化";
-    response->saved_path = saved_path;
-    response->action_count = action_count;
+    response->saved_path = current_mission_path_;
+    response->action_count = 0;
 }
 
 bool AirborneNode::startOffboardCommand()
@@ -505,15 +518,13 @@ bool AirborneNode::startOffboardCommand()
             });
     }
 
-    const std::string file_path_warehouse = "/home/sunrise/drone_ws/src/drone_mission/warehouse/mission.yaml";
-
     const QString command = QString(
         "source /opt/ros/humble/setup.bash && "
         "source ~/drone_ws/install/setup.bash && "
         "exec ros2 launch drone_bringup run_offboard.launch.py "
         "mission_config_path:=%1 "
         "enable_offboard_control:=true ")
-        .arg(QString::fromStdString(file_path_warehouse));
+        .arg(QString::fromStdString(current_mission_path_));
 
     RCLCPP_INFO(this->get_logger(), "starting offboard process with command: %s", command.toStdString().c_str());
     offboard_process_->start("bash", QStringList() << "-lc" << command);

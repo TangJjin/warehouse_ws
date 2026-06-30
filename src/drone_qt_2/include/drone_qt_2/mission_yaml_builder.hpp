@@ -11,6 +11,8 @@ struct AirborneWorldCoord
 {
     double x;
     double y;
+    double z;
+    double yaw;
 };
 
 class AirborneMissionYamlBuilder

@@ -48,6 +48,9 @@ private:
     void applyManualStockOut(int shelf_index, const QString &side, int row, int col,
                             const QString &category_id, const QString &package_id);
 
+    void clearWaypointRequest();
+    void setWaypointRequest(int shelf_index, const QString &side, int row, int col);
+
     /*********************ros移植部分***********************/
 
     // 负责接收无人机基础状态更新，并同步到当前仓储界面的顶部状态栏和姿态信息区。
@@ -104,6 +107,8 @@ private:
     int mission_trigger_time_text_flag_ = -1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
+
+    QVector<WorldCoord> path_points_;
     /******************************************************/
 
     QWidget *log_panel_ = nullptr;//日志面板
