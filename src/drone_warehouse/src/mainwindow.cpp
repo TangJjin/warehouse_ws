@@ -6,6 +6,7 @@
 #include "drone_warehouse/top_status_bar.hpp"
 #include "drone_warehouse/color_palette.hpp"
 #include "drone_warehouse/ros_manager.hpp"
+#include "drone_warehouse/gpio_output.hpp"
 
 #include <cmath>
 #include <QDialog>
@@ -21,6 +22,7 @@
 #include <QImage>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <stdexcept>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -50,7 +52,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 本轮先把时间触发接口和状态变量接进来，但按用户要求默认关闭。
     // 这样后面如果你要补一个“设置触发时刻”的入口，只需要把这两个值改掉即可。
     mission_trigger_time_text_ = "";
-    mission_time_trigger_enabled_ = false;
+    mission_time_trigger_enabled_ = true;
     top_status_bar_->setTriggerTime(mission_trigger_time_text_);//传入想要定的时间
     top_status_bar_->setTimeTriggerEnabled(mission_time_trigger_enabled_);//传入是否开启时间定时
     /******************************************************/
@@ -107,6 +109,20 @@ void MainWindow::setupFloatingWidgets()
     clock_timer_ = new QTimer(this);//新建定时器
     run_log_view_->appendPlainText("日志初始化成功");
     clock_timer_->start(5000);
+
+
+    logwaypoint_panel_ = new QWidget(central_container_);
+    auto *logwaypoint_layout = new QVBoxLayout(logwaypoint_panel_);
+    logwaypoint_panel_->setObjectName("logwaypointSwitchPanel");
+    logwaypoint_panel_->setContentsMargins(5, 5, 5, 5);//姿态面板内部边框留白
+
+    waypoint_log_view_ = new QPlainTextEdit(logwaypoint_panel_);
+    waypoint_log_view_->setReadOnly(true);
+    waypoint_log_view_->setMaximumBlockCount(1000);
+
+    logwaypoint_layout->addWidget(waypoint_log_view_);
+
+    //waypoint_log_view_->appendPlainText("航点日志初始化成功");
 
     /*******************************************************/
 
@@ -193,6 +209,7 @@ void MainWindow::setupFloatingWidgets()
 
     top_status_bar_->raise();//确保悬浮控件在主场景视图上面
     log_panel_->raise();//确保日志区主场景视图上面
+    logwaypoint_panel_->raise();//确保日志区主场景视图上面
     attitude_panel_->raise();//确保姿态面板在主场景视图上面
     view_mode_widget_->raise();//确保视图模式控件在主场景视图上面
     view_Perspective_widget_->raise();//确保视角切换控件在主场景视图上面
@@ -200,7 +217,16 @@ void MainWindow::setupFloatingWidgets()
 
     view_Perspective_widget_->show();
     view_2D_widget_->hide();
-}
+
+        // try {
+        //     gpio_output_ = std::make_unique<GpioOutput>("gpiochip1", 4, "warehouse_gcs");
+        //     gpio_output_->setHigh();
+        // } catch (const std::exception &e) {
+        //     if (run_log_view_) {
+        //         run_log_view_->appendPlainText(QString("GPIO 初始化失败: %1").arg(e.what()));
+        //     }
+        // }
+    }
 
 void MainWindow::setupConnections()
 {
@@ -317,9 +343,10 @@ void MainWindow::setupConnections()
         connect(top_status_bar_, &TopStatusBar::scheduledcheckbuttonnClicked, this, [this]() {
             if(mission_trigger_time_text_flag_ == 1)
             {
-                mission_trigger_time_text_ = "18:00:00";
+                mission_trigger_time_text_ = "20:33:00";
                 run_log_view_->appendPlainText(QString("已设置定时巡检：%1").arg(mission_trigger_time_text_));
                 mission_trigger_time_text_flag_ = 0;
+                top_status_bar_->setTriggerTime(mission_trigger_time_text_);
                 clock_timer_->start(5000);
             }
             else
@@ -327,6 +354,7 @@ void MainWindow::setupConnections()
                 mission_trigger_time_text_ = "";
                 run_log_view_->appendPlainText(QString("已关闭定时巡检"));
                 mission_trigger_time_text_flag_ = 1;
+                top_status_bar_->setTriggerTime(mission_trigger_time_text_);
                 clock_timer_->start(5000);
             }
         });
@@ -531,14 +559,14 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     }
 
     drone_msgs::msg::MissionSummary summary;
-    summary.takeoff_altitude = 1.2;//起飞高度
+    summary.takeoff_altitude = 0.0;//起飞高度
     summary.move_altitude = 1.2;//移动高度
     summary.start_altitude = 0.0;//解锁高度
     summary.yaw = 0.0;//偏航角
-    summary.tolerance = 0.12;//误差容忍
+    summary.tolerance = 0.10;//误差容忍
     summary.takeoff_hover_duration = 0.0;//起飞悬停时长
-    summary.landing_hover_duration = 3.0;//降落悬停时长
-    summary.move_hover_duration = 0.5;//移动悬停时长
+    summary.landing_hover_duration = 1.0;//降落悬停时长
+    summary.move_hover_duration = 3.0;//移动悬停时长
     summary.add_hover_between_takeoff = false;//是否在起飞后添加悬停
     summary.add_hover_between_landing = true;//是否在降落前添加悬停
     summary.add_hover_between_moves = true;//是否在移动之间添加悬停
@@ -577,10 +605,29 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     }
 }
 
+void MainWindow::refreshWaypointLog()
+{
+    waypoint_log_view_->clear();
+
+    if (waypoint_labels_.isEmpty()) {
+        run_log_view_->appendPlainText("已清空航点");
+        clock_timer_->start(5000);
+        return;
+    }
+
+    QStringList labels;
+    for (const auto &label : waypoint_labels_) {
+        labels.append(label);
+    }
+
+    waypoint_log_view_->appendPlainText(labels.join("->"));
+}
+
 void MainWindow::clearWaypointRequest()
 {
     path_points_.clear();
-    run_log_view_->appendPlainText("已清空航点");
+    waypoint_labels_.clear();
+    refreshWaypointLog();
 }
 
 void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int row, int col)
@@ -622,12 +669,14 @@ void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int ro
 
     path_points_.push_back({x, y, z, yaw});
 
-    run_log_view_->appendPlainText(
-        QString("已添加航点：x=%5 y=%6 z=%7 yaw=%8")
-            .arg(x, 0, 'f', 2)
-            .arg(y, 0, 'f', 2)
-            .arg(z, 0, 'f', 2)
-            .arg(yaw, 0, 'f', 2));
+    //run_log_view_->appendPlainText(
+        // QString("已添加航点：x=%5 y=%6 z=%7 yaw=%8")
+        //     .arg(x, 0, 'f', 2)
+        //     .arg(y, 0, 'f', 2)
+        //     .arg(z, 0, 'f', 2)
+        //     .arg(yaw, 0, 'f', 2));
+    waypoint_labels_.push_back(QString("R%1C%2").arg(row + 1).arg(col + 1));
+    refreshWaypointLog();
 }
 
 void MainWindow::handleMissionUploadFinished(bool success, const QString &message, const QString &saved_path)
@@ -718,7 +767,7 @@ void MainWindow::updateStatus(
     top_status_bar_->setConnected(connected);
     //top_status_bar_->setTaskText(task_name);
 
-    battery_value_label_->setText(QString::number(scene_data_.drone_state.battery, 'f', 1) + "%");
+    battery_value_label_->setText(QString::number(scene_data_.drone_state.battery*100, 'f', 1) + "%");
     mode_value_label_->setText(scene_data_.drone_state.flight_mode);
 
     // flight_mode 目前在当前仓储界面里没有单独的枚举显示控件，
@@ -1159,6 +1208,17 @@ void MainWindow::applyWindowStyle()
         "}"
     );
 
+    logwaypoint_panel_->setStyleSheet(
+        "background: rgba(18, 24, 34, 0);"//透明深色背景
+        "font-size: 16px;"
+        "border: none;"//标签无边框
+        "border-radius: 10px;"
+
+        "border: none;"//无边框
+        "padding: 6px 10px;"//内边距
+        "}"
+    );
+
     attitude_panel_->setStyleSheet(
         "background: rgba(18, 24, 34, 100);"//半透明深色背景
         "border: 1px solid rgba(90, 130, 180, 100);"//边框颜色和透明度
@@ -1324,8 +1384,9 @@ void MainWindow::updateOverlayGeometry()
     //左边距；上边距；宽度；高度
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
+    logwaypoint_panel_->setGeometry(250, area.height() - 90, 600, 200);
     attitude_panel_->setGeometry(area.width() - 220, 84, 220, 160);
-    view_mode_widget_->setGeometry(20, area.height() - 70, 160, 40);
+    view_mode_widget_->setGeometry(100, area.height() - 70, 160, 40);
     view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
     view_2D_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
 }

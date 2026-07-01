@@ -1,6 +1,7 @@
 #pragma once
 
 #include "drone_warehouse/models.hpp"
+#include "drone_warehouse/mainwindow.hpp"
 
 #include <QDialog>
 #include <QIcon>

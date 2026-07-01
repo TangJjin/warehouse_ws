@@ -1,4 +1,5 @@
 #include "drone_warehouse/shelf_info_dialog.hpp"
+#include "drone_warehouse/gpio_output.hpp"
 
 #include <QDebug>
 #include <limits>
@@ -140,8 +141,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
-    resize(380, 470);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
-    setMinimumSize(380, 470);//限制最小尺寸，避免窗口过小导致控件挤压
+    resize(300, 410);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
+    setMinimumSize(380, 410);//限制最小尺寸，避免窗口过小导致控件挤压
     setModal(false);//这里先用非模态窗口，点击后可与主界面同时操作
 
     setupSerial();//打开串口
@@ -164,11 +165,11 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
 
     // 顶部仍然保留货架1/货架2切换，只是这两个按钮现在是切换当前货架，不再承载点位详情。
     // 这里先给一份默认文字和默认状态灯，真正显示什么会在 setShelfPanelData() 里由 MainWindow 传进来覆盖。
-    shelf1_button_ = new QPushButton("货架1", switch_panel);
+    shelf1_button_ = new QPushButton("货架A", switch_panel);
     shelf1_button_->setIcon(makeStatusIcon(QColor("#00d48a")));//默认状态灯，只作为数据未传入前的占位显示
     shelf1_button_->setIconSize(QSize(14, 14));
 
-    shelf2_button_ = new QPushButton("货架2", switch_panel);
+    shelf2_button_ = new QPushButton("货架B", switch_panel);
     shelf2_button_->setIcon(makeStatusIcon(QColor("#00d48a")));//默认状态灯，只作为数据未传入前的占位显示
     shelf2_button_->setIconSize(QSize(14, 14));
 
@@ -194,7 +195,7 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
     side_button_layout->setSpacing(8);
 
     front_button_ = new QPushButton("front", side_button_panel);
-    back_button_ = new QPushButton("bark", side_button_panel);
+    back_button_ = new QPushButton("back", side_button_panel);
     side_button_layout->addWidget(front_button_);
     side_button_layout->addWidget(back_button_);
     side_button_layout->addStretch();
@@ -242,7 +243,7 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
 
     stock_in_button_ = new QPushButton("入库", this);
     outgoing_button_ = new QPushButton("出库", this);
-    add_button_ = new QPushButton("航点", this);
+    add_button_ = new QPushButton("添加", this);
     clear_button_ = new QPushButton("清空", this);
     close_button_ = new QPushButton("关闭", this);
 
@@ -321,8 +322,8 @@ ShelfInfoDialog::ShelfInfoDialog(QWidget *parent)
         "border: 1px solid rgba(90, 130, 180, 140);"
         "border-radius: 8px;"
         "color: #d7e3f4;"
-        "padding: 8px 12px;"
-        "min-width: 72px;"
+        "padding: 4px 8px;"
+        "min-width: 56px;"
         "}"
         "QPushButton:hover {"
         "background: rgba(70, 110, 160, 120);"
@@ -439,7 +440,7 @@ void ShelfInfoDialog::buildSlotGrid()
             button->installEventFilter(this);
             button->setIcon(makeStatusIcon(QColor("#7f8c9a")));//默认先按空位灰色状态灯显示
             button->setIconSize(QSize(13, 13));
-            button->setMinimumSize(78, 40);//让每个格子的尺寸比较统一，方便组成紧凑矩阵
+            button->setMinimumSize(55, 30);//让每个格子的尺寸比较统一，方便组成紧凑矩阵
 
             connect(button, &QPushButton::clicked, this, [this, row, col]() {
                 handleSlotClicked(row, col);//点击后记录当前点位并刷新下方详情区
@@ -533,7 +534,7 @@ void ShelfInfoDialog::handleSlotClicked(int row, int col)
 
     const int index = slotIndex(row, col);
     const QString slot_name = QString("%1 R%2C%3")
-                                  .arg(current_side_ == "front" ? "front" : "bark")
+                                  .arg(current_side_ == "front" ? "front" : "back")
                                   .arg(row + 1)
                                   .arg(col + 1);
 
@@ -611,6 +612,8 @@ void ShelfInfoDialog::setupSerial()
                     QByteArray line = raw_serial_buffer_.left(raw_serial_buffer_.indexOf('\r'));
                     raw_serial_buffer_.clear();
                     processManualScanText(scan_text);
+                    GpioOutput pin("gpiochip1", 4, "warehouse_gcs");
+                    pin.setHigh();
                 }
             }
         }

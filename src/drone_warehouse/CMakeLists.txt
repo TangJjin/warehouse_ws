@@ -20,19 +20,23 @@ find_package(std_srvs REQUIRED)
 find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(PkgConfig REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Widgets SerialPort)
+pkg_check_modules(GPIOD REQUIRED libgpiod)
 
 add_executable(warehouse_gcs
   src/main.cpp
   src/mainwindow.cpp
   src/scene_view.cpp
   src/ros_manager.cpp
+  src/gpio_output.cpp
   src/top_status_bar.cpp
   src/shelf_info_dialog.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
   include/drone_warehouse/scene_view.hpp
   include/drone_warehouse/ros_manager.hpp
+  include/drone_warehouse/gpio_output.hpp
   include/drone_warehouse/top_status_bar.hpp
   include/drone_warehouse/shelf_info_dialog.hpp
 )
@@ -40,11 +44,13 @@ add_executable(warehouse_gcs
 target_include_directories(warehouse_gcs PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
+  ${GPIOD_INCLUDE_DIRS}
 )
 
 target_link_libraries(warehouse_gcs
   Qt5::Widgets
   Qt5::SerialPort
+  ${GPIOD_LIBRARIES}
 )
 
 ament_target_dependencies(warehouse_gcs
