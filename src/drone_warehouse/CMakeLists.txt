@@ -31,6 +31,7 @@ add_executable(warehouse_gcs
   src/ros_manager.cpp
   src/gpio_output.cpp
   src/top_status_bar.cpp
+  src/ai_diff_analyzer.cpp
   src/shelf_info_dialog.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
@@ -38,6 +39,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/ros_manager.hpp
   include/drone_warehouse/gpio_output.hpp
   include/drone_warehouse/top_status_bar.hpp
+  include/drone_warehouse/ai_diff_analyzer.hpp
   include/drone_warehouse/shelf_info_dialog.hpp
 )
 
@@ -64,11 +66,11 @@ ament_target_dependencies(warehouse_gcs
 
 install(TARGETS
   warehouse_gcs
+  scripts/warehouse_ai_runner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 # find dependencies
-find_package(ament_cmake REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)

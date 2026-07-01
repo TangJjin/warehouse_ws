@@ -64,7 +64,7 @@ class BarcodeImagePublisher(Node):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', required=True, help='图片路径')
-    parser.add_argument('--barcode', default='SKU001|PKG001', help='条码文本')
+    parser.add_argument('--barcode', default='PKG001|SKU001|A-1-1', help='条码文本')
     parser.add_argument('--format', default='jpg', help='图片格式，如 jpg/png')
     args = parser.parse_args()
 
