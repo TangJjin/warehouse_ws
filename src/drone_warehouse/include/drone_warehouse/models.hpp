@@ -73,6 +73,74 @@ Q_DECLARE_METATYPE(WorldCoord)
 Q_DECLARE_METATYPE(QVector<WorldCoord>)
 /******************************************************/
 
+/***********************AI相关*************************/
+//差异状态枚举
+enum class SlotDiffStatus
+{
+    Empty,                 // 台账空，巡检空
+    Matched,               // 台账与巡检完整匹配
+    ManualOnly,            // 只有台账，没有巡检结果
+    ObservedOnly,          // 只有巡检，没有台账
+    PartialObserved,       // 巡检结果不完整
+    Mismatch,              // 台账与巡检冲突
+    PositionOnly,          // 只有位置码，没有类别/包裹
+    ObservedWithoutImage   // 有巡检结果，但本次无图
+};
+
+//单槽位分析输入
+struct SlotAnalysisInput
+{
+    QString shelf_name;            // 例如 货架1
+    int shelf_index = -1;
+    QString side;                  // front/back
+    int row = -1;
+    int col = -1;
+
+    QString manual_category_id;//地面站手动维护的类别编号
+    QString manual_package_id;//地面站手动维护的包裹编号
+
+    QString observed_category_id;//无人机巡检实际识别到的类别编号
+    QString observed_package_id;//无人机巡检实际识别到的包裹编号
+    QString observed_slot_code;//无人机巡检实际识别到仓库位置
+    QString observed_time_text;//无人机巡检结果时间
+
+    bool has_image = false;//当前点位是否已经绑定图片
+};
+
+//单槽位规则分析结果
+struct SlotRuleAnalysis
+{
+    SlotAnalysisInput input;
+    SlotDiffStatus status = SlotDiffStatus::Empty;
+
+    bool has_manual_data = false;//是否有台账数据
+    bool has_observed_data = false;//是否有巡检数据
+    bool has_partial_observed_data = false;//是否有部分巡检数据
+    bool has_position_only = false;//是否只有位置码，没有类别或包裹
+
+    bool package_match = false;//包裹信息是否匹配
+    bool category_match = false;//类别信息是否匹配
+    bool exact_match = false;//；两者是否都匹配
+
+    QString summary;               // 本地规则生成的简述
+    QString reason;                // 本地规则原因
+    int priority = 0;              // 0=最低，100=最高
+    bool should_revisit = false;   // 是否建议复飞
+};
+
+//AI 输出结果
+struct SlotAiAnalysis
+{
+    SlotRuleAnalysis rule;
+
+    QString severity;              // low / medium / high
+    QString ai_summary;            // AI 人话摘要
+    QString ai_reason;             // AI 补充理由
+    QString ai_action;             // 建议动作
+    bool ai_should_revisit = false;//ai是否建议复飞
+};
+/******************************************************/
+
 struct SlotImageData
 {
     QByteArray image_data;//图片原始字节

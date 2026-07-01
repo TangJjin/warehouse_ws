@@ -498,10 +498,10 @@ void ShelfInfoDialog::updateSlotGrid()
 
             button->setToolTip(
             QString("台账: %1 | %2\n巡检: %3 | %4")
-                .arg(slot.category_id.isEmpty() ? "——" : slot.category_id)
                 .arg(slot.package_id.isEmpty() ? "——" : slot.package_id)
-                .arg(slot.observed_category_id.isEmpty() ? "——" : slot.observed_category_id)
+                .arg(slot.category_id.isEmpty() ? "——" : slot.category_id)
                 .arg(slot.observed_package_id.isEmpty() ? "——" : slot.observed_package_id));
+                .arg(slot.observed_category_id.isEmpty() ? "——" : slot.observed_category_id)
         }
     }
 
@@ -550,7 +550,7 @@ void ShelfInfoDialog::handleSlotClicked(int row, int col)
     }
     else
     {
-        updateSlotDetail(slot_name, slot.category_id, slot.package_id);
+        updateSlotDetail(slot_name, slot.package_id, slot.category_id);
     }
 }
 
@@ -688,7 +688,7 @@ void ShelfInfoDialog::handleSerialFrame(uint8_t deviceId, uint8_t status, const 
 void ShelfInfoDialog::processManualScanText(const QString &scan_text)
 {
     // 这里处理地面站手动入库真正拿到的扫码文本。
-    // 当前约定格式只有两段：`CAT01|PKG88`。
+    // 当前约定格式只有两段：`PKG-001|SKU-002`。
     // 解析成功后，把结果和之前冻结下来的 pending 格子一起发给 MainWindow，
     // 由 MainWindow 统一写入主数据，再刷新弹窗显示。
     const QStringList parts = scan_text.split('|', Qt::KeepEmptyParts);

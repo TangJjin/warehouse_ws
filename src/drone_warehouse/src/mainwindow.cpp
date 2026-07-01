@@ -186,9 +186,6 @@ void MainWindow::setupFloatingWidgets()
     slider_2D_layout->setContentsMargins(1, 1, 1, 1);//滑块模块内部留白
     slider_2D_layout->setSpacing(1);//滑块中各元素间距
 
-    // view_Perspective_left_label_ = new QLabel("左视图", view_Perspective_widget_);
-    // view_Perspective_center_label_ = new QLabel("中视图", view_Perspective_widget_);
-    // view_Perspective_right_label_ = new QLabel("右视图", view_Perspective_widget_);
     view_Perspective_slider_ = new QSlider(Qt::Horizontal, view_Perspective_widget_);//水平滑动条
     view_Perspective_slider_->setRange(0, 3);//滑块取值范围0-3
     view_Perspective_slider_->setValue(0);
@@ -218,14 +215,6 @@ void MainWindow::setupFloatingWidgets()
     view_Perspective_widget_->show();
     view_2D_widget_->hide();
 
-        // try {
-        //     gpio_output_ = std::make_unique<GpioOutput>("gpiochip1", 4, "warehouse_gcs");
-        //     gpio_output_->setHigh();
-        // } catch (const std::exception &e) {
-        //     if (run_log_view_) {
-        //         run_log_view_->appendPlainText(QString("GPIO 初始化失败: %1").arg(e.what()));
-        //     }
-        // }
     }
 
 void MainWindow::setupConnections()
@@ -827,21 +816,40 @@ void MainWindow::appendBarcodeRecord(
     const QString &image_format,
     const QString &time_text)
 {
-    if (image_data.isEmpty())//图片数据为空就返回
-    {
-        return;
-    }
-
     // 机载巡检回填链路：
     // 1. ROS 管理器把无人机识别结果转成 `barcodeCaptured(...)`，最终调用到这里。
-    // 2. `barcode` 正常格式是 `CAT01|PKG88|A-1-1`，前两段是识别出的类别/包裹编号，第三段是无人机返回的位置码。
+    // 2. `barcode` 正常格式是 `PKG-001|SKU-002|A-1-1`，前两段是识别出的类别/包裹编号，第三段是无人机返回的位置码。
     // 3. 这里先拆条码，再同时准备两套定位来源：
     //    - `code_location`：直接按第三段位置码解析格子。
     //    - `pose_location`：按无人机当前位姿估算格子。
     // 4. 规则上位置码优先，位姿只做兜底和冲突对照日志。
     // 5. 最终定位到格子后，把巡检字段和图片都写进主数据，再刷新弹窗显示。
+
+    //先定义空字符串
+    auto normalize_field = [](const QString &value) {
+        const QString normalized = value.trimmed();
+        if (normalized.compare("NA", Qt::CaseInsensitive) == 0 ||
+            normalized.compare("N/A", Qt::CaseInsensitive) == 0) {
+            return QString();
+        }
+        return normalized;
+    };
+
     const QStringList parts = barcode.split('|', Qt::KeepEmptyParts);
-    const QString slot_code = (parts.size() >= 3) ? parts[2].trimmed() : QString();
+    const QString package_id =
+        (parts.size() >= 1) ? normalize_field(parts[0]) : QString();
+    const QString category_id =
+        (parts.size() >= 2) ? normalize_field(parts[1]) : QString();
+    const QString slot_code =
+        (parts.size() >= 3) ? normalize_field(parts[2]) : QString();
+
+    // 全空保护
+    if (package_id.isEmpty() && category_id.isEmpty() && slot_code.isEmpty())
+    {
+        run_log_view_->appendPlainText("收到空条码消息，已忽略");
+        return;
+    }
+
     const SlotLocation pose_location = resolveSlotFromPose(scene_data_.drone_state.pose);
     const SlotLocation code_location = resolveSlotFromCode(slot_code);
 
@@ -875,7 +883,7 @@ void MainWindow::appendBarcodeRecord(
 
     if (!target_location.valid)
     {
-        run_log_view_->appendPlainText(slot_code.isEmpty() ? "收到图片，无法映射" : QString("收到图片，位置码 %1 无法解析且位姿映射失败").arg(slot_code));
+        run_log_view_->appendPlainText(slot_code.isEmpty() ? "收到巡检结果，无法映射" : QString("收到巡检结果，位置码 %1 无法解析且位姿映射失败").arg(slot_code));
         return;
     }
 
@@ -883,36 +891,30 @@ void MainWindow::appendBarcodeRecord(
     ShelfSlotItem *slot = findShelfSlot(target_location.shelf_index, target_location.side, target_location.row, target_location.col);
     if (!slot)
     {
-        run_log_view_->appendPlainText("收到图片，目标货架槽位无效");
+        run_log_view_->appendPlainText("收到巡检结果，目标货架槽位无效");
         return;
     }
 
-    if (parts.size() >= 3)
+    // 先落文本识别结果：严格按视觉真实顺序 PKG|SKU|SHELF
+    slot->observed_package_id = package_id;
+    slot->observed_category_id = category_id;
+    slot->position_package_id = slot_code;
+    slot->observed_time_text = time_text;
+
+    //解析完其他数据后独立处理图片
+    if (!image_data.isEmpty())
     {
-        slot->observed_category_id = parts[1].trimmed();
-        slot->observed_package_id = parts[0].trimmed();
-        slot->position_package_id = slot_code;
-    }
-    else if (parts.size() == 2)
-    {
-        slot->observed_category_id = parts[1].trimmed();
-        slot->observed_package_id = parts[0].trimmed();
-        slot->position_package_id.clear();
+        slot->has_image = true;//标记这个槽位已经有图
+        slot->latest_image.image_data = image_data;
+        slot->latest_image.image_format = image_format;
+        slot->latest_image.barcode = barcode;
+        slot->latest_image.time_text = time_text;
     }
     else
     {
-        slot->observed_category_id.clear();
-        slot->observed_package_id = barcode.trimmed();
-        slot->position_package_id.clear();
+        slot->has_image = false;
+        slot->latest_image = SlotImageData{};
     }
-
-    slot->observed_time_text = time_text;
-
-    slot->has_image = true;//标记这个槽位已经有图
-    slot->latest_image.image_data = image_data;
-    slot->latest_image.image_format = image_format;
-    slot->latest_image.barcode = barcode;
-    slot->latest_image.time_text = time_text;
 
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
 }
@@ -1257,12 +1259,6 @@ void MainWindow::setupDemoData()
     data.drone_state.flight_mode = "OFFBOARD";
 
     data.drone_state.pose.z = 0.0;
-    // ===== 临时测试坐标，联调完成后删掉 =====
-    // data.drone_state.pose.x = 0.0;
-    // data.drone_state.pose.y = -80.0;
-    // data.drone_state.pose.z = 140;
-    // data.drone_state.pose.yaw = 90.0;
-    // =====================================
     data.drone_state.speed = 4.2;
     data.drone_state.battery = 87.0;
 
@@ -1293,13 +1289,6 @@ void MainWindow::setupDemoData()
     /**********************轨迹位置更改************************/
 
     // data.trajectory.push_back({140, 125, 0});
-    // data.trajectory.push_back({140, 125, 120});
-    // data.trajectory.push_back({140, -125, 120});
-    // data.trajectory.push_back({0, -125, 120});
-    // data.trajectory.push_back({0, 125, 120});
-    // data.trajectory.push_back({-140, 125, 120});
-    // data.trajectory.push_back({-140, -125, 120});
-    // data.trajectory.push_back({-140, -125, 0});
 
     /*********************************************************/
 
@@ -1328,28 +1317,12 @@ void MainWindow::setupDemoData()
     shelf1_panel.front_slots.resize(12);//前面固定16个点位，对应4x4网格
     shelf1_panel.back_slots.resize(12);//后面固定16个点位，对应4x4网格
 
-    // 下面这些就是货架1的演示数据。
-    // 下标规则是：index = row * 4 + col。
-    // 例如：R1C1 -> 0，R2C3 -> 6，R3C2 -> 9。
-    // shelf1_panel.front_slots[0].category_id = "FOOD-001";
-    // shelf1_panel.front_slots[0].package_id = "PKG-0001";
-
-    // shelf1_panel.front_slots[6].category_id = "MED-002";
-    // shelf1_panel.front_slots[6].package_id = "PKG-0008";
-
-    // shelf1_panel.back_slots[9].category_id = "ELEC-003";
-    // shelf1_panel.back_slots[9].package_id = "PKG-0016";
-
     // -------------------- 货架2数据 --------------------
     ShelfPanelData shelf2_panel;
     shelf2_panel.display_name = "货架2";//第二个顶部按钮和标题显示名称
     shelf2_panel.button_status_color = "#f0b400";//第二个顶部按钮前面的状态灯颜色
     shelf2_panel.front_slots.resize(12);
     shelf2_panel.back_slots.resize(12);
-
-    // 这里也给货架2先放一组演示数据，方便切换到第二个货架时能看出内容确实发生了变化。
-    // shelf2_panel.front_slots[3].category_id = "BOOK-005";
-    // shelf2_panel.front_slots[3].package_id = "PKG-0021";
 
     // 把两个货架的数据一起压进总列表。
     shelf_panel_data_.push_back(shelf1_panel);
@@ -1389,4 +1362,263 @@ void MainWindow::updateOverlayGeometry()
     view_mode_widget_->setGeometry(100, area.height() - 70, 160, 40);
     view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
     view_2D_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
+{
+    QVector<SlotAnalysisInput> inputs;
+
+    for (int shelf_index = 0; shelf_index < shelf_panel_data_.size(); ++shelf_index)
+    {
+        const ShelfPanelData &shelf = shelf_panel_data_[shelf_index];
+
+        auto append_slots = [&](const QVector<ShelfSlotItem> &slots, const QString &side)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                for (int col = 0; col < 3; ++col)
+                {
+                    const int index = row * 3 + col;
+                    if (index < 0 || index >= slots.size())
+                    {
+                        continue;
+                    }
+
+                    const ShelfSlotItem &slot = slots[index];
+
+                    SlotAnalysisInput input;
+                    input.shelf_name = shelf.display_name;
+                    input.shelf_index = shelf_index;
+                    input.side = side;
+                    input.row = row;
+                    input.col = col;
+
+                    input.manual_category_id = slot.category_id;
+                    input.manual_package_id = slot.package_id;
+
+                    input.observed_category_id = slot.observed_category_id;
+                    input.observed_package_id = slot.observed_package_id;
+                    input.observed_slot_code = slot.position_package_id;
+                    input.observed_time_text = slot.observed_time_text;
+                    input.has_image = slot.has_image;
+
+                    const bool has_meaningful_data =
+                        !input.manual_category_id.isEmpty() ||
+                        !input.manual_package_id.isEmpty() ||
+                        !input.observed_category_id.isEmpty() ||
+                        !input.observed_package_id.isEmpty() ||
+                        !input.observed_slot_code.isEmpty() ||
+                        input.has_image;
+
+                    if (has_meaningful_data)
+                    {
+                        inputs.push_back(input);
+                    }
+                }
+            }
+        };
+
+        append_slots(shelf.front_slots, "front");
+        append_slots(shelf.back_slots, "back");
+    }
+
+    return inputs;
+}
+
+QVector<SlotRuleAnalysis> MainWindow::buildRuleAnalysisResults() const
+{
+    const QVector<SlotAnalysisInput> inputs = collectSlotAnalysisInputs();
+    return AiDiffAnalyzer::analyzeAll(inputs);
+}
+
+QString MainWindow::buildRuleAnalysisReport(const QVector<SlotRuleAnalysis> &results) const
+{
+    QStringList lines;
+    lines << "=== AI差异巡检助手（规则预分析） ===";
+
+    int high_count = 0;
+    int medium_count = 0;
+    int low_count = 0;
+
+    for (const SlotRuleAnalysis &result : results)
+    {
+        if (result.priority >= 80)
+        {
+            ++high_count;
+        }
+        else if (result.priority >= 50)
+        {
+            ++medium_count;
+        }
+        else
+        {
+            ++low_count;
+        }
+    }
+
+    lines << QString("高优先级：%1 项").arg(high_count);
+    lines << QString("中优先级：%1 项").arg(medium_count);
+    lines << QString("低优先级：%1 项").arg(low_count);
+    lines << "";
+
+    for (const SlotRuleAnalysis &result : results)
+    {
+        if (result.status == SlotDiffStatus::Matched || result.status == SlotDiffStatus::Empty)
+        {
+            continue;
+        }
+
+        lines << result.summary;
+        lines << QString("原因：%1").arg(result.reason);
+        lines << QString("优先级：%1").arg(result.priority);
+        lines << QString("建议复查：%1").arg(result.should_revisit ? "是" : "否");
+        lines << "";
+    }
+
+    return lines.join('\n');
+}
+
+void MainWindow::runAiDiffAnalysis()
+{
+    const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
+    const QString report = buildRuleAnalysisReport(results);
+    run_log_view_->appendPlainText(report);
+}
+
+QString MainWindow::buildAiPrompt(const QVector<SlotRuleAnalysis> &results) const
+{
+    QStringList lines;
+    lines << "你是仓储巡检差异分析助手。";
+    lines << "请根据以下异常槽位数据，输出 JSON 数组。";
+    lines << "每项字段固定为：slot,severity,summary,reason,action,should_revisit。";
+    lines << "severity 只能是 low / medium / high。";
+    lines << "should_revisit 只能是 true / false。";
+    lines << "空串表示缺失，不是字符串 NA。";
+    lines << "";
+    lines << "异常槽位列表：";
+
+    for (const SlotRuleAnalysis &result : results)
+    {
+        if (result.status == SlotDiffStatus::Matched || result.status == SlotDiffStatus::Empty)
+        {
+            continue;
+        }
+
+        const SlotAnalysisInput &input = result.input;
+        lines << QString("- slot=%1 %2 R%3C%4, manual_package=%5, manual_category=%6, observed_package=%7, observed_category=%8, observed_slot=%9, has_image=%10, observed_time=%11, local_summary=%12, local_reason=%13")
+                     .arg(input.shelf_name)
+                     .arg(input.side)
+                     .arg(input.row + 1)
+                     .arg(input.col + 1)
+                     .arg(input.manual_package_id)
+                     .arg(input.manual_category_id)
+                     .arg(input.observed_package_id)
+                     .arg(input.observed_category_id)
+                     .arg(input.observed_slot_code)
+                     .arg(input.has_image ? "true" : "false")
+                     .arg(input.observed_time_text)
+                     .arg(result.summary)
+                     .arg(result.reason);
+    }
+
+    lines << "";
+    lines << "不要输出 markdown，只输出 JSON。";
+    return lines.join('\n');
+}
+
+void MainWindow::runClaudeApiDiffAnalysis()
+{
+    const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
+
+    QVector<SlotRuleAnalysis> abnormal_results;
+    for (const SlotRuleAnalysis &result : results)
+    {
+        if (result.status != SlotDiffStatus::Matched && result.status != SlotDiffStatus::Empty)
+        {
+            abnormal_results.push_back(result);
+        }
+    }
+
+    if (abnormal_results.isEmpty())
+    {
+        run_log_view_->appendPlainText("AI分析：当前没有异常槽位需要分析");
+        return;
+    }
+
+    const QString prompt = buildAiPrompt(abnormal_results);
+
+    const QString temp_dir = QDir::tempPath();
+    const QString prompt_path = temp_dir + "/warehouse_ai_prompt.txt";
+    const QString output_path = temp_dir + "/warehouse_ai_output.json";
+    const QString script_path = QCoreApplication::applicationDirPath() + "/warehouse_ai_runner.py";
+
+    QFile prompt_file(prompt_path);
+    if (!prompt_file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        run_log_view_->appendPlainText("AI分析失败：无法写入 prompt 文件");
+        return;
+    }
+    prompt_file.write(prompt.toUtf8());
+    prompt_file.close();
+
+    auto *process = new QProcess(this);
+    connect(process, &QProcess::finished, this, [this, process, output_path](int exit_code, QProcess::ExitStatus exit_status) {
+        Q_UNUSED(exit_status);
+
+        if (exit_code != 0)
+        {
+            run_log_view_->appendPlainText("AI分析失败：调用脚本退出异常");
+            run_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
+            process->deleteLater();
+            return;
+        }
+
+        QFile output_file(output_path);
+        if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            run_log_view_->appendPlainText("AI分析失败：无法读取输出结果");
+            process->deleteLater();
+            return;
+        }
+
+        const QString output_text = QString::fromUtf8(output_file.readAll());
+        output_file.close();
+
+        run_log_view_->appendPlainText("=== AI差异巡检助手（Claude） ===");
+        run_log_view_->appendPlainText(output_text);
+        process->deleteLater();
+    });
+
+    QStringList args;
+    args << script_path << prompt_path << output_path;
+    process->start("python3", args);
 }

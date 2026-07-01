@@ -53,6 +53,19 @@ private:
     void clearWaypointRequest();
     void setWaypointRequest(int shelf_index, const QString &side, int row, int col);
 
+    /***********************AI相关*************************/
+
+    QVector<SlotAnalysisInput> collectSlotAnalysisInputs() const;//收集所有槽位为分析输入
+    QVector<SlotRuleAnalysis> buildRuleAnalysisResults() const;//生成规则分析结果
+    QString buildRuleAnalysisReport(const QVector<SlotRuleAnalysis> &results) const;//纯规则报告
+    void runAiDiffAnalysis();//规则触发入口
+
+    QString buildAiPrompt(const QVector<SlotRuleAnalysis> &results) const;//Prompt 构造函数
+    QVector<SlotAiAnalysis> parseAiResult(const QString &text) const;
+    void runClaudeApiDiffAnalysis();//API 调用函数
+
+    /******************************************************/
+
     /*********************ros移植部分***********************/
 
     // 负责接收无人机基础状态更新，并同步到当前仓储界面的顶部状态栏和姿态信息区。
@@ -101,7 +114,6 @@ private:
     SceneView *scene_view_ = nullptr;//主场景视图，负责绘制仓库、无人机和轨迹
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
-    //std::unique_ptr<GpioOutput> gpio_output_;
 
     /*********************ros移植部分***********************/
     RosManager *ros_manager_ = nullptr;//ROS 管理器，负责订阅状态、调用服务、把 ROS 数据转成 Qt 信号
