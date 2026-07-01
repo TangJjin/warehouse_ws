@@ -50,6 +50,7 @@ private:
     QPushButton *shelf_button_ = nullptr;//货架状态按钮
     QPushButton *task_button_ = nullptr;//任务状态按钮
     QPushButton *execute_button_ = nullptr;//执行按钮
+    QPushButton *waypoint_button_ = nullptr;//航点飞行按钮
     QPushButton *scheduled_check_button_ = nullptr;//执行按钮
     QLabel *time_label_ = nullptr;//时间标签
 

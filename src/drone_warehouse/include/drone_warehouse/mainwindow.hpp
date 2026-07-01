@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QMainWindow>
 #include <QVector>
+#include <memory>
 
 #include "drone_warehouse/models.hpp"
 #include "drone_msgs/msg/mission_summary.hpp"
@@ -48,6 +49,7 @@ private:
     void applyManualStockOut(int shelf_index, const QString &side, int row, int col,
                             const QString &category_id, const QString &package_id);
 
+    void refreshWaypointLog();
     void clearWaypointRequest();
     void setWaypointRequest(int shelf_index, const QString &side, int row, int col);
 
@@ -99,6 +101,7 @@ private:
     SceneView *scene_view_ = nullptr;//主场景视图，负责绘制仓库、无人机和轨迹
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
+    //std::unique_ptr<GpioOutput> gpio_output_;
 
     /*********************ros移植部分***********************/
     RosManager *ros_manager_ = nullptr;//ROS 管理器，负责订阅状态、调用服务、把 ROS 数据转成 Qt 信号
@@ -109,10 +112,13 @@ private:
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
 
     QVector<WorldCoord> path_points_;
+    QVector<QString> waypoint_labels_;
     /******************************************************/
 
     QWidget *log_panel_ = nullptr;//日志面板
     QPlainTextEdit *run_log_view_{nullptr};
+    QWidget *logwaypoint_panel_ = nullptr;//航点日志面板
+    QPlainTextEdit *waypoint_log_view_{nullptr};
     QTimer *clock_timer_ = nullptr;//用于每秒刷新一次顶部时间
 
     QWidget *attitude_panel_ = nullptr;//姿态面板
