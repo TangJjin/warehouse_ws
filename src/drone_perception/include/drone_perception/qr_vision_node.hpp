@@ -82,7 +82,7 @@ private:
   struct CaptureFrameCandidate
   {
     cv::Mat image;
-    rclcpp::Time stamp;
+    rclcpp::Time stamp{0, 0, RCL_SYSTEM_TIME};
     float package_score{0.0F};
     double center_distance_sq{0.0};
     bool valid{false};
