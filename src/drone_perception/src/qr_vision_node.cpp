@@ -32,9 +32,13 @@ static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
 static constexpr int kDefaultBarcodeCaptureJpegQuality = 90;
 static constexpr float kDefaultOcrYoloPaddingRatio = 0.15F;
 static constexpr float kDefaultPackageCapturePaddingRatio = 0.05F;
+static constexpr double kDefaultCaptureCollectionDurationS = 2.0;
+static constexpr double kDefaultPackageCaptureDeadzoneRatio = 0.08;
+static constexpr double kDefaultPackageCaptureMinScore = 0.50;
 static constexpr const char *kDefaultBarcodeCaptureTopic = "/drone/image";
 static constexpr const char *kDefaultHoverActiveTopic = "/mission/hover_active";
 static constexpr const char *kJpegImageFormat = "jpeg";
+static constexpr const char *kMissingCaptureField = "NAN";
 static constexpr std::size_t kCameraExposureControlIndex = 0U;
 static constexpr std::size_t kCameraGainControlIndex = 1U;
 static constexpr std::size_t kCameraWhiteBalanceControlIndex = 2U;
@@ -401,6 +405,15 @@ void QrVisionNode::declareParameters()
   package_capture_padding_ratio_ = static_cast<float>(this->declare_parameter<double>(
       "package_capture_padding_ratio",
       kDefaultPackageCapturePaddingRatio));
+  capture_collection_duration_s_ = this->declare_parameter<double>(
+      "capture_collection_duration_s",
+      kDefaultCaptureCollectionDurationS);
+  package_capture_deadzone_ratio_ = this->declare_parameter<double>(
+      "package_capture_deadzone_ratio",
+      kDefaultPackageCaptureDeadzoneRatio);
+  package_capture_min_score_ = this->declare_parameter<double>(
+      "package_capture_min_score",
+      kDefaultPackageCaptureMinScore);
 
   if (log_throttle_ms_ <= 0)
   {
@@ -461,6 +474,35 @@ void QrVisionNode::declareParameters()
         "package_capture_padding_ratio must be greater than or equal to 0, reset to %.2f",
         kDefaultPackageCapturePaddingRatio);
     package_capture_padding_ratio_ = kDefaultPackageCapturePaddingRatio;
+  }
+
+  if (capture_collection_duration_s_ <= 0.0)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "capture_collection_duration_s must be greater than 0, reset to %.2f",
+        kDefaultCaptureCollectionDurationS);
+    capture_collection_duration_s_ = kDefaultCaptureCollectionDurationS;
+  }
+
+  if (package_capture_deadzone_ratio_ <= 0.0 ||
+      package_capture_deadzone_ratio_ > 0.5)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "package_capture_deadzone_ratio must be in (0, 0.5], reset to %.2f",
+        kDefaultPackageCaptureDeadzoneRatio);
+    package_capture_deadzone_ratio_ = kDefaultPackageCaptureDeadzoneRatio;
+  }
+
+  if (package_capture_min_score_ < 0.0 ||
+      package_capture_min_score_ > 1.0)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "package_capture_min_score must be in [0, 1], reset to %.2f",
+        kDefaultPackageCaptureMinScore);
+    package_capture_min_score_ = kDefaultPackageCaptureMinScore;
   }
 
   if (barcode_capture_jpeg_quality_ < 1 || barcode_capture_jpeg_quality_ > 100)
@@ -687,6 +729,28 @@ std::string QrVisionNode::composeCaptureBarcode(bool require_complete) const
   return pkg_code + "|" + sku_code + "|" + shelf_code;
 }
 
+std::string QrVisionNode::composeCaptureBarcodeWithNan(bool allow_all_nan) const
+{
+  const bool has_qr_group =
+      isValidCapturePrefixedCode(pkg_code_state_.stable_code, "PKG-") &&
+      isValidCapturePrefixedCode(sku_code_state_.stable_code, "SKU-");
+  const bool has_shelf_code =
+      isValidShelfCaptureCode(shelf_code_state_.stable_code);
+
+  if (!allow_all_nan && !has_qr_group && !has_shelf_code) {
+    return {};
+  }
+
+  const std::string pkg_code =
+      has_qr_group ? pkg_code_state_.stable_code : kMissingCaptureField;
+  const std::string sku_code =
+      has_qr_group ? sku_code_state_.stable_code : kMissingCaptureField;
+  const std::string shelf_code =
+      has_shelf_code ? shelf_code_state_.stable_code : kMissingCaptureField;
+
+  return pkg_code + "|" + sku_code + "|" + shelf_code;
+}
+
 void QrVisionNode::handleHoverActive(const std_msgs::msg::Bool::SharedPtr msg)
 {
   if (!msg) {
@@ -700,13 +764,23 @@ void QrVisionNode::handleHoverActive(const std_msgs::msg::Bool::SharedPtr msg)
   }
 
   if (hover_active_ && !next_hover_active && !full_capture_sent_in_hover_) {
-    publishTextOnlyCapture(composeCaptureBarcode(false));
+#if DRONE_PERCEPTION_HAS_BPU
+    if (!publishBestBufferedCapture()) {
+      publishTextOnlyCapture(composeCaptureBarcodeWithNan(false));
+    }
+#else
+    publishTextOnlyCapture(composeCaptureBarcodeWithNan(false));
+#endif
   }
 
   hover_active_ = next_hover_active;
 
   if (hover_active_) {
     resetHoverCaptureState();
+  } else {
+#if DRONE_PERCEPTION_HAS_BPU
+    resetCaptureCandidateState();
+#endif
   }
 }
 
@@ -714,6 +788,10 @@ void QrVisionNode::resetHoverCaptureState()
 {
   full_capture_sent_in_hover_ = false;
   last_published_package_barcode_.clear();
+#if DRONE_PERCEPTION_HAS_BPU
+  resetCaptureCandidateState();
+  hover_capture_start_time_ = this->now();
+#endif
 }
 
 void QrVisionNode::publishBarcodeCapture(const cv::Mat &color_image)
@@ -728,7 +806,7 @@ void QrVisionNode::publishBarcodeCapture(const cv::Mat &color_image)
     return;
   }
 
-  publishFullFrameCapture(barcode, color_image);
+  (void)publishFullFrameCapture(barcode, color_image);
 }
 
 void QrVisionNode::publishTextOnlyCapture(const std::string &barcode)
@@ -748,19 +826,19 @@ void QrVisionNode::publishTextOnlyCapture(const std::string &barcode)
       barcode.c_str());
 }
 
-void QrVisionNode::publishFullFrameCapture(
+bool QrVisionNode::publishFullFrameCapture(
     const std::string &barcode,
     const cv::Mat &color_image)
 {
   if (!barcode_capture_pub_ || barcode.empty()) {
-    return;
+    return false;
   }
 
 #if DRONE_PERCEPTION_HAS_BPU
   std::vector<uint8_t> jpeg_data;
 
   if (!encodeFrameCaptureJpeg(color_image, jpeg_data)) {
-    return;
+    return false;
   }
 
   drone_msgs::msg::BarcodeCapture msg;
@@ -778,6 +856,7 @@ void QrVisionNode::publishFullFrameCapture(
       "published frame barcode capture barcode=%s bytes=%zu",
       barcode.c_str(),
       msg.image_data.size());
+  return true;
 #else
   (void)color_image;
   RCLCPP_WARN_THROTTLE(
@@ -785,6 +864,7 @@ void QrVisionNode::publishFullFrameCapture(
       *get_clock(),
       log_throttle_ms_,
       "full frame barcode capture requested but this build has no BPU support");
+  return false;
 #endif
 }
 
@@ -1099,6 +1179,175 @@ bool QrVisionNode::encodeFrameCaptureJpeg(
 
   return false;
 }
+
+void QrVisionNode::resetCaptureCandidateState()
+{
+  best_package_capture_candidate_ = {};
+  package_capture_candidate_count_ = 0;
+  hover_capture_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+}
+
+bool QrVisionNode::selectBestPackageInDeadzone(
+    const cv::Mat &color_image,
+    CaptureFrameCandidate &candidate) const
+{
+  candidate = {};
+
+  if (color_image.empty() || last_bpu_detections_.empty()) {
+    return false;
+  }
+
+  const double image_center_x = static_cast<double>(color_image.cols) * 0.5;
+  const double image_center_y = static_cast<double>(color_image.rows) * 0.5;
+  const double deadzone_radius =
+      static_cast<double>(std::min(color_image.cols, color_image.rows)) *
+      package_capture_deadzone_ratio_;
+  const double deadzone_radius_sq = deadzone_radius * deadzone_radius;
+
+  for (const BpuYoloDetection &detection : last_bpu_detections_) {
+    if (detection.class_id != kYoloClassPackage ||
+        static_cast<double>(detection.score) < package_capture_min_score_) {
+      continue;
+    }
+
+    const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+        detection,
+        color_image.cols,
+        color_image.rows);
+
+    if (image_rect.x_max - image_rect.x_min <= 1.0F ||
+        image_rect.y_max - image_rect.y_min <= 1.0F) {
+      continue;
+    }
+
+    const double package_center_x =
+        (static_cast<double>(image_rect.x_min) + static_cast<double>(image_rect.x_max)) * 0.5;
+    const double package_center_y =
+        (static_cast<double>(image_rect.y_min) + static_cast<double>(image_rect.y_max)) * 0.5;
+    const double dx = package_center_x - image_center_x;
+    const double dy = package_center_y - image_center_y;
+    const double center_distance_sq = dx * dx + dy * dy;
+
+    if (center_distance_sq > deadzone_radius_sq) {
+      continue;
+    }
+
+    const bool replace_candidate =
+        !candidate.valid ||
+        detection.score > candidate.package_score ||
+        (std::abs(detection.score - candidate.package_score) <= 1.0e-6F &&
+         center_distance_sq < candidate.center_distance_sq);
+
+    if (!replace_candidate) {
+      continue;
+    }
+
+    candidate.package_score = detection.score;
+    candidate.center_distance_sq = center_distance_sq;
+    candidate.valid = true;
+  }
+
+  if (!candidate.valid) {
+    return false;
+  }
+
+  candidate.image = color_image.clone();
+  return !candidate.image.empty();
+}
+
+void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
+{
+  if (!hover_active_ ||
+      hover_capture_start_time_.nanoseconds() <= 0 ||
+      color_image.empty()) {
+    return;
+  }
+
+  const rclcpp::Time now_time = this->now();
+  const double elapsed_s = (now_time - hover_capture_start_time_).seconds();
+
+  if (elapsed_s < 0.0 || elapsed_s > capture_collection_duration_s_) {
+    return;
+  }
+
+  CaptureFrameCandidate candidate;
+
+  try {
+    if (!selectBestPackageInDeadzone(color_image, candidate)) {
+      return;
+    }
+  } catch (const cv::Exception &e) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "package capture candidate clone failed: %s",
+        e.what());
+    return;
+  }
+
+  candidate.stamp = now_time;
+  ++package_capture_candidate_count_;
+
+  const bool replace_best =
+      !best_package_capture_candidate_.valid ||
+      candidate.package_score > best_package_capture_candidate_.package_score ||
+      (std::abs(candidate.package_score - best_package_capture_candidate_.package_score) <= 1.0e-6F &&
+       candidate.center_distance_sq < best_package_capture_candidate_.center_distance_sq);
+
+  if (!replace_best) {
+    return;
+  }
+
+  best_package_capture_candidate_ = std::move(candidate);
+
+  RCLCPP_DEBUG_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      log_throttle_ms_,
+      "best package capture candidate updated score=%.3f center_distance_px=%.1f "
+      "elapsed_s=%.2f candidates=%d",
+      best_package_capture_candidate_.package_score,
+      std::sqrt(best_package_capture_candidate_.center_distance_sq),
+      elapsed_s,
+      package_capture_candidate_count_);
+}
+
+bool QrVisionNode::publishBestBufferedCapture()
+{
+  if (!best_package_capture_candidate_.valid ||
+      best_package_capture_candidate_.image.empty()) {
+    RCLCPP_INFO(
+        get_logger(),
+        "no centered package capture candidate collected in first %.2fs",
+        capture_collection_duration_s_);
+    return false;
+  }
+
+  const std::string barcode = composeCaptureBarcodeWithNan(true);
+
+  if (barcode == last_published_package_barcode_) {
+    return false;
+  }
+
+  const bool published = publishFullFrameCapture(
+      barcode,
+      best_package_capture_candidate_.image);
+
+  if (!published) {
+    return false;
+  }
+
+  RCLCPP_INFO(
+      get_logger(),
+      "published best buffered package capture score=%.3f center_distance_px=%.1f "
+      "candidates=%d",
+      best_package_capture_candidate_.package_score,
+      std::sqrt(best_package_capture_candidate_.center_distance_sq),
+      package_capture_candidate_count_);
+
+  return true;
+}
 #endif
 
 void QrVisionNode::initializeSubscriptions()
@@ -1357,7 +1606,11 @@ void QrVisionNode::processFrame(
   updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
 #endif
 
+#if DRONE_PERCEPTION_HAS_BPU
+  bufferPackageCaptureCandidate(color_bridge->image);
+#else
   publishBarcodeCapture(color_bridge->image);
+#endif
 
   if (debug_view_)
   {
