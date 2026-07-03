@@ -131,7 +131,7 @@ class FastLioToMavros : public rclcpp::Node {
     vision_pose_topic_ = declare_parameter<std::string>(
         "vision_pose_topic", "/mavros/vision_pose/pose");
     odom_out_topic_ = declare_parameter<std::string>(
-        "odom_out_topic", "/mavros/odometry/out");
+        "odom_out_topic", "/mavros/odometry/in");
 
     publish_odometry_out_ =
         declare_parameter<bool>("publish_odometry_out", true);
