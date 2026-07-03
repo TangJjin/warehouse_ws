@@ -79,6 +79,15 @@ private:
     int pad_y{0};
   };
 
+  struct CaptureFrameCandidate
+  {
+    cv::Mat image;
+    rclcpp::Time stamp;
+    float package_score{0.0F};
+    double center_distance_sq{0.0};
+    bool valid{false};
+  };
+
   struct CameraNumericControl
   {
     std::string parameter_name;
@@ -140,6 +149,8 @@ private:
 
   std::string composeCaptureBarcode(bool require_complete) const;
 
+  std::string composeCaptureBarcodeWithNan(bool allow_all_nan) const;
+
   void handleHoverActive(const std_msgs::msg::Bool::SharedPtr msg);
 
   void resetHoverCaptureState();
@@ -148,7 +159,7 @@ private:
 
   void publishTextOnlyCapture(const std::string &barcode);
 
-  void publishFullFrameCapture(
+  bool publishFullFrameCapture(
       const std::string &barcode,
       const cv::Mat &color_image);
 
@@ -233,6 +244,16 @@ private:
 #if DRONE_PERCEPTION_HAS_BPU
   void drawBpuDetections(cv::Mat &display) const;
 
+  void resetCaptureCandidateState();
+
+  void bufferPackageCaptureCandidate(const cv::Mat &color_image);
+
+  bool publishBestBufferedCapture();
+
+  bool selectBestPackageInDeadzone(
+      const cv::Mat &color_image,
+      CaptureFrameCandidate &candidate) const;
+
   BpuImageRect mapBpuDetectionToImageRect(
       const BpuYoloDetection &detection,
       int image_width,
@@ -304,6 +325,9 @@ private:
   int barcode_capture_jpeg_quality_ = 90;
   float ocr_yolo_padding_ratio_ = 0.15F;
   float package_capture_padding_ratio_ = 0.05F;
+  double capture_collection_duration_s_ = 2.0;
+  double package_capture_deadzone_ratio_ = 0.08;
+  double package_capture_min_score_ = 0.50;
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
@@ -334,6 +358,9 @@ private:
   std::string debug_raw_symbol_type_;
   cv::Mat debug_qr_preprocess_preview_;
   std::string debug_qr_preprocess_mode_;
+  rclcpp::Time hover_capture_start_time_;
+  CaptureFrameCandidate best_package_capture_candidate_;
+  int package_capture_candidate_count_{0};
 #endif
 
   bool has_camera_info_ = false;

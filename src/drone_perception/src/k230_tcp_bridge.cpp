@@ -11,7 +11,7 @@
 // │ name_len  u16 BE│ (UTF-8)            │ seq          u32 BE    │                  │
 // └─────────────────┴────────────────────┴────────────────────────┴──────────────────┘
 //
-// 用法：ros2 run k230_snapshot_bridge k230_tcp_bridge \
+// 用法：ros2 run k230_snapshot_bridge k230_tcp_bridge
 //          --ros-args -p listen_host:=0.0.0.0 -p listen_port:=9100
 //
 
