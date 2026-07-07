@@ -1576,34 +1576,27 @@ void MainWindow::runClaudeApiDiffAnalysis()
     };
 
     auto message_for_result = [](const SlotRuleAnalysis &result) {
-        if (result.status == SlotDiffStatus::ObservedWithoutImage)
-        {
-            return QString("巡检有结果，但缺少图片证据");
-        }
-        return result.summary.section('：', 1);
-    };
-
-    auto suggestion_for_result = [](const SlotRuleAnalysis &result) {
         switch (result.status)
         {
         case SlotDiffStatus::Mismatch:
-            return QString("核对台账和实物。");
+            return QString("台账与巡检不一致");
         case SlotDiffStatus::PartialObserved:
-            return QString("重新巡检。");
+            return QString("巡检结果不完整");
         case SlotDiffStatus::ObservedOnly:
-            return QString("核查是否漏登记。");
+            return QString("巡检识别到货物，但台账为空");
         case SlotDiffStatus::ManualOnly:
-            return QString("核查是否漏检。");
+            return QString("存在台账，但巡检为空");
         case SlotDiffStatus::PositionOnly:
-            return QString("补充身份识别。");
+            return QString("仅识别到位置，没有识别到货物身份");
         case SlotDiffStatus::ObservedWithoutImage:
-            return QString("补拍并检查图传。");
+            return QString("巡检有结果，但缺少图片证据");
         default:
-            return QString();
+            return result.summary;
         }
     };
 
     QStringList lines;
+    QStringList ai_input_lines;
     lines << "=== 全量分析结果 ===";
 
     QVector<const SlotRuleAnalysis*> abnormal_results;
@@ -1615,9 +1608,11 @@ void MainWindow::runClaudeApiDiffAnalysis()
         }
 
         abnormal_results.push_back(&result);
-        lines << QString("%1：%2")
-                    .arg(slot_label(result))
-                    .arg(message_for_result(result));
+        const QString item_line = QString("%1：%2")
+                                      .arg(slot_label(result))
+                                      .arg(message_for_result(result));
+        lines << item_line;
+        ai_input_lines << item_line;
     }
 
     if (abnormal_results.isEmpty())
@@ -1627,57 +1622,89 @@ void MainWindow::runClaudeApiDiffAnalysis()
         return;
     }
 
-    QSet<QString> categories;
-    for (const SlotRuleAnalysis *result : abnormal_results)
-    {
-        switch (result->status)
-        {
-        case SlotDiffStatus::Mismatch:
-            categories.insert("台账冲突");
-            break;
-        case SlotDiffStatus::PartialObserved:
-        case SlotDiffStatus::PositionOnly:
-            categories.insert("识别不完整");
-            break;
-        case SlotDiffStatus::ObservedOnly:
-        case SlotDiffStatus::ManualOnly:
-            categories.insert("台账缺失");
-            break;
-        case SlotDiffStatus::ObservedWithoutImage:
-            categories.insert("图片证据不足");
-            break;
-        default:
-            break;
-        }
-    }
-
-    QString summary_line = "异常结果待复查。";
-    if (!categories.isEmpty())
-    {
-        summary_line = QString("异常主要集中在%1。")
-                           .arg(QStringList(categories.begin(), categories.end()).join("、"));
-    }
-
-    lines << "";
-    lines << "=== AI总结建议 ===";
-    lines << summary_line;
-    lines << "";
-    lines << "优先复查：";
-
-    for (const SlotRuleAnalysis *result : abnormal_results)
-    {
-        const QString suggestion = suggestion_for_result(*result);
-        if (suggestion.isEmpty())
-        {
-            continue;
-        }
-
-        lines << QString("%1：%2")
-                    .arg(slot_label(*result))
-                    .arg(suggestion);
-    }
-
     run_log_view_->appendPlainText(lines.join('\n'));
+
+    QStringList prompt_lines;
+    prompt_lines << "你是仓储巡检结果总结助手。";
+    prompt_lines << "下面是规则分析输出，请生成简短总结与逐条复查项。";
+    prompt_lines << "输出要求：";
+    prompt_lines << "1. 只输出纯文本，不要 markdown，不要 JSON。";
+    prompt_lines << "2. 第一行固定为：=== AI总结建议 ===";
+    prompt_lines << "3. 第二行输出一句总述，例如：异常主要集中在台账冲突、识别不完整和图片证据不足。";
+    prompt_lines << "4. 空一行后输出一行：优先复查：";
+    prompt_lines << "5. 后面每个槽位单独一行，格式固定为：槽位：动作。";
+    prompt_lines << "6. 动作句不要出现“建议”“先”等字眼。";
+    prompt_lines << "7. 只基于已给结果总结，不要臆造额外事实。";
+    prompt_lines << "";
+    prompt_lines << "规则分析结果：";
+    prompt_lines << ai_input_lines;
+
+    const QString temp_dir = QDir::tempPath();
+    const QString prompt_path = temp_dir + "/warehouse_ai_prompt.txt";
+    const QString image_meta_path = temp_dir + "/warehouse_ai_image_meta.json";
+    const QString output_path = temp_dir + "/warehouse_ai_output.txt";
+    const QString script_path = QCoreApplication::applicationDirPath() + "/warehouse_ai_runner.py";
+
+    QFile prompt_file(prompt_path);
+    if (!prompt_file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        run_log_view_->appendPlainText("AI总结失败：无法写入 prompt 文件");
+        return;
+    }
+    prompt_file.write(prompt_lines.join('\n').toUtf8());
+    prompt_file.close();
+
+    QJsonObject image_meta;
+    image_meta["mode"] = "text_summary";
+
+    QFile image_meta_file(image_meta_path);
+    if (!image_meta_file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        run_log_view_->appendPlainText("AI总结失败：无法写入输入元数据文件");
+        return;
+    }
+    image_meta_file.write(QJsonDocument(image_meta).toJson(QJsonDocument::Compact));
+    image_meta_file.close();
+
+    auto *process = new QProcess(this);
+    connect(process,
+        QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+        this,
+        [this, process, output_path](int exit_code, QProcess::ExitStatus exit_status) {
+        Q_UNUSED(exit_status);
+
+        if (exit_code != 0)
+        {
+            run_log_view_->appendPlainText("AI总结失败：调用脚本退出异常");
+            run_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
+            process->deleteLater();
+            return;
+        }
+
+        QFile output_file(output_path);
+        if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            run_log_view_->appendPlainText("AI总结失败：无法读取输出结果");
+            process->deleteLater();
+            return;
+        }
+
+        const QString output_text = QString::fromUtf8(output_file.readAll()).trimmed();
+        output_file.close();
+
+        if (!output_text.isEmpty())
+        {
+            run_log_view_->appendPlainText("");
+            run_log_view_->appendPlainText(output_text);
+        }
+
+        process->deleteLater();
+    });
+
+    QStringList args;
+    args << script_path << prompt_path << image_meta_path << output_path;
+    process->start("python3", args);
 }
+
 
 
