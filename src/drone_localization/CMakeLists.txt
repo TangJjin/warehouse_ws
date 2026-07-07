@@ -31,6 +31,7 @@ ament_target_dependencies(fastlio_to_mavros_node
 ament_target_dependencies(compare_yaw_node
   rclcpp
   geometry_msgs
+  nav_msgs
   mavros_msgs
 )
 

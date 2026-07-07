@@ -51,7 +51,7 @@ class StartupSupervisor:
                 name='fast_lio',
                 command=['ros2', 'launch', 'fast_lio', 'mapping.launch.py'],
                 ready_topic='/Odometry',
-                ready_type='nav_msgs/msg/Odometry',
+                ready_type='geometry_msgs/msg/PoseStamped',
                 timeout_sec=20,
                 ready_qos_reliability='best_effort',
             ),
