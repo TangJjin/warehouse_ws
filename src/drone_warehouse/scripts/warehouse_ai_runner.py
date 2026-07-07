@@ -64,68 +64,88 @@ def main() -> int:
         print(f"failed to parse image meta json: {e}", file=sys.stderr)
         return 1
 
-    image_base64 = str(image_meta.get("image_base64", "")).strip()
-    image_format = str(image_meta.get("image_format", "")).strip()
+    mode = str(image_meta.get("mode", "")).strip()
 
-    if not image_base64:
-        print("image_base64 is empty", file=sys.stderr)
-        return 1
+    if mode == "text_summary":
+        payload = {
+            "model": model_name,
+            "max_tokens": 1200,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_text,
+                        }
+                    ],
+                }
+            ],
+        }
+    else:
+        image_base64 = str(image_meta.get("image_base64", "")).strip()
+        image_format = str(image_meta.get("image_format", "")).strip()
 
-    if not image_format:
-        print("image_format is empty", file=sys.stderr)
-        return 1
+        if not image_base64:
+            print("image_base64 is empty", file=sys.stderr)
+            return 1
 
-    slot = str(image_meta.get("slot", "")).strip()
-    manual_package = str(image_meta.get("manual_package", "")).strip()
-    manual_category = str(image_meta.get("manual_category", "")).strip()
-    observed_package = str(image_meta.get("observed_package", "")).strip()
-    observed_category = str(image_meta.get("observed_category", "")).strip()
-    observed_slot = str(image_meta.get("observed_slot", "")).strip()
-    observed_time = str(image_meta.get("observed_time", "")).strip()
+        if not image_format:
+            print("image_format is empty", file=sys.stderr)
+            return 1
 
-    context_lines = [
-        prompt_text,
-        "",
-        "槽位上下文：",
-        f"- slot={slot}",
-        f"- manual_package={manual_package}",
-        f"- manual_category={manual_category}",
-        f"- observed_package={observed_package}",
-        f"- observed_category={observed_category}",
-        f"- observed_slot={observed_slot}",
-        f"- observed_time={observed_time}",
-        "",
-        "要求：",
-        "- 优先依据图片本身判断，不要只复述上下文字段。",
-        "- 如果图片无法支持判断，请明确写无法确认。",
-        "- 不要臆造未看见的内容。",
-    ]
-    final_prompt_text = "\n".join(context_lines)
+        slot = str(image_meta.get("slot", "")).strip()
+        manual_package = str(image_meta.get("manual_package", "")).strip()
+        manual_category = str(image_meta.get("manual_category", "")).strip()
+        observed_package = str(image_meta.get("observed_package", "")).strip()
+        observed_category = str(image_meta.get("observed_category", "")).strip()
+        observed_slot = str(image_meta.get("observed_slot", "")).strip()
+        observed_time = str(image_meta.get("observed_time", "")).strip()
 
-    payload = {
-        "model": model_name,
-        "max_tokens": 2000,
-        "temperature": 0.2,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": final_prompt_text,
-                    },
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": get_media_type(image_format),
-                            "data": image_base64,
+        context_lines = [
+            prompt_text,
+            "",
+            "槽位上下文：",
+            f"- slot={slot}",
+            f"- manual_package={manual_package}",
+            f"- manual_category={manual_category}",
+            f"- observed_package={observed_package}",
+            f"- observed_category={observed_category}",
+            f"- observed_slot={observed_slot}",
+            f"- observed_time={observed_time}",
+            "",
+            "要求：",
+            "- 优先依据图片本身判断，不要只复述上下文字段。",
+            "- 如果图片无法支持判断，请明确写无法确认。",
+            "- 不要臆造未看见的内容。",
+        ]
+        final_prompt_text = "\n".join(context_lines)
+
+        payload = {
+            "model": model_name,
+            "max_tokens": 2000,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": final_prompt_text,
                         },
-                    },
-                ],
-            }
-        ],
-    }
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": get_media_type(image_format),
+                                "data": image_base64,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
 
     url = f"{base_url}/v1/messages"
     headers = {
