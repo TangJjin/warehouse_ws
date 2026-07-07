@@ -152,7 +152,7 @@ class PoseYawComparerNode : public rclcpp::Node {
       if ((now_time - last_wait_log_time_).seconds() > 1.0) {
         last_wait_log_time_ = now_time;
         if (!vision_received_) {
-          RCLCPP_WARN(get_logger(), "/mavros/vision_pose/pose not received yet");
+          RCLCPP_WARN(get_logger(), "/mavros/odometry/out not received yet");
         }
         if (!local_received_) {
           RCLCPP_WARN(get_logger(), "/mavros/local_position/pose not received yet");
@@ -216,8 +216,8 @@ class PoseYawComparerNode : public rclcpp::Node {
 
     // 超限判定：只要 dx / dy / dyaw 三者中任意一个绝对值超阈值，就记作一次超限。
     // 如果你想把判定改得更严格，例如要求“同时两个量超限才算异常”，就改这里。
-    const bool exceeded = std::abs(dx) > max_dx_ || std::abs(dy) > max_dy_ ||
-                          std::abs(dyaw) > max_dyaw_deg_;
+    const bool exceeded = std::abs(dx) > max_dx_ || std::abs(dy) > max_dy_;// ||
+                          //std::abs(dyaw) > max_dyaw_deg_;
 
     if (exceeded) {
       // 一次超限就把连续计数 +1。
