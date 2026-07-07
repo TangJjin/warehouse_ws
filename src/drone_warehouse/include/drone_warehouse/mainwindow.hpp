@@ -60,7 +60,7 @@ private:
     QString buildRuleAnalysisReport(const QVector<SlotRuleAnalysis> &results) const;//纯规则报告
     void runAiDiffAnalysis();//规则触发入口
 
-    QString buildAiPrompt(const QVector<SlotRuleAnalysis> &results) const;//Prompt 构造函数
+    QString buildAiPrompt(const SlotRuleAnalysis &result) const;//Prompt 构造函数
     QVector<SlotAiAnalysis> parseAiResult(const QString &text) const;
     void runClaudeApiDiffAnalysis();//API 调用函数
 

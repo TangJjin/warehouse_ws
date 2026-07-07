@@ -7,6 +7,7 @@
 #include "drone_warehouse/color_palette.hpp"
 #include "drone_warehouse/ros_manager.hpp"
 #include "drone_warehouse/gpio_output.hpp"
+#include "drone_warehouse/ai_diff_analyzer.hpp"
 
 #include <cmath>
 #include <QDialog>
@@ -23,6 +24,13 @@
 #include <QPixmap>
 #include <QRegularExpression>
 #include <stdexcept>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QProcess>
+#include <QStringList>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -346,6 +354,10 @@ void MainWindow::setupConnections()
                 top_status_bar_->setTriggerTime(mission_trigger_time_text_);
                 clock_timer_->start(5000);
             }
+        });
+
+        connect(top_status_bar_, &TopStatusBar::aiAnalyzeButtonClicked, this, [this]() {
+            runClaudeApiDiffAnalysis();
         });
 
         connect(top_status_bar_, &TopStatusBar::executeButtonClicked, this, [this]() {
@@ -1401,19 +1413,18 @@ QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
     {
         const ShelfPanelData &shelf = shelf_panel_data_[shelf_index];
 
-        auto append_slots = [&](const QVector<ShelfSlotItem> &slots, const QString &side)
-        {
+        auto append_slot_items = [&](const QVector<ShelfSlotItem> &slot_items, const QString &side) {
             for (int row = 0; row < 4; ++row)
             {
                 for (int col = 0; col < 3; ++col)
                 {
                     const int index = row * 3 + col;
-                    if (index < 0 || index >= slots.size())
+                    if (index < 0 || index >= slot_items.size())
                     {
                         continue;
                     }
 
-                    const ShelfSlotItem &slot = slots[index];
+                    const ShelfSlotItem &slot = slot_items[index];
 
                     SlotAnalysisInput input;
                     input.shelf_name = shelf.display_name;
@@ -1431,24 +1442,13 @@ QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
                     input.observed_time_text = slot.observed_time_text;
                     input.has_image = slot.has_image;
 
-                    const bool has_meaningful_data =
-                        !input.manual_category_id.isEmpty() ||
-                        !input.manual_package_id.isEmpty() ||
-                        !input.observed_category_id.isEmpty() ||
-                        !input.observed_package_id.isEmpty() ||
-                        !input.observed_slot_code.isEmpty() ||
-                        input.has_image;
-
-                    if (has_meaningful_data)
-                    {
-                        inputs.push_back(input);
-                    }
+                    inputs.push_back(input);
                 }
             }
         };
 
-        append_slots(shelf.front_slots, "front");
-        append_slots(shelf.back_slots, "back");
+        append_slot_items(shelf.front_slots, "front");
+        append_slot_items(shelf.back_slots, "back");
     }
 
     return inputs;
@@ -1514,44 +1514,48 @@ void MainWindow::runAiDiffAnalysis()
     run_log_view_->appendPlainText(report);
 }
 
-QString MainWindow::buildAiPrompt(const QVector<SlotRuleAnalysis> &results) const
+QString MainWindow::buildAiPrompt(const SlotRuleAnalysis &result) const
 {
+    const SlotAnalysisInput &input = result.input;
+
     QStringList lines;
-    lines << "你是仓储巡检差异分析助手。";
-    lines << "请根据以下异常槽位数据，输出 JSON 数组。";
+    lines << "你是仓储槽位图片巡检助手。";
+    lines << "请直接查看图片，并结合槽位上下文判断：";
+    lines << "1. 是否能确认图中有包裹；";
+    lines << "2. 包裹主体是否清晰可见；";
+    lines << "3. 标签/条码/身份信息是否可辨认；";
+    lines << "4. 当前图片证据是否足以支持判断；";
+    lines << "5. 如无法确认，请明确写无法确认。";
+    lines << "";
+    lines << "请只输出 JSON 数组。";
     lines << "每项字段固定为：slot,severity,summary,reason,action,should_revisit。";
     lines << "severity 只能是 low / medium / high。";
     lines << "should_revisit 只能是 true / false。";
-    lines << "空串表示缺失，不是字符串 NA。";
     lines << "";
-    lines << "异常槽位列表：";
-
-    for (const SlotRuleAnalysis &result : results)
-    {
-        if (result.status == SlotDiffStatus::Matched || result.status == SlotDiffStatus::Empty)
-        {
-            continue;
-        }
-
-        const SlotAnalysisInput &input = result.input;
-        lines << QString("- slot=%1 %2 R%3C%4, manual_package=%5, manual_category=%6, observed_package=%7, observed_category=%8, observed_slot=%9, has_image=%10, observed_time=%11, local_summary=%12, local_reason=%13")
-                     .arg(input.shelf_name)
-                     .arg(input.side)
-                     .arg(input.row + 1)
-                     .arg(input.col + 1)
-                     .arg(input.manual_package_id)
-                     .arg(input.manual_category_id)
-                     .arg(input.observed_package_id)
-                     .arg(input.observed_category_id)
-                     .arg(input.observed_slot_code)
-                     .arg(input.has_image ? "true" : "false")
-                     .arg(input.observed_time_text)
-                     .arg(result.summary)
-                     .arg(result.reason);
-    }
-
+    lines << "约束：";
+    lines << "- 优先依据图片本身判断，不要只复述上下文字段。";
+    lines << "- 不要臆造未看见的内容。";
+    lines << "- 不要输出 markdown。";
+    lines << "- 不要长篇解释。";
+    lines << "- summary：一句话结论，尽量简短。";
+    lines << "- reason：只写最关键事实。";
+    lines << "- action：只给一个动作。";
     lines << "";
-    lines << "不要输出 markdown，只输出 JSON。";
+    lines << "槽位上下文：";
+    lines << QString("- slot=%1 %2 R%3C%4")
+                .arg(input.shelf_name)
+                .arg(input.side)
+                .arg(input.row + 1)
+                .arg(input.col + 1);
+    lines << QString("- manual_package=%1").arg(input.manual_package_id);
+    lines << QString("- manual_category=%1").arg(input.manual_category_id);
+    lines << QString("- observed_package=%1").arg(input.observed_package_id);
+    lines << QString("- observed_category=%1").arg(input.observed_category_id);
+    lines << QString("- observed_slot=%1").arg(input.observed_slot_code);
+    lines << QString("- observed_time=%1").arg(input.observed_time_text);
+    lines << QString("- local_summary=%1").arg(result.summary);
+    lines << QString("- local_reason=%1").arg(result.reason);
+
     return lines.join('\n');
 }
 
@@ -1559,66 +1563,121 @@ void MainWindow::runClaudeApiDiffAnalysis()
 {
     const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
 
-    QVector<SlotRuleAnalysis> abnormal_results;
+    auto slot_label = [](const SlotRuleAnalysis &result) {
+        const QString shelf_short = result.input.shelf_name.endsWith("A") ? "A" :
+                                    (result.input.shelf_name.endsWith("B") ? "B" : result.input.shelf_name);
+        const QString side_short = (result.input.side == "front") ? "F" :
+                                   ((result.input.side == "back") ? "B" : result.input.side);
+        return QString("%1 %2 R%3C%4")
+            .arg(shelf_short)
+            .arg(side_short)
+            .arg(result.input.row + 1)
+            .arg(result.input.col + 1);
+    };
+
+    auto message_for_result = [](const SlotRuleAnalysis &result) {
+        if (result.status == SlotDiffStatus::ObservedWithoutImage)
+        {
+            return QString("巡检有结果，但缺少图片证据");
+        }
+        return result.summary.section('：', 1);
+    };
+
+    auto suggestion_for_result = [](const SlotRuleAnalysis &result) {
+        switch (result.status)
+        {
+        case SlotDiffStatus::Mismatch:
+            return QString("核对台账和实物。");
+        case SlotDiffStatus::PartialObserved:
+            return QString("重新巡检。");
+        case SlotDiffStatus::ObservedOnly:
+            return QString("核查是否漏登记。");
+        case SlotDiffStatus::ManualOnly:
+            return QString("核查是否漏检。");
+        case SlotDiffStatus::PositionOnly:
+            return QString("补充身份识别。");
+        case SlotDiffStatus::ObservedWithoutImage:
+            return QString("补拍并检查图传。");
+        default:
+            return QString();
+        }
+    };
+
+    QStringList lines;
+    lines << "=== 全量分析结果 ===";
+
+    QVector<const SlotRuleAnalysis*> abnormal_results;
     for (const SlotRuleAnalysis &result : results)
     {
-        if (result.status != SlotDiffStatus::Matched && result.status != SlotDiffStatus::Empty)
+        if (result.status == SlotDiffStatus::Matched || result.status == SlotDiffStatus::Empty)
         {
-            abnormal_results.push_back(result);
+            continue;
         }
+
+        abnormal_results.push_back(&result);
+        lines << QString("%1：%2")
+                    .arg(slot_label(result))
+                    .arg(message_for_result(result));
     }
 
     if (abnormal_results.isEmpty())
     {
-        run_log_view_->appendPlainText("AI分析：当前没有异常槽位需要分析");
+        lines << "无异常结果";
+        run_log_view_->appendPlainText(lines.join('\n'));
         return;
     }
 
-    const QString prompt = buildAiPrompt(abnormal_results);
-
-    const QString temp_dir = QDir::tempPath();
-    const QString prompt_path = temp_dir + "/warehouse_ai_prompt.txt";
-    const QString output_path = temp_dir + "/warehouse_ai_output.json";
-    const QString script_path = QCoreApplication::applicationDirPath() + "/warehouse_ai_runner.py";
-
-    QFile prompt_file(prompt_path);
-    if (!prompt_file.open(QIODevice::WriteOnly | QIODevice::Text))
+    QSet<QString> categories;
+    for (const SlotRuleAnalysis *result : abnormal_results)
     {
-        run_log_view_->appendPlainText("AI分析失败：无法写入 prompt 文件");
-        return;
+        switch (result->status)
+        {
+        case SlotDiffStatus::Mismatch:
+            categories.insert("台账冲突");
+            break;
+        case SlotDiffStatus::PartialObserved:
+        case SlotDiffStatus::PositionOnly:
+            categories.insert("识别不完整");
+            break;
+        case SlotDiffStatus::ObservedOnly:
+        case SlotDiffStatus::ManualOnly:
+            categories.insert("台账缺失");
+            break;
+        case SlotDiffStatus::ObservedWithoutImage:
+            categories.insert("图片证据不足");
+            break;
+        default:
+            break;
+        }
     }
-    prompt_file.write(prompt.toUtf8());
-    prompt_file.close();
 
-    auto *process = new QProcess(this);
-    connect(process, &QProcess::finished, this, [this, process, output_path](int exit_code, QProcess::ExitStatus exit_status) {
-        Q_UNUSED(exit_status);
+    QString summary_line = "异常结果待复查。";
+    if (!categories.isEmpty())
+    {
+        summary_line = QString("异常主要集中在%1。")
+                           .arg(QStringList(categories.begin(), categories.end()).join("、"));
+    }
 
-        if (exit_code != 0)
+    lines << "";
+    lines << "=== AI总结建议 ===";
+    lines << summary_line;
+    lines << "";
+    lines << "优先复查：";
+
+    for (const SlotRuleAnalysis *result : abnormal_results)
+    {
+        const QString suggestion = suggestion_for_result(*result);
+        if (suggestion.isEmpty())
         {
-            run_log_view_->appendPlainText("AI分析失败：调用脚本退出异常");
-            run_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
-            process->deleteLater();
-            return;
+            continue;
         }
 
-        QFile output_file(output_path);
-        if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
-        {
-            run_log_view_->appendPlainText("AI分析失败：无法读取输出结果");
-            process->deleteLater();
-            return;
-        }
+        lines << QString("%1：%2")
+                    .arg(slot_label(*result))
+                    .arg(suggestion);
+    }
 
-        const QString output_text = QString::fromUtf8(output_file.readAll());
-        output_file.close();
-
-        run_log_view_->appendPlainText("=== AI差异巡检助手（Claude） ===");
-        run_log_view_->appendPlainText(output_text);
-        process->deleteLater();
-    });
-
-    QStringList args;
-    args << script_path << prompt_path << output_path;
-    process->start("python3", args);
+    run_log_view_->appendPlainText(lines.join('\n'));
 }
+
+

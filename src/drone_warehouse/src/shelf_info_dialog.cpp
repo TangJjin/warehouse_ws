@@ -19,7 +19,7 @@
 
 namespace
 {
-    QIcon makeStatusIcon(const QColor &color)
+    QIcon makeStatusIcon(const QColor &color, bool missing_image_badge = false)
     {
         QPixmap pixmap(12, 12);
         pixmap.fill(Qt::transparent);
@@ -30,7 +30,22 @@ namespace
         painter.setBrush(color);
         painter.drawEllipse(1, 1, 10, 10);
 
+        if (missing_image_badge)
+        {
+            painter.setBrush(QColor("#ffffff"));
+            painter.drawEllipse(7, 0, 5, 5);
+            painter.setBrush(QColor("#ff5c5c"));
+            painter.drawEllipse(8, 1, 3, 3);
+        }
+
         return QIcon(pixmap);
+    }
+
+    bool hasObservedWithoutImage(const ShelfSlotItem &slot)
+    {
+        const bool has_observed_data =
+            !slot.observed_category_id.isEmpty() && !slot.observed_package_id.isEmpty();
+        return has_observed_data && !slot.has_image;
     }
 
     QColor slotStatusColor(const ShelfSlotItem &slot)
@@ -487,7 +502,7 @@ void ShelfInfoDialog::updateSlotGrid()
             // {
             //     button->setIcon(makeStatusIcon(QColor("#00d48a")));//有货用绿色状态灯
             // }
-            button->setIcon(makeStatusIcon(slotStatusColor(slot)));
+            button->setIcon(makeStatusIcon(slotStatusColor(slot), hasObservedWithoutImage(slot)));
 
             const bool is_selected = (row == current_slot_row_ && col == current_slot_col_);
             if (is_selected) {
@@ -497,11 +512,13 @@ void ShelfInfoDialog::updateSlotGrid()
             }
 
             button->setToolTip(
-            QString("台账: %1 | %2\n巡检: %3 | %4")
+            QString("台账: %1 | %2\n巡检: %3 | %4\n图片: %5")
                 .arg(slot.package_id.isEmpty() ? "——" : slot.package_id)
                 .arg(slot.category_id.isEmpty() ? "——" : slot.category_id)
-                .arg(slot.observed_package_id.isEmpty() ? "——" : slot.observed_package_id));
+                .arg(slot.observed_package_id.isEmpty() ? "——" : slot.observed_package_id)
                 .arg(slot.observed_category_id.isEmpty() ? "——" : slot.observed_category_id)
+                .arg(hasObservedWithoutImage(slot) ? "缺失" : (slot.has_image ? "已回传" : "——"))
+            );
         }
     }
 

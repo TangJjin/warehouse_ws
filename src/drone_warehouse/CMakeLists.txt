@@ -66,6 +66,10 @@ ament_target_dependencies(warehouse_gcs
 
 install(TARGETS
   warehouse_gcs
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(PROGRAMS
   scripts/warehouse_ai_runner.py
   DESTINATION lib/${PROJECT_NAME}
 )
