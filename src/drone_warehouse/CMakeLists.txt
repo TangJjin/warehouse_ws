@@ -33,6 +33,7 @@ add_executable(warehouse_gcs
   src/top_status_bar.cpp
   src/ai_diff_analyzer.cpp
   src/shelf_info_dialog.cpp
+  src/shelf_panel_storage.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
   include/drone_warehouse/scene_view.hpp
@@ -41,6 +42,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/top_status_bar.hpp
   include/drone_warehouse/ai_diff_analyzer.hpp
   include/drone_warehouse/shelf_info_dialog.hpp
+  include/drone_warehouse/shelf_panel_storage.hpp
 )
 
 target_include_directories(warehouse_gcs PUBLIC
