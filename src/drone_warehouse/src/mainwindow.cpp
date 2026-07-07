@@ -8,6 +8,7 @@
 #include "drone_warehouse/ros_manager.hpp"
 #include "drone_warehouse/gpio_output.hpp"
 #include "drone_warehouse/ai_diff_analyzer.hpp"
+#include "drone_warehouse/shelf_panel_storage.hpp"
 
 #include <cmath>
 #include <QDialog>
@@ -24,13 +25,8 @@
 #include <QPixmap>
 #include <QRegularExpression>
 #include <stdexcept>
-#include <QCoreApplication>
-#include <QDir>
-#include <QFile>
 #include <QProcess>
 #include <QStringList>
-#include <QJsonDocument>
-#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -929,6 +925,11 @@ void MainWindow::appendBarcodeRecord(
     }
 
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+    QString storage_error;
+    if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
+    {
+        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+    }
 }
 
 void MainWindow::appendVisionBarcodeCount(
@@ -959,6 +960,11 @@ void MainWindow::applyManualStockIn(int shelf_index, const QString &side, int ro
     slot->category_id = category_id;
     slot->package_id = package_id;
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+    QString storage_error;
+    if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
+    {
+        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+    }
 }
 
 void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int row, int col, const QString &category_id, const QString &package_id)
@@ -998,6 +1004,11 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
     slot->has_image = false;
     slot->latest_image = SlotImageData{};
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+    QString storage_error;
+    if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
+    {
+        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+    }
 
     run_log_view_->appendPlainText(
     QString("手动出库成功：货架%1 %2 R%3C%4")
@@ -1339,6 +1350,22 @@ void MainWindow::setupDemoData()
     // 把两个货架的数据一起压进总列表。
     shelf_panel_data_.push_back(shelf1_panel);
     shelf_panel_data_.push_back(shelf2_panel);
+
+    QString storage_error;
+    if (ShelfPanelStorage::load(shelf_panel_data_, &storage_error))
+    {
+        run_log_view_->appendPlainText(
+            QString("已加载货架持久化数据：%1，文件：%2")
+                .arg(shelf_panel_data_.size())
+                .arg(ShelfPanelStorage::defaultFilePath()));
+    }
+    else
+    {
+        run_log_view_->appendPlainText(
+            QString("未加载历史货架数据：%1，文件：%2")
+                .arg(storage_error)
+                .arg(ShelfPanelStorage::defaultFilePath()));
+    }
 
     // 最后把整包货架弹窗数据一次性传给 ShelfInfoDialog。
     // 从这里开始，弹窗只负责显示，不再自己写任何假数据。
