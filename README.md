@@ -18,6 +18,7 @@
 - `drone_msgs`
 - `drone_perception`
 - `drone_qt`
+- `drone_warehouse`
 - `drone_qt_2`
 
 ---
@@ -38,6 +39,7 @@
 - `drone_mission`
 - `drone_msgs`
 - `drone_qt`
+- `drone_warehouse`
 - `drone_qt_2`
 
 ---
@@ -96,8 +98,14 @@ drone_perception 是感知识别包，主要负责“看到了什么、识别到
 drone_qt 主要负责Qt 地面端界面程序。
 
 
+## 3.7 `drone_warehouse`
 
-## 3.7 `drone_qt_2`
+作用概述
+
+drone_warehouse 主要负责智能仓储地面站程序。
+
+
+## 3.8 `drone_qt_2`
 
 drone_qt_2 主要负责Qt 机载端程序。
 
@@ -128,6 +136,7 @@ drone_qt_2 主要负责Qt 机载端程序。
 地面站界面层
 
 - drone_qt
+- drone_warehouse
 
 机载端中转层
 
