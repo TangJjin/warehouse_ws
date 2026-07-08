@@ -1,144 +1,135 @@
-# 各功能包作用说明
+# warehouse_ws
 
-## 1. 文档目的
+## Overview
 
-本文档用于对当前工作区中的几个核心功能包做一个初步职责梳理，方便后续：
+`warehouse_ws` is a ROS 2 Humble workspace for an intelligent warehouse drone system running on a Sunrise-based onboard computer.
 
-- 分包协作
-- GitHub 仓库管理
-- 控制程序、机载端、地面端职责划分
-- 后续补充更细的代码级说明
+The project focuses on autonomous flight in warehouse environments, including flight-controller communication, LiDAR-based localization, mission execution, onboard perception, and system orchestration.
 
-当前工作区中涉及的功能包有：
+## Typical Use Cases
 
-- `drone_bringup`
-- `drone_control`
-- `drone_localization`
-- `drone_mission`
-- `drone_msgs`
-- `drone_perception`
-- `drone_qt`
-- `drone_warehouse`
-- `drone_qt_2`
+- Autonomous inspection in warehouse environments
+- Mission-based takeoff, route execution, and action control
+- Stable flight with LiDAR-assisted localization and mapping
+- Onboard visual tasks such as image streaming, target recognition, and barcode-related processing
 
----
+## Key Features
 
-## 2. 功能包整体关系概览
+- Organized as a ROS 2 multi-package workspace
+- Intended for deployment on a Sunrise onboard computer
+- Uses `mavros` for flight-controller communication
+- Uses Livox MID360 and FastLIO in the localization pipeline
+- Supports mission configuration, flight control, status coordination, and perception input
 
-### 2.1 启动与系统组织
-- `drone_bringup`
+## Core System Flow
 
-### 2.2 控制与任务执行
-- `drone_control`
+A typical runtime chain is:
 
-### 2.3 定位与感知
-- `drone_localization`
-- `drone_perception`
+1. `mavros` connects to the flight controller
+2. `livox_ros_driver2` provides MID360 LiDAR data
+3. `fast_lio` outputs odometry/localization
+4. `drone_localization` bridges localization data into MAVROS
+5. `drone_control` provides TF and mission execution logic
+6. `drone_perception` handles onboard perception input
+7. `drone_bringup` manages startup orchestration and supervision
 
-### 2.4 通信接口与界面
-- `drone_mission`
-- `drone_msgs`
-- `drone_qt`
-- `drone_warehouse`
-- `drone_qt_2`
+## Workspace Packages
 
----
+### 1. drone_bringup
+Handles startup orchestration, node launching, readiness checks, and supervisor logic.
 
-## 3. 各功能包作用说明
+Main responsibilities:
+- Launch core nodes in sequence
+- Wait for required topics to become ready
+- Manage the onboard startup flow
+- Support automatic startup with system service integration
 
+### 2. drone_control
+Handles mission control, action execution, and flight-control-related bridge logic.
 
-## 3.1 `drone_bringup`
+Main responsibilities:
+- Provide TF for control logic
+- Execute mission actions and flight procedures
+- Connect mission configuration to runtime execution
+- Support the offboard control workflow
 
-这个包放：
+### 3. drone_localization
+Handles localization bridging and pose consistency monitoring.
 
-- launch 文件
-- 启动参数
-- 多节点编排
-- 不同模块的统一启动入口
+Main responsibilities:
+- Convert and bridge FastLIO outputs into MAVROS
+- Feed external/vision-based pose data to the flight controller
+- Monitor deviation between localization pose and flight-controller local pose
+- Support abnormal-condition detection and restart decisions
 
-有：
-- 机载端某些链路的统一启动入口
-- offboard 启动流程
-- 其他系统级启动编排任务
+### 4. drone_mission
+Stores and manages mission configuration.
 
+Main responsibilities:
+- Keep mission YAML files
+- Describe waypoints, actions, and process parameters
+- Serve as the configuration input for task execution
 
-## 3.1 `drone_control`
+### 5. drone_msgs
+Defines shared message and service interfaces used across the workspace.
 
-drone_control 是控制程序主逻辑包。
+Main responsibilities:
+- Provide common msg/srv definitions
+- Standardize task, status, and perception-related interfaces
+- Reduce coupling between packages
 
+### 6. drone_perception
+Handles onboard perception input and result processing.
 
+Main responsibilities:
+- Receive TCP/JPEG data from the K230 camera side
+- Process image and perception results
+- Support target recognition, barcode-related capabilities, and image-link integration
+- Provide perception input for warehouse-oriented tasks
 
-## 3.2 `drone_localization`
+### 7. drone_qt_2
+Acts as an onboard-side or relay-side support program.
 
-drone_localization 主要负责定位链路相关功能。
+Main responsibilities:
+- Store or forward task-related data
+- Bridge data between the ground side and the onboard side
+- Assist with mission triggering and perception-result return paths
 
+### 8. drone_warehouse
+Reserved or domain-specific package for warehouse-related functionality.
 
-## 3.3 `drone_mission`
-drone_mission 主要负责保存地面站发送的路线数据。
+Based on the current repository state, this package exists in the workspace but has limited public description. From its name and project context, it appears to be intended for intelligent warehouse scenario extensions.
 
+## External Dependencies
 
-## 3.4 `drone_msgs`
+Important external dependencies include:
 
-drone_msgs 主要负责全系统公共消息定义。
+- `mavros`
+- `livox_ros_driver2`
+- `fast_lio`
 
-这是整个多包系统里的公共接口层。
+Depending on the deployment, the system may also rely on:
 
+- ROS 2 Humble
+- Livox MID360
+- A flight controller with MAVLink connectivity
+- Onboard vision hardware such as K230
 
+## Deployment Notes
 
-## 3.5 `drone_perception`
+This repository is suitable as:
 
-drone_perception 是感知识别包，主要负责“看到了什么、识别到了什么”。
+- A ROS 2 workspace source tree
+- A development and analysis workspace for the onboard system
+- A software integration base for an intelligent warehouse drone project
 
+The actual runtime environment is typically a Linux-based onboard device, while the current Windows copy can be used for reading, organizing, analyzing, and editing the code.
 
+## Intended Audience
 
-## 3.6 `drone_qt`
+This project is useful for work involving:
 
-作用概述
-
-drone_qt 主要负责Qt 地面端界面程序。
-
-
-## 3.7 `drone_warehouse`
-
-作用概述
-
-drone_warehouse 主要负责智能仓储地面站程序。
-
-
-## 3.8 `drone_qt_2`
-
-drone_qt_2 主要负责Qt 机载端程序。
-
----
-
-## 4. 当前职责分层
-
-启动层
-
-- drone_bringup
-
-控制层
-
-- drone_control
-
-定位层
-
-- drone_localization
-
-感知层
-
-- drone_perception
-
-接口层
-
-- drone_msgs
-
-地面站界面层
-
-- drone_qt
-- drone_warehouse
-
-机载端中转层
-
-- drone_qt_2
-- drone_mission
+- Intelligent warehouse drone development
+- ROS 2 multi-package integration
+- LiDAR localization and flight-controller integration
+- Joint development of onboard perception and mission systems
