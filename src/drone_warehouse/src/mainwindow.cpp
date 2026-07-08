@@ -27,6 +27,10 @@
 #include <stdexcept>
 #include <QProcess>
 #include <QStringList>
+#include <QCoreApplication>
+#include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
