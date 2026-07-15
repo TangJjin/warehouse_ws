@@ -16,7 +16,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
 
     - type: "move"
       frame: "world_body"
@@ -29,7 +29,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
 
     - type: "move"
       frame: "world_body"
@@ -42,7 +42,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -56,7 +56,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -70,7 +70,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -84,7 +84,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -98,7 +98,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -112,7 +112,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -126,7 +126,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
 
     - type: "move"
@@ -140,7 +140,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
 
     - type: "move"
       frame: "world_body"
@@ -153,7 +153,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
 
     - type: "move"
       frame: "world_body"
@@ -166,7 +166,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
 
     - type: "hover"
       duration: 1.00
@@ -182,7 +182,7 @@ system:
   camera_aim_stable_cycles: 15
   camera_aim_max_step: 0.05
   camera_aim_wait_first_targets_timeout_s: 8.00
-  camera_aim_no_target_confirm_s: 3.00
+  camera_aim_no_target_confirm_s: 2.00
   camera_aim_record_result_timeout_s: 10.00
   camera_aim_scan_point_timeout_s: 30.00
   auto_start_mission: false

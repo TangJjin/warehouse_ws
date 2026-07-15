@@ -45,7 +45,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -59,7 +59,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -73,7 +73,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       ########################################
     - type: "move"
@@ -87,7 +87,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -101,7 +101,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -115,7 +115,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       ########################################
     - type: "move"
@@ -129,7 +129,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -143,7 +143,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -157,7 +157,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       ########################################
     - type: "move"
@@ -171,7 +171,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -185,7 +185,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       
     - type: "move"
@@ -199,7 +199,7 @@ mission:
       max_yaw_rate_deg_s: 18.0
 
     - type: "hover"
-      duration: 3.00
+      duration: 2.00
       vision_hover: true
       ########################################
       
@@ -232,16 +232,6 @@ mission:
     - type: "move"
       frame: "world_body"
       position: [0.00, 0.00, 0.70]
-      yaw: 0.00
-      tolerance: 0.10
-      yaw_tolerance_deg: 2.0
-      max_xy_speed_mps: 0.30
-      max_xy_speed_mps: 0.40
-      max_yaw_rate_deg_s: 40.0
-      
-    - type: "move"
-      frame: "world_body"
-      position: [0.00, 0.00, 0.00]
       yaw: 0.00
       tolerance: 0.10
       yaw_tolerance_deg: 2.0
