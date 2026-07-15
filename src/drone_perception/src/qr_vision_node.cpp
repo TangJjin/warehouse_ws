@@ -26,7 +26,6 @@ namespace
 using SteadyClock = std::chrono::steady_clock;
 static constexpr int kBpuInputWidthPx = 640;
 static constexpr int kBpuInputHeightPx = 640;
-static constexpr int kDefaultSampleRadiusPx = 10;
 static constexpr int kDefaultShelfCodeStableFrames = 3;
 static constexpr int kDefaultShelfCodeLostToleranceFrames = 2;
 static constexpr int kDefaultBarcodeCaptureJpegQuality = 90;
@@ -318,13 +317,10 @@ QrVisionNode::QrVisionNode()
 
   RCLCPP_INFO(
       get_logger(),
-      "QR D435i video stream ready. mode=%s qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s depth=%s rgbd=%s camera_info=%s",
-      use_rgbd_ ? "rgbd" : "synced",
+      "RGB BPU video stream ready. mode=color qr_decode=true yolo_bpu=%s ocr_rec_bpu=%s color=%s camera_info=%s",
       enable_bpu_ ? "true" : "false",
       enable_bpu_ocr_ ? "true" : "false",
       color_topic_.c_str(),
-      depth_topic_.c_str(),
-      rgbd_topic_.c_str(),
       camera_info_topic_.c_str());
 }
 
@@ -342,12 +338,8 @@ void QrVisionNode::declareParameters()
 {
   color_topic_ = this->declare_parameter<std::string>(
       "color_topic", "/camera/camera/color/image_raw");
-  depth_topic_ = this->declare_parameter<std::string>(
-      "depth_topic", "/camera/camera/aligned_depth_to_color/image_raw");
   camera_info_topic_ = this->declare_parameter<std::string>(
       "camera_info_topic", "/camera/camera/color/camera_info");
-  rgbd_topic_ = this->declare_parameter<std::string>(
-      "rgbd_topic", "/camera/camera/rgbd");
   window_name_ = this->declare_parameter<std::string>(
       "window_name", "QR D435i View");
   debug_view_ = this->declare_parameter<bool>("debug_view", true);
@@ -372,11 +364,7 @@ void QrVisionNode::declareParameters()
   hover_active_topic_ = this->declare_parameter<std::string>(
       "hover_active_topic",
       kDefaultHoverActiveTopic);
-  use_rgbd_ = this->declare_parameter<bool>("use_rgbd", false);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
-  sample_radius_px_ = this->declare_parameter<int>(
-      "sample_radius_px",
-      kDefaultSampleRadiusPx);
   shelf_code_stable_frames_ = this->declare_parameter<int>(
       "shelf_code_stable_frames",
       kDefaultShelfCodeStableFrames);
@@ -429,15 +417,6 @@ void QrVisionNode::declareParameters()
         get_logger(),
         "camera_controls_update_period_ms must be at least 30, reset to 200");
     camera_controls_update_period_ms_ = 200;
-  }
-
-  if (sample_radius_px_ < 0)
-  {
-    RCLCPP_WARN(
-        get_logger(),
-        "sample_radius_px must be greater than or equal to 0, reset to %d",
-        kDefaultSampleRadiusPx);
-    sample_radius_px_ = kDefaultSampleRadiusPx;
   }
 
   if (shelf_code_stable_frames_ <= 0)
@@ -1360,34 +1339,13 @@ void QrVisionNode::initializeSubscriptions()
           this,
           std::placeholders::_1));
 
-  if (use_rgbd_) {
-    rgbd_sub_ = this->create_subscription<realsense2_camera_msgs::msg::RGBD>(
-        rgbd_topic_,
-        rclcpp::SensorDataQoS(),
-        std::bind(
-            &QrVisionNode::handleRgbdFrame,
-            this,
-            std::placeholders::_1));
-
-    RCLCPP_INFO(
-        get_logger(),
-        "Using RGBD input. rgbd=%s",
-        rgbd_topic_.c_str());
-    return;
-  }
-
-  color_sub_.subscribe(this, color_topic_, rmw_qos_profile_sensor_data);
-  depth_sub_.subscribe(this, depth_topic_, rmw_qos_profile_sensor_data);
-
-  color_depth_sync_ = std::make_shared<message_filters::Synchronizer<ColorDepthSyncPolicy>>(
-      ColorDepthSyncPolicy(10),
-      color_sub_,
-      depth_sub_);
-  color_depth_sync_->registerCallback(std::bind(
-      &QrVisionNode::handleSyncedFrame,
-      this,
-      std::placeholders::_1,
-      std::placeholders::_2));
+  color_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
+      color_topic_,
+      rclcpp::SensorDataQoS(),
+      std::bind(
+          &QrVisionNode::handleColorFrame,
+          this,
+          std::placeholders::_1));
 
   camera_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
       camera_info_topic_,
@@ -1399,9 +1357,8 @@ void QrVisionNode::initializeSubscriptions()
 
   RCLCPP_INFO(
       get_logger(),
-      "Using synced image input. color=%s depth=%s camera_info=%s",
+      "Using color-only image input. color=%s camera_info=%s",
       color_topic_.c_str(),
-      depth_topic_.c_str(),
       camera_info_topic_.c_str());
 }
 
@@ -1427,19 +1384,16 @@ void QrVisionNode::updateFps()
   last_frame_time_ = current_frame_time;
 }
 
-void QrVisionNode::handleSyncedFrame(
-    const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
-    const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg)
+void QrVisionNode::handleColorFrame(
+    const sensor_msgs::msg::Image::ConstSharedPtr &color_msg)
 {
   const auto callback_t0 = SteadyClock::now();
 
   cv_bridge::CvImageConstPtr color_bridge;
-  cv_bridge::CvImageConstPtr depth_bridge;
 
   try
   {
     color_bridge = cv_bridge::toCvShare(color_msg, "bgr8");
-    depth_bridge = cv_bridge::toCvShare(depth_msg);
   }
   catch (const cv_bridge::Exception &ex)
   {
@@ -1447,72 +1401,25 @@ void QrVisionNode::handleSyncedFrame(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "cv_bridge synced conversion failed: %s",
+        "cv_bridge color conversion failed: %s",
         ex.what());
     return;
   }
 
-  processFrame(color_bridge, depth_bridge, callback_t0, "synced");
-}
-
-void QrVisionNode::handleRgbdFrame(
-    const realsense2_camera_msgs::msg::RGBD::ConstSharedPtr &rgbd_msg)
-{
-  const auto callback_t0 = SteadyClock::now();
-
-  cv_bridge::CvImageConstPtr color_bridge;
-  cv_bridge::CvImageConstPtr depth_bridge;
-
-  try
-  {
-    color_bridge = cv_bridge::toCvShare(rgbd_msg->rgb, rgbd_msg, "bgr8");
-    depth_bridge = cv_bridge::toCvShare(rgbd_msg->depth, rgbd_msg);
-  }
-  catch (const cv_bridge::Exception &ex)
-  {
-    RCLCPP_ERROR_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "cv_bridge RGBD conversion failed: %s",
-        ex.what());
-    return;
-  }
-
-  has_camera_info_ = true;
-  processFrame(color_bridge, depth_bridge, callback_t0, "rgbd");
+  processFrame(color_bridge, callback_t0, "color");
 }
 
 void QrVisionNode::processFrame(
     const cv_bridge::CvImageConstPtr &color_bridge,
-    const cv_bridge::CvImageConstPtr &depth_bridge,
     const std::chrono::steady_clock::time_point &callback_t0,
     const char *input_mode)
 {
-  if (color_bridge->image.cols != depth_bridge->image.cols ||
-      color_bridge->image.rows != depth_bridge->image.rows)
+  if (!color_bridge || color_bridge->image.empty())
   {
-    RCLCPP_WARN_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "Color and depth image sizes do not match: color=%dx%d depth=%dx%d",
-        color_bridge->image.cols,
-        color_bridge->image.rows,
-        depth_bridge->image.cols,
-        depth_bridge->image.rows);
     return;
   }
 
   updateFps();
-
-  const int center_u = color_bridge->image.cols / 2;
-  const int center_v = color_bridge->image.rows / 2;
-  const DepthSampleResult center_depth = depth_processor_.sampleAt(
-      depth_bridge->image,
-      center_u,
-      center_v,
-      sample_radius_px_);
 
 #if DRONE_PERCEPTION_HAS_BPU
   last_bpu_detections_.clear();
@@ -1614,48 +1521,26 @@ void QrVisionNode::processFrame(
 
   if (debug_view_)
   {
-    displayDebugFrame(color_bridge->image, center_depth);
+    displayDebugFrame(color_bridge->image);
   }
 
   const auto callback_t1 = SteadyClock::now();
-  if (center_depth.has_valid_depth)
-  {
-    RCLCPP_INFO_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "video stream mode=%s fps=%.1f size=%dx%d center_depth=%.3fm camera_info=%s "
-        "callback_ms=%.2f debug_view=%s",
-        input_mode,
-        smoothed_fps_,
-        color_bridge->image.cols,
-        color_bridge->image.rows,
-        center_depth.depth_m,
-        has_camera_info_ ? "true" : "false",
-        elapsedMs(callback_t0, callback_t1),
-        debug_view_ ? "true" : "false");
-  }
-  else
-  {
-    RCLCPP_INFO_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        log_throttle_ms_,
-        "video stream mode=%s fps=%.1f size=%dx%d center_depth=invalid camera_info=%s "
-        "callback_ms=%.2f debug_view=%s",
-        input_mode,
-        smoothed_fps_,
-        color_bridge->image.cols,
-        color_bridge->image.rows,
-        has_camera_info_ ? "true" : "false",
-        elapsedMs(callback_t0, callback_t1),
-        debug_view_ ? "true" : "false");
-  }
+  RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      log_throttle_ms_,
+      "video stream mode=%s fps=%.1f size=%dx%d camera_info=%s "
+      "callback_ms=%.2f debug_view=%s",
+      input_mode,
+      smoothed_fps_,
+      color_bridge->image.cols,
+      color_bridge->image.rows,
+      has_camera_info_ ? "true" : "false",
+      elapsedMs(callback_t0, callback_t1),
+      debug_view_ ? "true" : "false");
 }
 
-void QrVisionNode::displayDebugFrame(
-    const cv::Mat &color_image,
-    const DepthSampleResult &center_depth)
+void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
 {
   cv::Mat display = color_image.clone();
 
@@ -1686,17 +1571,6 @@ void QrVisionNode::displayDebugFrame(
       0.55,
       cv::Scalar(255, 255, 255),
       1);
-  cv::putText(
-      display,
-      center_depth.has_valid_depth
-        ? std::string(cv::format("Center depth: %.3fm", center_depth.depth_m))
-        : std::string("Center depth: invalid"),
-      cv::Point(24, 82),
-      cv::FONT_HERSHEY_SIMPLEX,
-      0.55,
-      cv::Scalar(180, 255, 180),
-      1);
-
   auto fit_status_text = [](std::string text) {
     static constexpr std::size_t kMaxStatusTextLength = 58U;
 

@@ -15,8 +15,6 @@ find_package(geometry_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_geometry REQUIRED)
-find_package(message_filters REQUIRED)
-find_package(realsense2_camera_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 pkg_check_modules(ZBAR REQUIRED zbar)
@@ -80,7 +78,6 @@ install(PROGRAMS
 add_executable(qr_vision_node
   src/main.cpp
   src/qr_vision_node.cpp
-  src/depth_processor.cpp
 )
 
 target_compile_features(qr_vision_node PUBLIC cxx_std_17)
@@ -110,11 +107,8 @@ target_compile_options(qr_vision_node
 ament_target_dependencies(qr_vision_node
   cv_bridge
   drone_msgs
-  image_geometry
-  message_filters
   rcl_interfaces
   rclcpp
-  realsense2_camera_msgs
   sensor_msgs
   std_msgs
 )
@@ -123,43 +117,6 @@ install(TARGETS
   qr_vision_node
   DESTINATION lib/${PROJECT_NAME}
 )
-
-# ── optional standalone RKNN detector library ─────────────
-set(RKNN_INCLUDE $ENV{RKNN_INCLUDE})
-set(RKNN_LIB $ENV{RKNN_LIB})
-set(RKNN_RUNTIME_SO "${RKNN_LIB}/librknnrt.so")
-
-if(RKNN_INCLUDE AND RKNN_LIB AND EXISTS "${RKNN_RUNTIME_SO}")
-  add_library(rknn_yolo_detector STATIC
-    src/rknn_yolo_detector.cpp
-    src/yolo_postprocessor.cpp
-  )
-
-  target_compile_features(rknn_yolo_detector PUBLIC cxx_std_17)
-
-  target_include_directories(rknn_yolo_detector
-    PRIVATE
-    include
-    ${OpenCV_INCLUDE_DIRS}
-    ${RKNN_INCLUDE}
-  )
-
-  target_link_libraries(rknn_yolo_detector
-    ${OpenCV_LIBS}
-    ${RKNN_RUNTIME_SO}
-  )
-
-  install(TARGETS
-    rknn_yolo_detector
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-  )
-else()
-  message(STATUS
-    "Skipping standalone RKNN detector library because RKNN runtime is unavailable. "
-    "Set RKNN_INCLUDE and RKNN_LIB so that ${RKNN_RUNTIME_SO} exists to enable it.")
-endif()
 
 # ── optional RDK X5 BPU model probe ──────────────────────
 find_path(RDK_DNN_INCLUDE_DIR

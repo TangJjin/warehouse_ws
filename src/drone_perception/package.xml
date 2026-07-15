@@ -2,7 +2,7 @@
 <package format="3">
   <name>drone_perception</name>
   <version>0.0.2</version>
-  <description>Drone perception: TCP bridge for K230 camera, YOLO detection with D435i depth.</description>
+  <description>Drone perception: RGB BPU detection and TCP/UART bridges for K230 cameras.</description>
   <maintainer email="gjl@example.com">gjl</maintainer>
   <license>MIT</license>
 
@@ -14,9 +14,7 @@
   <depend>drone_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>image_geometry</depend>
-  <depend>message_filters</depend>
   <depend>rcl_interfaces</depend>
-  <depend>realsense2_camera_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>zbar</depend>
 

@@ -12,22 +12,17 @@
 #include <opencv2/core/types.hpp>
 #include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
-#include <message_filters/subscriber.h>
-#include <message_filters/sync_policies/approximate_time.h>
-#include <message_filters/synchronizer.h>
 #include <opencv2/core/mat.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
 #include <rclcpp/time.hpp>
-#include <realsense2_camera_msgs/msg/rgbd.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/bool.hpp>
 
 #include "drone_msgs/msg/barcode_capture.hpp"
-#include "drone_perception/depth_processor.hpp"
 
 #ifndef DRONE_PERCEPTION_HAS_BPU
 #define DRONE_PERCEPTION_HAS_BPU 0
@@ -130,11 +125,6 @@ private:
   static constexpr std::size_t kCameraNumericControlCount = 3U;
   static constexpr std::size_t kCameraBoolControlCount = 3U;
 
-  typedef message_filters::sync_policies::ApproximateTime<
-      sensor_msgs::msg::Image,
-      sensor_msgs::msg::Image>
-      ColorDepthSyncPolicy;
-
   void declareParameters();
 
   void initializeSubscriptions();
@@ -169,25 +159,18 @@ private:
       CodeStabilityState &state,
       const char *source_name);
 
-  void handleSyncedFrame(
-      const sensor_msgs::msg::Image::ConstSharedPtr &color_msg,
-      const sensor_msgs::msg::Image::ConstSharedPtr &depth_msg);
-
-  void handleRgbdFrame(
-      const realsense2_camera_msgs::msg::RGBD::ConstSharedPtr &rgbd_msg);
+  void handleColorFrame(
+      const sensor_msgs::msg::Image::ConstSharedPtr &color_msg);
 
   void processFrame(
       const cv_bridge::CvImageConstPtr &color_bridge,
-      const cv_bridge::CvImageConstPtr &depth_bridge,
       const std::chrono::steady_clock::time_point &callback_t0,
       const char *input_mode);
 
   void handleCameraInfo(
       const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg);
 
-  void displayDebugFrame(
-      const cv::Mat &color_image,
-      const DepthSampleResult &center_depth);
+  void displayDebugFrame(const cv::Mat &color_image);
 
   void initializeCameraControls();
 
@@ -286,9 +269,7 @@ private:
   void updateFps();
 
   std::string color_topic_;
-  std::string depth_topic_;
   std::string camera_info_topic_;
-  std::string rgbd_topic_;
   std::string window_name_;
   std::string camera_param_node_;
   std::string barcode_capture_topic_;
@@ -303,7 +284,6 @@ private:
   bool debug_view_ = true;
   bool enable_bpu_ = false;
   bool enable_bpu_ocr_ = false;
-  bool use_rgbd_ = false;
   bool qr_preprocess_enabled_ = true;
   bool hover_active_ = false;
   bool full_capture_sent_in_hover_ = false;
@@ -319,7 +299,6 @@ private:
   bool camera_param_set_in_flight_ = false;
   int log_throttle_ms_ = 500;
   int camera_controls_update_period_ms_ = 200;
-  int sample_radius_px_ = 10;
   int shelf_code_stable_frames_ = 3;
   int shelf_code_lost_tolerance_frames_ = 2;
   int barcode_capture_jpeg_quality_ = 90;
@@ -336,8 +315,6 @@ private:
   CodeStabilityState shelf_code_state_;
   CodeStabilityState sku_code_state_;
   CodeStabilityState pkg_code_state_;
-
-  DepthProcessor depth_processor_;
 
   rclcpp::AsyncParametersClient::SharedPtr camera_param_client_;
   rclcpp::TimerBase::SharedPtr camera_controls_timer_;
@@ -365,11 +342,8 @@ private:
 
   bool has_camera_info_ = false;
 
-  message_filters::Subscriber<sensor_msgs::msg::Image> color_sub_;
-  message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
-  std::shared_ptr<message_filters::Synchronizer<ColorDepthSyncPolicy>> color_depth_sync_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr color_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
-  rclcpp::Subscription<realsense2_camera_msgs::msg::RGBD>::SharedPtr rgbd_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr hover_active_sub_;
   rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_capture_pub_;
 };
