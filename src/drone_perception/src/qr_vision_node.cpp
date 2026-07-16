@@ -334,6 +334,32 @@ QrVisionNode::~QrVisionNode()
   }
 }
 
+void QrVisionNode::TimingWindow::push(double value)
+{
+  if (value < 0.0) {
+    return;
+  }
+
+  samples.push_back(value);
+  if (samples.size() > kCapacity) {
+    samples.pop_front();
+  }
+}
+
+double QrVisionNode::TimingWindow::percentile(double ratio) const
+{
+  if (samples.empty()) {
+    return 0.0;
+  }
+
+  std::vector<double> sorted(samples.begin(), samples.end());
+  std::sort(sorted.begin(), sorted.end());
+  const double clamped_ratio = std::clamp(ratio, 0.0, 1.0);
+  const std::size_t index = static_cast<std::size_t>(
+      std::ceil(clamped_ratio * static_cast<double>(sorted.size()))) - 1U;
+  return sorted[std::min(index, sorted.size() - 1U)];
+}
+
 void QrVisionNode::declareParameters()
 {
   color_topic_ = this->declare_parameter<std::string>(
@@ -575,6 +601,9 @@ void QrVisionNode::initializeBpuOcrPipeline()
 
 bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
 {
+  bpu_preprocess_timing_ = {};
+  const auto total_t0 = SteadyClock::now();
+
   if (color_image.empty()) {
     RCLCPP_WARN_THROTTLE(
         get_logger(),
@@ -611,6 +640,7 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
     const int pad_x = (kBpuInputWidthPx - resized_width) / 2;
     const int pad_y = (kBpuInputHeightPx - resized_height) / 2;
 
+    const auto resize_t0 = SteadyClock::now();
     cv::Mat resized_bgr;
     cv::resize(
         color_image,
@@ -619,7 +649,10 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
         0.0,
         0.0,
         cv::INTER_LINEAR);
+    const auto resize_t1 = SteadyClock::now();
+    bpu_preprocess_timing_.resize_ms = elapsedMs(resize_t0, resize_t1);
 
+    const auto letterbox_t0 = SteadyClock::now();
     cv::Mat letterbox_bgr(
         kBpuInputHeightPx,
         kBpuInputWidthPx,
@@ -630,18 +663,25 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
         pad_y,
         resized_width,
         resized_height)));
+    const auto letterbox_t1 = SteadyClock::now();
+    bpu_preprocess_timing_.letterbox_ms = elapsedMs(letterbox_t0, letterbox_t1);
 
     bpu_letterbox_.scale = scale;
     bpu_letterbox_.pad_x = pad_x;
     bpu_letterbox_.pad_y = pad_y;
 
+    const auto color_convert_t0 = SteadyClock::now();
     cv::Mat yuv_i420;
     cv::cvtColor(letterbox_bgr, yuv_i420, cv::COLOR_BGR2YUV_I420);
 
     if (!yuv_i420.isContinuous()) {
       yuv_i420 = yuv_i420.clone();
     }
+    const auto color_convert_t1 = SteadyClock::now();
+    bpu_preprocess_timing_.color_convert_ms =
+        elapsedMs(color_convert_t0, color_convert_t1);
 
+    const auto nv12_pack_t0 = SteadyClock::now();
     bpu_input_nv12_.resize(kBpuInputNv12Size);
 
     const uint8_t *y_plane = yuv_i420.ptr<uint8_t>(0);
@@ -657,6 +697,8 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
       uv_plane[i * 2] = u_plane[i];
       uv_plane[i * 2 + 1] = v_plane[i];
     }
+    const auto nv12_pack_t1 = SteadyClock::now();
+    bpu_preprocess_timing_.nv12_pack_ms = elapsedMs(nv12_pack_t0, nv12_pack_t1);
   } catch (const cv::Exception &e) {
     RCLCPP_ERROR_THROTTLE(
         get_logger(),
@@ -668,6 +710,7 @@ bool QrVisionNode::prepareBpuInput(const cv::Mat &color_image)
     return false;
   }
 
+  bpu_preprocess_timing_.total_ms = elapsedMs(total_t0, SteadyClock::now());
   return true;
 }
 
@@ -908,6 +951,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     const cv::Mat &color_image,
     const std::vector<BpuYoloDetection> &detections)
 {
+  visual_code_timing_ = {};
   std::vector<DecodedVisualCode> decoded_codes;
   debug_qr_preprocess_preview_.release();
   debug_qr_preprocess_mode_.clear();
@@ -959,12 +1003,16 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       continue;
     }
 
+    ++visual_code_timing_.roi_count;
+    const auto gray_t0 = SteadyClock::now();
     cv::Mat raw_gray_roi;
     cv::cvtColor(color_image(roi), raw_gray_roi, cv::COLOR_BGR2GRAY);
 
     if (!raw_gray_roi.isContinuous()) {
       raw_gray_roi = raw_gray_roi.clone();
     }
+    const auto gray_t1 = SteadyClock::now();
+    visual_code_timing_.gray_ms += elapsedMs(gray_t0, gray_t1);
 
     auto scan_gray_roi = [&](
         const cv::Mat &scan_roi,
@@ -986,7 +1034,21 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
           continuous_roi.data,
           static_cast<unsigned long>(continuous_roi.total()));
 
+      const auto scan_t0 = SteadyClock::now();
       const int raw_count = scanner.scan(zbar_image);
+      const auto scan_t1 = SteadyClock::now();
+      const double scan_ms = elapsedMs(scan_t0, scan_t1);
+
+      if (std::strcmp(scan_mode, "raw_gray") == 0) {
+        visual_code_timing_.raw_zbar_ms += scan_ms;
+        ++visual_code_timing_.raw_scan_count;
+      } else if (std::strcmp(scan_mode, "clahe_gray") == 0) {
+        visual_code_timing_.clahe_zbar_ms += scan_ms;
+        ++visual_code_timing_.clahe_scan_count;
+      } else if (std::strcmp(scan_mode, "adaptive_binary") == 0) {
+        visual_code_timing_.adaptive_zbar_ms += scan_ms;
+        ++visual_code_timing_.adaptive_scan_count;
+      }
       VisualCodeScanStats stats{};
       stats.symbol_count = raw_count;
 
@@ -1081,9 +1143,12 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     }
 
     try {
+      const auto clahe_t0 = SteadyClock::now();
       cv::Mat clahe_roi;
       cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
       clahe->apply(raw_gray_roi, clahe_roi);
+      const auto clahe_t1 = SteadyClock::now();
+      visual_code_timing_.clahe_ms += elapsedMs(clahe_t0, clahe_t1);
 
       scan_stats = scan_gray_roi(clahe_roi, 1.0F, "clahe_gray");
 
@@ -1099,6 +1164,7 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
       }
 
       if (adaptive_block_size_px >= 3) {
+        const auto adaptive_t0 = SteadyClock::now();
         cv::Mat adaptive_binary_roi;
         cv::adaptiveThreshold(
             clahe_roi,
@@ -1108,6 +1174,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
             cv::THRESH_BINARY,
             adaptive_block_size_px,
             kQrAdaptiveThresholdOffset);
+        const auto adaptive_t1 = SteadyClock::now();
+        visual_code_timing_.adaptive_ms += elapsedMs(adaptive_t0, adaptive_t1);
         (void)scan_gray_roi(adaptive_binary_roi, 1.0F, "adaptive_binary");
       }
     } catch (const cv::Exception &e) {
@@ -1384,10 +1452,129 @@ void QrVisionNode::updateFps()
   last_frame_time_ = current_frame_time;
 }
 
+void QrVisionNode::reportPerformanceBaseline()
+{
+#if DRONE_PERCEPTION_HAS_BPU
+  if (!enable_bpu_) {
+    return;
+  }
+
+  const auto now = SteadyClock::now();
+  if (baseline_report_time_.time_since_epoch().count() == 0) {
+    baseline_report_time_ = now;
+    baseline_last_input_count_ = input_frame_count_;
+    baseline_last_processed_count_ = processed_frame_count_;
+    baseline_last_failed_count_ = failed_frame_count_;
+    return;
+  }
+
+  const double interval_s =
+      std::chrono::duration<double>(now - baseline_report_time_).count();
+  if (interval_s < 1.0) {
+    return;
+  }
+
+  const std::uint64_t input_delta = input_frame_count_ - baseline_last_input_count_;
+  const std::uint64_t process_delta =
+      processed_frame_count_ - baseline_last_processed_count_;
+  const std::uint64_t failed_delta = failed_frame_count_ - baseline_last_failed_count_;
+
+  BpuYoloDetector::InferenceTimingStats infer_timing{};
+  if (bpu_detector_) {
+    infer_timing = bpu_detector_->lastTiming();
+  }
+
+  OcrTimingStats ocr_timing{};
+  if (ocr_invoked_this_frame_ && bpu_ocr_pipeline_) {
+    ocr_timing = bpu_ocr_pipeline_->lastTiming();
+  }
+
+  RCLCPP_INFO(
+      get_logger(),
+      "BPU_BASELINE input_fps=%.2f process_fps=%.2f failed=%llu "
+      "drop=NA(sync_no_queue) frame_age_ms[p50=%.2f p95=%.2f last=%.2f] "
+      "callback_ms[p50=%.2f p95=%.2f last=%.2f] "
+      "pre_ms[resize=%.2f letterbox=%.2f color=%.2f nv12=%.2f total=%.2f] "
+      "bpu_ms[memcpy=%.2f clean=%.2f submit=%.2f wait=%.2f release=%.2f "
+      "invalidate=%.2f candidate=%.2f dfl=%.2f nms=%.2f total=%.2f] "
+      "det_count[raw=%zu decoded=%zu final=%zu] "
+      "qr[count=%d/%d/%d roi=%d gray=%.2f raw=%.2f clahe=%.2f+%.2f "
+      "adaptive=%.2f+%.2f] "
+      "ocr[invoked=%d boxes=%d crop=%.2f pre=%.2f infer=%.2f decode=%.2f total=%.2f]",
+      static_cast<double>(input_delta) / interval_s,
+      static_cast<double>(process_delta) / interval_s,
+      static_cast<unsigned long long>(failed_delta),
+      frame_age_window_.percentile(0.50),
+      frame_age_window_.percentile(0.95),
+      last_frame_age_ms_,
+      callback_window_.percentile(0.50),
+      callback_window_.percentile(0.95),
+      last_callback_ms_,
+      bpu_preprocess_timing_.resize_ms,
+      bpu_preprocess_timing_.letterbox_ms,
+      bpu_preprocess_timing_.color_convert_ms,
+      bpu_preprocess_timing_.nv12_pack_ms,
+      bpu_preprocess_timing_.total_ms,
+      infer_timing.input_memcpy_ms,
+      infer_timing.input_cache_clean_ms,
+      infer_timing.submit_ms,
+      infer_timing.wait_ms,
+      infer_timing.release_ms,
+      infer_timing.output_invalidate_ms,
+      infer_timing.candidate_ms,
+      infer_timing.dfl_decode_ms,
+      infer_timing.nms_ms,
+      infer_timing.total_ms,
+      infer_timing.raw_candidate_count,
+      infer_timing.decoded_detection_count,
+      infer_timing.final_detection_count,
+      visual_code_timing_.raw_scan_count,
+      visual_code_timing_.clahe_scan_count,
+      visual_code_timing_.adaptive_scan_count,
+      visual_code_timing_.roi_count,
+      visual_code_timing_.gray_ms,
+      visual_code_timing_.raw_zbar_ms,
+      visual_code_timing_.clahe_ms,
+      visual_code_timing_.clahe_zbar_ms,
+      visual_code_timing_.adaptive_ms,
+      visual_code_timing_.adaptive_zbar_ms,
+      ocr_invoked_this_frame_ ? 1 : 0,
+      ocr_timing.rec_box_count,
+      ocr_timing.rec_crop_ms,
+      ocr_timing.rec_preprocess_ms,
+      ocr_timing.rec_infer_ms,
+      ocr_timing.rec_decode_ms,
+      ocr_timing.rec_total_ms);
+
+  baseline_report_time_ = now;
+  baseline_last_input_count_ = input_frame_count_;
+  baseline_last_processed_count_ = processed_frame_count_;
+  baseline_last_failed_count_ = failed_frame_count_;
+#endif
+}
+
 void QrVisionNode::handleColorFrame(
     const sensor_msgs::msg::Image::ConstSharedPtr &color_msg)
 {
   const auto callback_t0 = SteadyClock::now();
+  ++input_frame_count_;
+
+  last_frame_age_ms_ = -1.0;
+  if (color_msg &&
+      (color_msg->header.stamp.sec != 0 || color_msg->header.stamp.nanosec != 0)) {
+    try {
+      const rclcpp::Time stamp(
+          color_msg->header.stamp,
+          get_clock()->get_clock_type());
+      const double frame_age_ms = (this->now() - stamp).seconds() * 1000.0;
+      if (frame_age_ms >= 0.0) {
+        last_frame_age_ms_ = frame_age_ms;
+        frame_age_window_.push(frame_age_ms);
+      }
+    } catch (const std::exception &) {
+      last_frame_age_ms_ = -1.0;
+    }
+  }
 
   cv_bridge::CvImageConstPtr color_bridge;
 
@@ -1397,6 +1584,10 @@ void QrVisionNode::handleColorFrame(
   }
   catch (const cv_bridge::Exception &ex)
   {
+    ++failed_frame_count_;
+    last_callback_ms_ = elapsedMs(callback_t0, SteadyClock::now());
+    callback_window_.push(last_callback_ms_);
+    reportPerformanceBaseline();
     RCLCPP_ERROR_THROTTLE(
         get_logger(),
         *get_clock(),
@@ -1422,6 +1613,9 @@ void QrVisionNode::processFrame(
   updateFps();
 
 #if DRONE_PERCEPTION_HAS_BPU
+  bool bpu_inference_succeeded = false;
+  ocr_invoked_this_frame_ = false;
+  visual_code_timing_ = {};
   last_bpu_detections_.clear();
 
   if (enable_bpu_ && bpu_detector_) {
@@ -1437,6 +1631,7 @@ void QrVisionNode::processFrame(
             bpu_input_nv12_.data(),
             bpu_input_nv12_.size());
         last_bpu_detections_ = detections;
+        bpu_inference_succeeded = true;
 
         const auto infer_t1 = SteadyClock::now();
         int qrcode_count = 0;
@@ -1525,6 +1720,18 @@ void QrVisionNode::processFrame(
   }
 
   const auto callback_t1 = SteadyClock::now();
+  last_callback_ms_ = elapsedMs(callback_t0, callback_t1);
+  callback_window_.push(last_callback_ms_);
+#if DRONE_PERCEPTION_HAS_BPU
+  if (enable_bpu_) {
+    if (bpu_inference_succeeded) {
+      ++processed_frame_count_;
+    } else {
+      ++failed_frame_count_;
+    }
+  }
+#endif
+  reportPerformanceBaseline();
   RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
@@ -1536,7 +1743,7 @@ void QrVisionNode::processFrame(
       color_bridge->image.cols,
       color_bridge->image.rows,
       has_camera_info_ ? "true" : "false",
-      elapsedMs(callback_t0, callback_t1),
+      last_callback_ms_,
       debug_view_ ? "true" : "false");
 }
 
@@ -2716,6 +2923,7 @@ void QrVisionNode::recognizeShelfTagFromDetections(
       cv::Point2f(padded_rect.x_max, padded_rect.y_max),
       cv::Point2f(padded_rect.x_min, padded_rect.y_max)};
 
+  ocr_invoked_this_frame_ = true;
   last_ocr_regions_ = bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
 
   std::vector<DecodedVisualCode> ocr_codes;

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,6 +73,38 @@ private:
     float scale{1.0F};
     int pad_x{0};
     int pad_y{0};
+  };
+
+  struct BpuPreprocessTimingStats
+  {
+    double resize_ms{0.0};
+    double letterbox_ms{0.0};
+    double color_convert_ms{0.0};
+    double nv12_pack_ms{0.0};
+    double total_ms{0.0};
+  };
+
+  struct VisualCodeTimingStats
+  {
+    double gray_ms{0.0};
+    double raw_zbar_ms{0.0};
+    double clahe_ms{0.0};
+    double clahe_zbar_ms{0.0};
+    double adaptive_ms{0.0};
+    double adaptive_zbar_ms{0.0};
+    int roi_count{0};
+    int raw_scan_count{0};
+    int clahe_scan_count{0};
+    int adaptive_scan_count{0};
+  };
+
+  struct TimingWindow
+  {
+    void push(double value);
+    double percentile(double ratio) const;
+
+    static constexpr std::size_t kCapacity = 120U;
+    std::deque<double> samples;
   };
 
   struct CaptureFrameCandidate
@@ -268,6 +301,8 @@ private:
 
   void updateFps();
 
+  void reportPerformanceBaseline();
+
   std::string color_topic_;
   std::string camera_info_topic_;
   std::string window_name_;
@@ -280,6 +315,8 @@ private:
 
   std::vector<uint8_t> bpu_input_nv12_;
   BpuLetterboxState bpu_letterbox_;
+  BpuPreprocessTimingStats bpu_preprocess_timing_;
+  VisualCodeTimingStats visual_code_timing_;
 
   bool debug_view_ = true;
   bool enable_bpu_ = false;
@@ -310,6 +347,17 @@ private:
 
   rclcpp::Time last_frame_time_;
   double smoothed_fps_ = 0.0;
+  double last_frame_age_ms_ = -1.0;
+  double last_callback_ms_ = 0.0;
+  std::chrono::steady_clock::time_point baseline_report_time_{};
+  std::uint64_t input_frame_count_{0U};
+  std::uint64_t processed_frame_count_{0U};
+  std::uint64_t failed_frame_count_{0U};
+  std::uint64_t baseline_last_input_count_{0U};
+  std::uint64_t baseline_last_processed_count_{0U};
+  std::uint64_t baseline_last_failed_count_{0U};
+  TimingWindow frame_age_window_;
+  TimingWindow callback_window_;
   std::string last_published_package_barcode_;
 
   CodeStabilityState shelf_code_state_;
@@ -338,6 +386,7 @@ private:
   rclcpp::Time hover_capture_start_time_;
   CaptureFrameCandidate best_package_capture_candidate_;
   int package_capture_candidate_count_{0};
+  bool ocr_invoked_this_frame_{false};
 #endif
 
   bool has_camera_info_ = false;

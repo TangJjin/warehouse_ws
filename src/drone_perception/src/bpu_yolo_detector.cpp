@@ -3,6 +3,7 @@
 #include <dnn/hb_sys.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -11,6 +12,14 @@
 
 namespace
 {
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsedMs(
+    const SteadyClock::time_point &start,
+    const SteadyClock::time_point &end)
+{
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
 
 static constexpr int32_t kSingleModelFileCount = 1;
 static constexpr int32_t kMinModelCount = 1;
@@ -289,6 +298,11 @@ const char *BpuYoloDetector::className(int32_t class_id)
   return kClassNames[static_cast<std::size_t>(class_id)];
 }
 
+const BpuYoloDetector::InferenceTimingStats &BpuYoloDetector::lastTiming() const
+{
+  return _last_timing;
+}
+
 void BpuYoloDetector::releaseModel()
 {
   releaseTensors();
@@ -383,6 +397,10 @@ std::vector<BpuYoloDetection> BpuYoloDetector::inferNv12(
     const uint8_t *nv12_data,
     std::size_t nv12_size)
 {
+  _last_timing = {};
+  InferenceTimingStats timing{};
+  const auto total_t0 = SteadyClock::now();
+
   if (_dnn_handle == nullptr) {
     throw std::runtime_error("BPU model is not loaded");
   }
@@ -404,11 +422,17 @@ std::vector<BpuYoloDetection> BpuYoloDetector::inferNv12(
         ", actual=" + std::to_string(nv12_size));
   }
 
+  const auto input_memcpy_t0 = SteadyClock::now();
   std::memcpy(_input_tensor.sysMem[0].virAddr, nv12_data, nv12_size);
+  const auto input_memcpy_t1 = SteadyClock::now();
+  timing.input_memcpy_ms = elapsedMs(input_memcpy_t0, input_memcpy_t1);
 
+  const auto input_cache_t0 = SteadyClock::now();
   checkRet(
       hbSysFlushMem(&_input_tensor.sysMem[0], HB_SYS_MEM_CACHE_CLEAN),
       "hbSysFlushMem input clean");
+  const auto input_cache_t1 = SteadyClock::now();
+  timing.input_cache_clean_ms = elapsedMs(input_cache_t0, input_cache_t1);
 
   hbDNNTaskHandle_t task_handle = nullptr;
   hbDNNInferCtrlParam infer_ctrl_param;
@@ -417,27 +441,57 @@ std::vector<BpuYoloDetection> BpuYoloDetector::inferNv12(
   hbDNNTensor *input_tensor = &_input_tensor;
   hbDNNTensor *output_tensors = _output_tensors.data();
 
+  const auto submit_t0 = SteadyClock::now();
   checkRet(
       hbDNNInfer(&task_handle, &output_tensors, input_tensor, _dnn_handle, &infer_ctrl_param),
       "hbDNNInfer");
+  const auto submit_t1 = SteadyClock::now();
+  timing.submit_ms = elapsedMs(submit_t0, submit_t1);
 
+  const auto wait_t0 = SteadyClock::now();
   const int wait_ret = hbDNNWaitTaskDone(task_handle, 0);
+  const auto wait_t1 = SteadyClock::now();
+  timing.wait_ms = elapsedMs(wait_t0, wait_t1);
+
+  const auto release_t0 = SteadyClock::now();
   const int release_ret = hbDNNReleaseTask(task_handle);
+  const auto release_t1 = SteadyClock::now();
+  timing.release_ms = elapsedMs(release_t0, release_t1);
 
   checkRet(wait_ret, "hbDNNWaitTaskDone");
   checkRet(release_ret, "hbDNNReleaseTask");
 
+  const auto output_invalidate_t0 = SteadyClock::now();
   for (std::size_t i = 0; i < _output_tensors.size(); ++i) {
     checkRet(
         hbSysFlushMem(&_output_tensors[i].sysMem[0], HB_SYS_MEM_CACHE_INVALIDATE),
         "hbSysFlushMem output[" + std::to_string(i) + "] invalidate");
   }
+  const auto output_invalidate_t1 = SteadyClock::now();
+  timing.output_invalidate_ms = elapsedMs(output_invalidate_t0, output_invalidate_t1);
 
+  const auto candidate_t0 = SteadyClock::now();
   const std::vector<BpuYoloCandidate> candidates = collectCandidates(_output_tensors);
+  const auto candidate_t1 = SteadyClock::now();
+  timing.candidate_ms = elapsedMs(candidate_t0, candidate_t1);
+  timing.raw_candidate_count = candidates.size();
+
+  const auto dfl_t0 = SteadyClock::now();
   std::vector<BpuYoloDetection> detections =
       decodeCandidates(candidates, _output_tensors);
+  const auto dfl_t1 = SteadyClock::now();
+  timing.dfl_decode_ms = elapsedMs(dfl_t0, dfl_t1);
+  timing.decoded_detection_count = detections.size();
 
-  return runNms(detections);
+  const auto nms_t0 = SteadyClock::now();
+  std::vector<BpuYoloDetection> final_detections = runNms(detections);
+  const auto nms_t1 = SteadyClock::now();
+  timing.nms_ms = elapsedMs(nms_t0, nms_t1);
+  timing.final_detection_count = final_detections.size();
+  timing.total_ms = elapsedMs(total_t0, nms_t1);
+  _last_timing = timing;
+
+  return final_detections;
 }
 
 void BpuYoloDetector::checkRet(int ret, const std::string &step)
