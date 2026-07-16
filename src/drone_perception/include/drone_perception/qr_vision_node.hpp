@@ -299,6 +299,8 @@ private:
 #if DRONE_PERCEPTION_HAS_BPU
   void drawBpuDetections(cv::Mat &display) const;
 
+  void drawBpuPerformanceHud(cv::Mat &display);
+
   void resetCaptureCandidateState();
 
   void bufferPackageCaptureCandidate(const cv::Mat &color_image);
@@ -390,6 +392,8 @@ private:
   double last_callback_ms_ = 0.0;
   double last_process_ms_ = 0.0;
   double last_queue_wait_ms_ = 0.0;
+  double last_input_fps_ = 0.0;
+  double last_process_fps_ = 0.0;
   std::chrono::steady_clock::time_point baseline_report_time_{};
   std::atomic<std::uint64_t> input_frame_count_{0U};
   std::atomic<std::uint64_t> dropped_frame_count_{0U};

@@ -425,6 +425,7 @@ void QrVisionNode::visionWorkerLoop()
     const auto process_t0 = SteadyClock::now();
     last_queue_wait_ms_ = elapsedMs(color_frame.enqueue_time, process_t0);
     queue_wait_window_.push(last_queue_wait_ms_);
+    updateFrameAge(*color_frame.message);
 
     cv_bridge::CvImageConstPtr color_bridge;
     try {
@@ -442,7 +443,6 @@ void QrVisionNode::visionWorkerLoop()
           ex.what());
     }
 
-    updateFrameAge(*color_frame.message);
     reportPerformanceBaseline();
   }
 }
@@ -1640,6 +1640,8 @@ void QrVisionNode::reportPerformanceBaseline()
   const std::uint64_t process_delta =
       processed_frame_count_ - baseline_last_processed_count_;
   const std::uint64_t failed_delta = failed_frame_count_ - baseline_last_failed_count_;
+  last_input_fps_ = static_cast<double>(input_delta) / interval_s;
+  last_process_fps_ = static_cast<double>(process_delta) / interval_s;
 
   BpuYoloDetector::InferenceTimingStats infer_timing{};
   if (bpu_detector_) {
@@ -1675,8 +1677,8 @@ void QrVisionNode::reportPerformanceBaseline()
       "qr[count=%d/%d/%d roi=%d gray=%.2f raw=%.2f clahe=%.2f+%.2f "
       "adaptive=%.2f+%.2f] "
       "ocr[invoked=%d boxes=%d crop=%.2f pre=%.2f infer=%.2f decode=%.2f total=%.2f]",
-      static_cast<double>(input_delta) / interval_s,
-      static_cast<double>(process_delta) / interval_s,
+      last_input_fps_,
+      last_process_fps_,
       static_cast<unsigned long long>(failed_delta),
       static_cast<unsigned long long>(dropped_delta),
       frame_age_window_.percentile(0.50),
@@ -1947,7 +1949,7 @@ void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
       cv::Point(24, 38),
       cv::FONT_HERSHEY_SIMPLEX,
       0.55,
-      cv::Scalar(0, 255, 255),
+      cv::Scalar(255, 0, 255),
       1);
   cv::putText(
       display,
@@ -2018,7 +2020,6 @@ void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
 
   drawBpuDetections(display);
   drawOcrRegions(display);
-  drawQrPreprocessPreview(display);
 
   if (enable_bpu_ocr_ && !last_ocr_regions_.empty()) {
     int ocr_text_y = visual_code_y + 48;
@@ -2043,11 +2044,187 @@ void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
       }
     }
   }
+
+  drawBpuPerformanceHud(display);
+  drawQrPreprocessPreview(display);
 #endif
 
   cv::imshow(window_name_, display);
   cv::waitKey(1);
 }
+
+#if DRONE_PERCEPTION_HAS_BPU
+void QrVisionNode::drawBpuPerformanceHud(cv::Mat &display)
+{
+  if (!enable_bpu_ || display.empty()) {
+    return;
+  }
+
+  BpuYoloDetector::InferenceTimingStats infer_timing{};
+  if (bpu_detector_) {
+    infer_timing = bpu_detector_->lastTiming();
+  }
+
+  OcrTimingStats ocr_timing{};
+  if (ocr_invoked_this_frame_ && bpu_ocr_pipeline_) {
+    ocr_timing = bpu_ocr_pipeline_->lastTiming();
+  }
+
+  double callback_ms = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(performance_mutex_);
+    callback_ms = last_callback_ms_;
+  }
+
+  const std::vector<std::string> lines{
+      cv::format(
+          "FPS input %.1f  process %.1f  smooth %.1f",
+          last_input_fps_,
+          last_process_fps_,
+          smoothed_fps_),
+      cv::format(
+          "Latest cb %.2f  prev process %.2f  queue %.2f ms",
+          callback_ms,
+          last_process_ms_,
+          last_queue_wait_ms_),
+      cv::format(
+          "Age %.1fms  drop %llu  failed %llu",
+          last_frame_age_ms_,
+          static_cast<unsigned long long>(dropped_frame_count_.load()),
+          static_cast<unsigned long long>(failed_frame_count_)),
+      cv::format(
+          "Pre resize %.2f  box %.2f  color %.2f ms",
+          bpu_preprocess_timing_.resize_ms,
+          bpu_preprocess_timing_.letterbox_ms,
+          bpu_preprocess_timing_.color_convert_ms),
+      cv::format(
+          "Pre NV12 %.2f  total %.2f ms",
+          bpu_preprocess_timing_.nv12_pack_ms,
+          bpu_preprocess_timing_.total_ms),
+      cv::format(
+          "BPU copy %.2f  clean %.2f  submit %.2f ms",
+          infer_timing.input_memcpy_ms,
+          infer_timing.input_cache_clean_ms,
+          infer_timing.submit_ms),
+      cv::format(
+          "BPU wait %.2f  total %.2f ms",
+          infer_timing.wait_ms,
+          infer_timing.total_ms),
+      cv::format(
+          "Post inv %.2f  cand %.2f  DFL %.2f  NMS %.2f ms",
+          infer_timing.output_invalidate_ms,
+          infer_timing.candidate_ms,
+          infer_timing.dfl_decode_ms,
+          infer_timing.nms_ms),
+      cv::format(
+          "Det raw %zu  decoded %zu  final %zu",
+          infer_timing.raw_candidate_count,
+          infer_timing.decoded_detection_count,
+          infer_timing.final_detection_count),
+      cv::format(
+          "ZBar roi %d  scans %d/%d/%d",
+          visual_code_timing_.roi_count,
+          visual_code_timing_.raw_scan_count,
+          visual_code_timing_.clahe_scan_count,
+          visual_code_timing_.adaptive_scan_count),
+      cv::format(
+          "ZBar ms gray %.1f raw %.1f CLAHE %.1f+%.1f adapt %.1f+%.1f",
+          visual_code_timing_.gray_ms,
+          visual_code_timing_.raw_zbar_ms,
+          visual_code_timing_.clahe_ms,
+          visual_code_timing_.clahe_zbar_ms,
+          visual_code_timing_.adaptive_ms,
+          visual_code_timing_.adaptive_zbar_ms),
+      cv::format(
+          "OCR run%d box%d crop%.2f pre%.2f inf%.2f dec%.2f ms",
+          ocr_invoked_this_frame_ ? 1 : 0,
+          ocr_timing.rec_box_count,
+          ocr_timing.rec_crop_ms,
+          ocr_timing.rec_preprocess_ms,
+          ocr_timing.rec_infer_ms,
+          ocr_timing.rec_decode_ms)};
+
+  static constexpr int kLineHeightPx = 18;
+  static constexpr int kPanelMarginPx = 12;
+  static constexpr double kFontScale = 0.38;
+  const int status_panel_bottom = enable_bpu_ocr_ ? 236 : 164;
+  const int available_height =
+      display.rows - status_panel_bottom - 2 * kPanelMarginPx;
+  if (available_height < kLineHeightPx ||
+      display.cols <= 2 * kPanelMarginPx) {
+    return;
+  }
+
+  const std::size_t visible_line_count = std::min(
+      lines.size(),
+      static_cast<std::size_t>(available_height / kLineHeightPx));
+  const int panel_height =
+      static_cast<int>(visible_line_count) * kLineHeightPx + kPanelMarginPx;
+  const int panel_top = std::max(
+      status_panel_bottom + kPanelMarginPx,
+      display.rows - panel_height - kPanelMarginPx);
+  const bool reserve_qr_preview =
+      !debug_qr_preprocess_preview_.empty() && display.cols >= 640;
+  const int preview_reserve_width = reserve_qr_preview
+      ? kQrPreprocessPreviewMaxSizePx + 32
+      : 0;
+  const int panel_right =
+      display.cols - kPanelMarginPx - preview_reserve_width;
+  if (panel_right <= kPanelMarginPx) {
+    return;
+  }
+
+  const cv::Rect panel_rect(
+      kPanelMarginPx,
+      panel_top,
+      panel_right - kPanelMarginPx,
+      display.rows - kPanelMarginPx - panel_top);
+  if (panel_rect.width <= 20) {
+    return;
+  }
+
+  cv::Mat panel = display(panel_rect);
+  cv::Mat panel_background(panel.size(), panel.type(), cv::Scalar(25, 25, 25));
+  cv::addWeighted(panel_background, 0.50, panel, 0.50, 0.0, panel);
+
+  int y = panel_top + kLineHeightPx;
+  const cv::Scalar text_color(255, 0, 255);
+  const int text_width_px = panel_rect.width - 16;
+  for (std::size_t i = 0U; i < visible_line_count; ++i) {
+    std::string line = lines[i];
+    int baseline = 0;
+    const bool needs_truncation = cv::getTextSize(
+        line,
+        cv::FONT_HERSHEY_SIMPLEX,
+        kFontScale,
+        1,
+        &baseline).width > text_width_px;
+    while (needs_truncation && !line.empty() &&
+           cv::getTextSize(
+               line + "...",
+               cv::FONT_HERSHEY_SIMPLEX,
+               kFontScale,
+               1,
+               &baseline).width > text_width_px) {
+      line.pop_back();
+    }
+    if (needs_truncation) {
+      line += "...";
+    }
+
+    cv::putText(
+        display,
+        line,
+        cv::Point(kPanelMarginPx + 8, y),
+        cv::FONT_HERSHEY_SIMPLEX,
+        kFontScale,
+        text_color,
+        1,
+        cv::LINE_AA);
+    y += kLineHeightPx;
+  }
+}
+#endif
 
 void QrVisionNode::initializeCameraControlDefaults()
 {
