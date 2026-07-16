@@ -1,12 +1,16 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstddef>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <cv_bridge/cv_bridge.h>
@@ -24,6 +28,16 @@
 #include <std_msgs/msg/bool.hpp>
 
 #include "drone_msgs/msg/barcode_capture.hpp"
+
+namespace zbar
+{
+class ImageScanner;
+}
+
+namespace cv
+{
+class CLAHE;
+}
 
 #ifndef DRONE_PERCEPTION_HAS_BPU
 #define DRONE_PERCEPTION_HAS_BPU 0
@@ -107,6 +121,19 @@ private:
     std::deque<double> samples;
   };
 
+  struct PendingColorFrame
+  {
+    std::uint64_t sequence{0U};
+    sensor_msgs::msg::Image::ConstSharedPtr message;
+    std::chrono::steady_clock::time_point enqueue_time{};
+  };
+
+  struct PendingHoverEvent
+  {
+    std::uint64_t sequence{0U};
+    bool active{false};
+  };
+
   struct CaptureFrameCandidate
   {
     cv::Mat image;
@@ -166,6 +193,14 @@ private:
 
   void initializeBpuOcrPipeline();
 
+  void initializeVisualCodeDecoder();
+
+  void startVisionWorker();
+
+  void stopVisionWorker();
+
+  void visionWorkerLoop();
+
   bool prepareBpuInput(const cv::Mat &color_image);
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
@@ -175,6 +210,8 @@ private:
   std::string composeCaptureBarcodeWithNan(bool allow_all_nan) const;
 
   void handleHoverActive(const std_msgs::msg::Bool::SharedPtr msg);
+
+  void applyHoverActive(bool hover_active);
 
   void resetHoverCaptureState();
 
@@ -197,8 +234,10 @@ private:
 
   void processFrame(
       const cv_bridge::CvImageConstPtr &color_bridge,
-      const std::chrono::steady_clock::time_point &callback_t0,
+      const std::chrono::steady_clock::time_point &process_t0,
       const char *input_mode);
+
+  void updateFrameAge(const sensor_msgs::msg::Image &color_msg);
 
   void handleCameraInfo(
       const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg);
@@ -349,15 +388,22 @@ private:
   double smoothed_fps_ = 0.0;
   double last_frame_age_ms_ = -1.0;
   double last_callback_ms_ = 0.0;
+  double last_process_ms_ = 0.0;
+  double last_queue_wait_ms_ = 0.0;
   std::chrono::steady_clock::time_point baseline_report_time_{};
-  std::uint64_t input_frame_count_{0U};
+  std::atomic<std::uint64_t> input_frame_count_{0U};
+  std::atomic<std::uint64_t> dropped_frame_count_{0U};
   std::uint64_t processed_frame_count_{0U};
   std::uint64_t failed_frame_count_{0U};
   std::uint64_t baseline_last_input_count_{0U};
+  std::uint64_t baseline_last_dropped_count_{0U};
   std::uint64_t baseline_last_processed_count_{0U};
   std::uint64_t baseline_last_failed_count_{0U};
   TimingWindow frame_age_window_;
   TimingWindow callback_window_;
+  TimingWindow process_window_;
+  TimingWindow queue_wait_window_;
+  std::mutex performance_mutex_;
   std::string last_published_package_barcode_;
 
   CodeStabilityState shelf_code_state_;
@@ -387,9 +433,19 @@ private:
   CaptureFrameCandidate best_package_capture_candidate_;
   int package_capture_candidate_count_{0};
   bool ocr_invoked_this_frame_{false};
+  std::unique_ptr<zbar::ImageScanner> visual_code_scanner_;
+  cv::Ptr<cv::CLAHE> qr_clahe_;
 #endif
 
-  bool has_camera_info_ = false;
+  std::atomic_bool has_camera_info_{false};
+
+  std::mutex vision_worker_mutex_;
+  std::condition_variable vision_worker_cv_;
+  std::thread vision_worker_;
+  PendingColorFrame latest_color_frame_;
+  std::deque<PendingHoverEvent> pending_hover_events_;
+  std::uint64_t next_work_sequence_{1U};
+  bool vision_worker_running_{false};
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr color_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;

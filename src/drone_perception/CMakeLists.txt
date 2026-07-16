@@ -92,6 +92,7 @@ target_include_directories(qr_vision_node
 target_link_libraries(qr_vision_node
   ${OpenCV_LIBS}
   ${ZBAR_LIBRARIES}
+  Threads::Threads
 )
 
 target_link_directories(qr_vision_node
