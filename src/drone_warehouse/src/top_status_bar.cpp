@@ -21,6 +21,32 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connection_button_ = new QPushButton("未连接", this);
     shelf_button_ = new QPushButton("货架信息", this);
     task_button_ = new QPushButton("任务待命", this);
+
+    dx_indicator_label_ = new QLabel(this);
+    dy_indicator_label_ = new QLabel(this);
+    dyaw_indicator_label_ = new QLabel(this);
+    dx_value_label_ = new QLabel("dx:", this);
+    dy_value_label_ = new QLabel("dy:", this);
+    dyaw_value_label_ = new QLabel("dyaw:", this);
+    dx_indicator_label_->setFixedSize(16, 16);
+    dx_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dy_indicator_label_->setFixedSize(16, 16);
+    dy_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+    dyaw_indicator_label_->setFixedSize(16, 16);
+    dyaw_indicator_label_->setStyleSheet(
+        "background-color: #9e9e9e;"
+        "border-radius: 6px;"
+        "border: 1px solid #666;"
+    );
+
     analysis_button_ = new QPushButton("分析", this);
     execute_button_ = new QPushButton("执行", this);
     waypoint_button_ = new QPushButton("航点飞行", this);
@@ -52,6 +78,14 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
     exit_long_press_timer_ = new QTimer(this);
     exit_long_press_timer_->setSingleShot(true);
+
+    connect(ros_manager_, &RosManager::deltaUpdated,
+        this,
+        [this](double dx, double dy, double dyaw, bool valid)
+        {
+            updateDelta(dx, dy, dyaw, valid);
+        },
+        Qt::QueuedConnection);
 
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
@@ -192,5 +226,45 @@ void TopStatusBar::setTimeTriggerEnabled(bool enabled)
 QPoint TopStatusBar::shelfButtonBottomLeftGlobal() const
 {
     return shelf_button_->mapToGlobal(QPoint(0, shelf_button_->height()));
+}
+
+void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
+{
+    const double abs_dx = std::abs(dx);
+    const double abs_dy = std::abs(dy);
+    const double abs_dyaw = std::abs(dyaw);
+
+    auto setIndicatorColor = [](QLabel *label, const QString &color) {
+        if (!label) {
+            return;
+        }
+
+        label->setStyleSheet(QString(
+            "background-color: %1;"
+            "border-radius: 6px;"
+            "border: 1px solid #666;"
+        ).arg(color));
+    };
+
+    if (!valid) {
+        setIndicatorColor(dx_indicator_label_, "#9e9e9e");
+        setIndicatorColor(dy_indicator_label_, "#9e9e9e");
+        setIndicatorColor(dyaw_indicator_label_, "#9e9e9e");
+        return;
+    }
+
+    auto updateIndicator = [&](QLabel *label, double value, double green_limit, double yellow_limit) {
+        if (value <= green_limit) {
+            setIndicatorColor(label, "#00c853");
+        } else if (value <= yellow_limit) {
+            setIndicatorColor(label, "#ffd600");
+        } else {
+            setIndicatorColor(label, "#d50000");
+        }
+    };
+
+    updateIndicator(dx_indicator_label_, abs_dx, 0.3, 1.0);
+    updateIndicator(dy_indicator_label_, abs_dy, 0.3, 1.0);
+    updateIndicator(dyaw_indicator_label_, abs_dyaw, 15.0, 30.0);
 }
 

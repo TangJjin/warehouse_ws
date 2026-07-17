@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <QProcess>
+#include <chrono>
 
 #include "rclcpp/rclcpp.hpp"
 #include <mavros_msgs/msg/state.hpp>
@@ -59,6 +60,8 @@ private:
     void handleUploadMissionSummary(
         const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
         std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response);
+
+    void updateMavrosConnectionTimeout();
 
     std::string buildStatusText() const;
 
@@ -122,4 +125,8 @@ private:
     int disarm_stable_count_{0};    // 连续收到 armed == false 的次数
 
     bool waypoint_or_button_{false};//判断是否是航点上传
+
+    bool mavros_state_received_{false};
+    std::chrono::steady_clock::time_point last_mavros_state_time_;
+    double mavros_state_timeout_sec_{2.0};
 };

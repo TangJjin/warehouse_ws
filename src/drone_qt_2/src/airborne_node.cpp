@@ -79,6 +79,8 @@ void AirborneNode::setupInterfaces()
     status_sub_ = this->create_subscription<mavros_msgs::msg::State>(
         "/mavros/state", status_qos,
         [this](const mavros_msgs::msg::State::SharedPtr msg) {
+            mavros_state_received_ = true;
+            last_mavros_state_time_ = std::chrono::steady_clock::now();
             if (msg->mode == "MANUAL") {
                 flight_mode = drone_msgs::msg::DroneStatus::MODE_MANUAL;
             } else if (msg->mode == "OFFBOARD") {
@@ -215,7 +217,28 @@ void AirborneNode::setupInterfaces()
 
 void AirborneNode::onTimer()
 {
+    updateMavrosConnectionTimeout();
     publishStatus();
+}
+
+void AirborneNode::updateMavrosConnectionTimeout()
+{
+    if (!mavros_state_received_) {
+        connected = false;
+        armed = false;
+        flight_mode = drone_msgs::msg::DroneStatus::MODE_UNKNOWN;
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed_sec =
+        std::chrono::duration<double>(now - last_mavros_state_time_).count();
+
+    if (elapsed_sec > mavros_state_timeout_sec_) {
+        connected = false;
+        armed = false;
+        flight_mode = drone_msgs::msg::DroneStatus::MODE_UNKNOWN;
+    }
 }
 
 void AirborneNode::publishStatus()

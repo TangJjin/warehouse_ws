@@ -57,9 +57,9 @@ class StartupSupervisor:
             ),
             StartupStep(
                 name='fastlio_to_mavros',
-                command=['ros2', 'run', 'drone_localization', 'fastlio_to_mavros_node'],
-                ready_topic='/mavros/vision_pose/pose',
-                ready_type='geometry_msgs/msg/PoseStamped',
+                command=['ros2', 'run', 'drone_localization', 'fastlio_to_mavros_odom_out_node'],
+                ready_topic='/mavros/odometry/out',
+                ready_type='nav_msgs/msg/Odometry',
                 timeout_sec=15,
                 ready_qos_reliability='best_effort',
             ),
@@ -87,14 +87,14 @@ class StartupSupervisor:
                 timeout_sec=15,
                 ready_qos_reliability='reliable',
             ),
-             StartupStep(
-                 name='airborne_node',
-                 command=['ros2', 'run', 'drone_qt_2', 'airborne_node'],
-                 ready_topic='/drone/status',
-                 ready_type='drone_msgs/msg/DroneStatus',
-                 timeout_sec=15,
-                 ready_qos_reliability='best_effort',
-             ),
+            #  StartupStep(
+            #      name='airborne_node',
+            #      command=['ros2', 'run', 'drone_qt_2', 'airborne_node'],
+            #      ready_topic='/drone/status',
+            #      ready_type='drone_msgs/msg/DroneStatus',
+            #      timeout_sec=15,
+            #      ready_qos_reliability='best_effort',
+            #  ),
         ]
 
     def log(self, message: str):
