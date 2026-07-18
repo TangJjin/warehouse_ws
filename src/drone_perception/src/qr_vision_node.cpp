@@ -522,10 +522,10 @@ void QrVisionNode::declareParameters()
       DRONE_PERCEPTION_HAS_BPU != 0);
   bpu_model_path_ = this->declare_parameter<std::string>(
       "bpu_model_path",
-      "/home/sunrise/drone_ws/src/drone_perception/new_640x640_nv12.bin");
+      "/home/sunrise/warehouse_ws/src/drone_perception/new_640x640_nv12.bin");
   ocr_rec_model_path_ = this->declare_parameter<std::string>(
       "ocr_rec_model_path",
-      "/home/sunrise/drone_ws/src/drone_perception/en_PP-OCRv3_rec_48x320_rgb.bin");
+      "/home/sunrise/warehouse_ws/src/drone_perception/en_PP-OCRv3_rec_48x320_rgb.bin");
   ocr_yolo_padding_ratio_ = static_cast<float>(this->declare_parameter<double>(
       "ocr_yolo_padding_ratio",
       kDefaultOcrYoloPaddingRatio));
