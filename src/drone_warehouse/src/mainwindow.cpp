@@ -10,6 +10,7 @@
 #include "drone_warehouse/ai_diff_analyzer.hpp"
 #include "drone_warehouse/shelf_panel_storage.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <QDialog>
 #include <QGridLayout>
@@ -1684,9 +1685,50 @@ void MainWindow::runClaudeApiDiffAnalysis()
         return value.isEmpty() ? QString("空") : value;
     };
 
-    QStringList lines;
-    QStringList ai_input_lines;
-    QStringList problem_lines;
+    auto short_reason_text = [](SlotDiffStatus status) {
+        switch (status)
+        {
+        case SlotDiffStatus::Mismatch:
+            return QString("台账与巡检货物信息冲突");
+        case SlotDiffStatus::PartialObserved:
+            return QString("包裹或类别信息识别不完整");
+        case SlotDiffStatus::ObservedOnly:
+            return QString("识别到货物但无台账记录");
+        case SlotDiffStatus::ManualOnly:
+            return QString("台账货物未被巡检识别");
+        case SlotDiffStatus::PositionOnly:
+            return QString("仅识别到位置，货物信息缺失");
+        case SlotDiffStatus::ObservedWithoutImage:
+            return QString("识别结果缺少图片证据");
+        case SlotDiffStatus::Matched:
+        case SlotDiffStatus::Empty:
+            return QString("无异常");
+        }
+        return QString("待复查");
+    };
+
+    auto action_text = [](SlotDiffStatus status) {
+        switch (status)
+        {
+        case SlotDiffStatus::Mismatch:
+            return QString("核对实物并更新台账");
+        case SlotDiffStatus::PartialObserved:
+        case SlotDiffStatus::PositionOnly:
+            return QString("补拍并重新识别");
+        case SlotDiffStatus::ObservedOnly:
+            return QString("核对实物并补登记");
+        case SlotDiffStatus::ManualOnly:
+            return QString("复查货物是否在位");
+        case SlotDiffStatus::ObservedWithoutImage:
+            return QString("补拍并留存证据");
+        case SlotDiffStatus::Matched:
+        case SlotDiffStatus::Empty:
+            return QString("无需处理");
+        }
+        return QString("人工复查");
+    };
+
+    QVector<const SlotRuleAnalysis *> abnormal_results;
 
     int abnormal_count = 0;
     int high_count = 0;
@@ -1702,16 +1744,32 @@ void MainWindow::runClaudeApiDiffAnalysis()
         {
             ++high_count;
         }
+        abnormal_results.push_back(&result);
+    }
 
+    if (abnormal_count == 0)
+    {
+        ai_log_view_->appendPlainText(QString("仓库状态：正常，异常0/%1。").arg(results.size()));
+        return;
+    }
+
+    std::sort(abnormal_results.begin(), abnormal_results.end(),
+        [](const SlotRuleAnalysis *left, const SlotRuleAnalysis *right) {
+            return left->priority > right->priority;
+        });
+
+    QStringList ai_input_lines;
+    QStringList problem_lines;
+    QStringList fallback_problem_lines;
+    QStringList fallback_action_lines;
+    QStringList expected_slots;
+    for (int index = 0; index < abnormal_results.size(); ++index)
+    {
+        const SlotRuleAnalysis &result = *abnormal_results.at(index);
         const QString slot = slot_label(result);
-        const QString status = status_text(result.status);
-        if (problem_lines.size() < 8)
-        {
-            problem_lines << QString("%1 %2").arg(slot).arg(status);
-        }
 
         ai_input_lines << QString("槽位：%1").arg(slot);
-        ai_input_lines << QString("- 异常类型：%1").arg(status);
+        ai_input_lines << QString("- 异常类型：%1").arg(status_text(result.status));
         ai_input_lines << QString("- 规则结论：%1").arg(result.summary);
         ai_input_lines << QString("- 规则依据：%1").arg(result.reason);
         ai_input_lines << QString("- 优先级：%1").arg(result.priority);
@@ -1724,14 +1782,17 @@ void MainWindow::runClaudeApiDiffAnalysis()
         ai_input_lines << QString("- 图片证据：%1").arg(result.input.has_image ? "有" : "无");
         ai_input_lines << QString("- 规则建议复查：%1").arg(result.should_revisit ? "是" : "否");
         ai_input_lines << "";
+
+        if (index < 3)
+        {
+            problem_lines << QString("%1 %2").arg(slot).arg(status_text(result.status));
+            fallback_problem_lines << QString("%1 %2").arg(slot).arg(short_reason_text(result.status));
+            fallback_action_lines << QString("%1 %2").arg(slot).arg(action_text(result.status));
+            expected_slots << slot;
+        }
     }
 
-    if (abnormal_count == 0)
-    {
-        ai_log_view_->appendPlainText(QString("仓库状态：正常，异常0/%1。").arg(results.size()));
-        return;
-    }
-
+    QStringList lines;
     lines << QString("仓库状态：异常%1/%2，高优先级%3。")
                  .arg(abnormal_count)
                  .arg(results.size())
@@ -1742,16 +1803,21 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
     QStringList prompt_lines;
     prompt_lines << "你是仓储巡检值班助手。";
-    prompt_lines << "根据异常槽位事实，输出最短可执行结论。";
-    prompt_lines << "严格要求：只输出3行；不要markdown；不要解释规则；不要复述全部输入；每行尽量不超过35个中文字符。";
-    prompt_lines << "固定格式：";
-    prompt_lines << "仓库状态：异常X处，高优先级Y处。";
-    prompt_lines << "问题槽位：槽位1原因；槽位2原因。";
-    prompt_lines << "下一步：动作1；动作2。";
-    prompt_lines << "只列最重要的槽位，最多4个。只能基于给定事实，不要臆造现场情况。";
+    prompt_lines << "根据异常槽位事实，判断最需要优先处理的问题并输出最短可执行结论。";
+    prompt_lines << "严格要求：只输出3行；不要markdown；不要解释规则；不要复述全部输入；每行尽量不超过60个中文字符。";
+    prompt_lines << "第一行必须以“仓库状态：”开头，说明异常数和高优先级数。";
+    prompt_lines << "第二行必须以“问题槽位：”开头，只列优先级最高的1到3个真实槽位，并比较台账与巡检的实际字段值说明问题。";
+    prompt_lines << "第三行必须以“下一步：”开头，针对最高风险问题给出具体复查动作。";
+    prompt_lines << "不要照抄规则结论或异常类型；不得使用槽位1、槽位2、原因、动作1等占位词；事实不足时写待复查，不能编造现场情况。";
     prompt_lines << "";
     prompt_lines << "异常槽位事实：";
     prompt_lines << ai_input_lines;
+
+    const QString fallback_text = QStringList{
+        QString("仓库状态：异常%1处，高优先级%2处。").arg(abnormal_count).arg(high_count),
+        QString("问题槽位：%1").arg(fallback_problem_lines.join("；")),
+        QString("下一步：%1").arg(fallback_action_lines.join("；"))
+    }.join('\n');
 
     const QString temp_dir = QDir::tempPath();
     const QString prompt_path = temp_dir + "/warehouse_ai_prompt.txt";
@@ -1784,13 +1850,14 @@ void MainWindow::runClaudeApiDiffAnalysis()
     connect(process,
         QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
         this,
-        [this, process, output_path](int exit_code, QProcess::ExitStatus exit_status) {
+        [this, process, output_path, fallback_text, expected_slots](int exit_code, QProcess::ExitStatus exit_status) {
         Q_UNUSED(exit_status);
 
         if (exit_code != 0)
         {
-            ai_log_view_->appendPlainText("AI总结失败：调用脚本退出异常");
+            ai_log_view_->appendPlainText("AI总结失败：调用脚本退出异常，已显示规则保底结果。");
             ai_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
+            ai_log_view_->appendPlainText(fallback_text);
             process->deleteLater();
             return;
         }
@@ -1798,7 +1865,8 @@ void MainWindow::runClaudeApiDiffAnalysis()
         QFile output_file(output_path);
         if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
         {
-            ai_log_view_->appendPlainText("AI总结失败：无法读取输出结果");
+            ai_log_view_->appendPlainText("AI总结失败：无法读取输出结果，已显示规则保底结果。");
+            ai_log_view_->appendPlainText(fallback_text);
             process->deleteLater();
             return;
         }
@@ -1806,10 +1874,38 @@ void MainWindow::runClaudeApiDiffAnalysis()
         const QString output_text = QString::fromUtf8(output_file.readAll()).trimmed();
         output_file.close();
 
-        if (!output_text.isEmpty())
+        const QStringList output_lines = output_text.split('\n', Qt::SkipEmptyParts);
+        bool output_is_valid = output_lines.size() == 3
+            && output_lines.at(0).trimmed().startsWith("仓库状态：")
+            && output_lines.at(1).trimmed().startsWith("问题槽位：")
+            && output_lines.at(2).trimmed().startsWith("下一步：");
+
+        const QRegularExpression placeholder_pattern("槽位\\s*[0-9]+|动作\\s*[0-9]+");
+        if (output_is_valid && placeholder_pattern.match(output_text).hasMatch())
         {
-            ai_log_view_->appendPlainText("");
+            output_is_valid = false;
+        }
+
+        bool has_real_slot = false;
+        for (const QString &slot : expected_slots)
+        {
+            if (output_text.contains(slot))
+            {
+                has_real_slot = true;
+                break;
+            }
+        }
+        output_is_valid = output_is_valid && has_real_slot;
+
+        ai_log_view_->appendPlainText("");
+        if (output_is_valid)
+        {
             ai_log_view_->appendPlainText(output_text);
+        }
+        else
+        {
+            ai_log_view_->appendPlainText("AI输出无效，已显示规则保底结果。");
+            ai_log_view_->appendPlainText(fallback_text);
         }
 
         process->deleteLater();
