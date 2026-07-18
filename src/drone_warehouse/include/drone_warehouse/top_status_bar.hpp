@@ -5,6 +5,7 @@
 
 class QLabel;
 class QPushButton;
+class RosManager;
 
 class QTimer;
 

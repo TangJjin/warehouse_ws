@@ -64,7 +64,7 @@ MainWindow::MainWindow(QWidget *parent)
     top_status_bar_->setTriggerTime(mission_trigger_time_text_);//传入想要定的时间
     top_status_bar_->setTimeTriggerEnabled(mission_time_trigger_enabled_);//传入是否开启时间定时
     /******************************************************/
-    //top_status_bar_->setConnected(true);
+    top_status_bar_->setConnected(true);
     updateOverlayGeometry();
 
     /*********************ros移植部分***********************/
@@ -137,15 +137,15 @@ void MainWindow::setupFloatingWidgets()
     ai_log_panel_->setObjectName("aiLogPanel");
     ai_log_panel_->setContentsMargins(5, 5, 5, 5);
 
-    auto *ai_log_title = new QLabel("AI分析", ai_log_panel_);
-    ai_log_title->setObjectName("aiLogTitle");
+    // auto *ai_log_title = new QLabel("AI分析", ai_log_panel_);
+    // ai_log_title->setObjectName("aiLogTitle");
     ai_log_view_ = new QPlainTextEdit(ai_log_panel_);
     ai_log_view_->setReadOnly(true);
     ai_log_view_->setMaximumBlockCount(1000);
 
-    ai_log_layout->addWidget(ai_log_title);
+    // ai_log_layout->addWidget(ai_log_title);
     ai_log_layout->addWidget(ai_log_view_);
-    ai_log_view_->appendPlainText("AI分析日志初始化成功");
+    // ai_log_view_->appendPlainText("AI分析日志初始化成功");
 
     /*******************************************************/
 
@@ -1200,14 +1200,12 @@ void MainWindow::showShelfSlotImage(int shelf_index, const QString &side, int ro
 
 void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
 {
-    Q_UNUSED(dx);
-    Q_UNUSED(dy);
-    Q_UNUSED(dyaw);
-    Q_UNUSED(valid);
+    if (!top_status_bar_)
+    {
+        return;
+    }
 
-    // 当前仓储项目里还没有专门显示 dx / dy / dyaw 的面板。
-    // 这里先保留空实现，表示 ROS delta 信号链已经接进来了，
-    // 但由于缺少对应界面控件，暂时只做到“可编译、可继续扩展”，不瞎造显示位置。
+    top_status_bar_->updateDelta(dx, dy, dyaw, valid);
 }
 
 void MainWindow::updatePathReadyState(bool ready)
@@ -1265,24 +1263,33 @@ void MainWindow::applyWindowStyle()
     );
 
     ai_log_panel_->setStyleSheet(
-        "#aiLogPanel {"
-        "background: rgba(18, 24, 34, 150);"
-        "border: 1px solid rgba(90, 130, 180, 100);"
-        "border-radius: 10px;"
-        "}"
-        "#aiLogTitle {"
-        "background: transparent;"
-        "border: none;"
+        // "#aiLogPanel {"
+        // "background: rgba(18, 24, 34, 150);"
+        // "border: 1px solid rgba(90, 130, 180, 100);"
+        // "border-radius: 10px;"
+        // "}"
+        // "#aiLogTitle {"
+        // "background: transparent;"
+        // "border: none;"
+        // "font-size: 16px;"
+        // "font-weight: 600;"
+        // "color: #8fe7ff;"
+        // "}"
+        // "QPlainTextEdit {"
+        // "background: rgba(10, 14, 22, 170);"
+        // "border: none;"
+        // "color: #d7e3f4;"
+        // "font-size: 14px;"
+        // "padding: 6px;"
+        // "}"
+
+        "background: rgba(18, 24, 34, 0);"//透明深色背景
         "font-size: 16px;"
-        "font-weight: 600;"
-        "color: #8fe7ff;"
-        "}"
-        "QPlainTextEdit {"
-        "background: rgba(10, 14, 22, 170);"
-        "border: none;"
-        "color: #d7e3f4;"
-        "font-size: 14px;"
-        "padding: 6px;"
+        "border: none;"//标签无边框
+        "border-radius: 10px;"
+
+        "border: none;"//无边框
+        "padding: 6px 10px;"//内边距
         "}"
     );
 
@@ -1439,7 +1446,7 @@ void MainWindow::updateOverlayGeometry()
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
     logwaypoint_panel_->setGeometry(250, area.height() - 90, 600, 200);
-    ai_log_panel_->setGeometry(area.width() - 430, 260, 420, 320);
+    ai_log_panel_->setGeometry(area.width() - 320, 260, 330, 280);
     attitude_panel_->setGeometry(area.width() - 220, 84, 220, 160);
     view_mode_widget_->setGeometry(100, area.height() - 70, 160, 40);
     view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
