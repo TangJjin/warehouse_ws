@@ -1,5 +1,6 @@
 #include "drone_warehouse/top_status_bar.hpp"
 #include "drone_warehouse/color_palette.hpp"
+#include "drone_warehouse/ros_manager.hpp"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -62,6 +63,15 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     
     layout->addWidget(task_button_);
     layout->addStretch();
+
+    layout->addWidget(dx_value_label_);
+    layout->addWidget(dx_indicator_label_);
+    layout->addWidget(dy_value_label_);
+    layout->addWidget(dy_indicator_label_);
+    layout->addWidget(dyaw_value_label_);
+    layout->addWidget(dyaw_indicator_label_);
+
+    layout->addStretch();
     layout->addWidget(analysis_button_);
     layout->addWidget(execute_button_);
     layout->addWidget(waypoint_button_);
@@ -78,14 +88,6 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
     exit_long_press_timer_ = new QTimer(this);
     exit_long_press_timer_->setSingleShot(true);
-
-    connect(ros_manager_, &RosManager::deltaUpdated,
-        this,
-        [this](double dx, double dy, double dyaw, bool valid)
-        {
-            updateDelta(dx, dy, dyaw, valid);
-        },
-        Qt::QueuedConnection);
 
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
@@ -179,6 +181,14 @@ void TopStatusBar::setConnected(bool connected)
     title_button_->setVisible(connected);
     //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
+
+    dx_value_label_->setVisible(connected);
+    dx_indicator_label_->setVisible(connected);
+    dy_value_label_->setVisible(connected);
+    dy_indicator_label_->setVisible(connected);
+    dyaw_value_label_->setVisible(connected);
+    dyaw_indicator_label_->setVisible(connected);
+
     analysis_button_->setVisible(connected);
     execute_button_->setVisible(connected);
     waypoint_button_->setVisible(connected);
@@ -228,7 +238,7 @@ QPoint TopStatusBar::shelfButtonBottomLeftGlobal() const
     return shelf_button_->mapToGlobal(QPoint(0, shelf_button_->height()));
 }
 
-void MainWindow::updateDelta(double dx, double dy, double dyaw, bool valid)
+void TopStatusBar::updateDelta(double dx, double dy, double dyaw, bool valid)
 {
     const double abs_dx = std::abs(dx);
     const double abs_dy = std::abs(dy);
