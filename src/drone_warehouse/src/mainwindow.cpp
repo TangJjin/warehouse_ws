@@ -132,6 +132,21 @@ void MainWindow::setupFloatingWidgets()
 
     //waypoint_log_view_->appendPlainText("航点日志初始化成功");
 
+    ai_log_panel_ = new QWidget(central_container_);
+    auto *ai_log_layout = new QVBoxLayout(ai_log_panel_);
+    ai_log_panel_->setObjectName("aiLogPanel");
+    ai_log_panel_->setContentsMargins(5, 5, 5, 5);
+
+    auto *ai_log_title = new QLabel("AI分析", ai_log_panel_);
+    ai_log_title->setObjectName("aiLogTitle");
+    ai_log_view_ = new QPlainTextEdit(ai_log_panel_);
+    ai_log_view_->setReadOnly(true);
+    ai_log_view_->setMaximumBlockCount(1000);
+
+    ai_log_layout->addWidget(ai_log_title);
+    ai_log_layout->addWidget(ai_log_view_);
+    ai_log_view_->appendPlainText("AI分析日志初始化成功");
+
     /*******************************************************/
 
     /*********************悬浮姿态控件***********************/
@@ -215,6 +230,7 @@ void MainWindow::setupFloatingWidgets()
     top_status_bar_->raise();//确保悬浮控件在主场景视图上面
     log_panel_->raise();//确保日志区主场景视图上面
     logwaypoint_panel_->raise();//确保日志区主场景视图上面
+    ai_log_panel_->raise();//确保AI分析日志区在主场景视图上面
     attitude_panel_->raise();//确保姿态面板在主场景视图上面
     view_mode_widget_->raise();//确保视图模式控件在主场景视图上面
     view_Perspective_widget_->raise();//确保视角切换控件在主场景视图上面
@@ -1248,6 +1264,28 @@ void MainWindow::applyWindowStyle()
         "}"
     );
 
+    ai_log_panel_->setStyleSheet(
+        "#aiLogPanel {"
+        "background: rgba(18, 24, 34, 150);"
+        "border: 1px solid rgba(90, 130, 180, 100);"
+        "border-radius: 10px;"
+        "}"
+        "#aiLogTitle {"
+        "background: transparent;"
+        "border: none;"
+        "font-size: 16px;"
+        "font-weight: 600;"
+        "color: #8fe7ff;"
+        "}"
+        "QPlainTextEdit {"
+        "background: rgba(10, 14, 22, 170);"
+        "border: none;"
+        "color: #d7e3f4;"
+        "font-size: 14px;"
+        "padding: 6px;"
+        "}"
+    );
+
     attitude_panel_->setStyleSheet(
         "background: rgba(18, 24, 34, 100);"//半透明深色背景
         "border: 1px solid rgba(90, 130, 180, 100);"//边框颜色和透明度
@@ -1401,6 +1439,7 @@ void MainWindow::updateOverlayGeometry()
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
     logwaypoint_panel_->setGeometry(250, area.height() - 90, 600, 200);
+    ai_log_panel_->setGeometry(area.width() - 430, 260, 420, 320);
     attitude_panel_->setGeometry(area.width() - 220, 84, 220, 160);
     view_mode_widget_->setGeometry(100, area.height() - 70, 160, 40);
     view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
@@ -1542,7 +1581,11 @@ void MainWindow::runAiDiffAnalysis()
 {
     const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
     const QString report = buildRuleAnalysisReport(results);
-    run_log_view_->appendPlainText(report);
+    if (ai_log_view_)
+    {
+        ai_log_view_->clear();
+        ai_log_view_->appendPlainText(report);
+    }
 }
 
 QString MainWindow::buildAiPrompt(const SlotRuleAnalysis &result) const
@@ -1594,6 +1637,14 @@ void MainWindow::runClaudeApiDiffAnalysis()
 {
     const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
 
+    if (!ai_log_view_)
+    {
+        return;
+    }
+
+    ai_log_view_->clear();
+    ai_log_view_->appendPlainText("AI分析开始...");
+
     auto slot_label = [](const SlotRuleAnalysis &result) {
         const QString shelf_short = result.input.shelf_name.endsWith("A") ? "A" :
                                     (result.input.shelf_name.endsWith("B") ? "B" : result.input.shelf_name);
@@ -1606,8 +1657,8 @@ void MainWindow::runClaudeApiDiffAnalysis()
             .arg(result.input.col + 1);
     };
 
-    auto message_for_result = [](const SlotRuleAnalysis &result) {
-        switch (result.status)
+    auto status_text = [](SlotDiffStatus status) {
+        switch (status)
         {
         case SlotDiffStatus::Mismatch:
             return QString("台账与巡检不一致");
@@ -1621,16 +1672,24 @@ void MainWindow::runClaudeApiDiffAnalysis()
             return QString("仅识别到位置，没有识别到货物身份");
         case SlotDiffStatus::ObservedWithoutImage:
             return QString("巡检有结果，但缺少图片证据");
-        default:
-            return result.summary;
+        case SlotDiffStatus::Matched:
+            return QString("台账与巡检一致");
+        case SlotDiffStatus::Empty:
+            return QString("空槽位");
         }
+        return QString("未知状态");
+    };
+
+    auto field_text = [](const QString &value) {
+        return value.isEmpty() ? QString("空") : value;
     };
 
     QStringList lines;
     QStringList ai_input_lines;
-    lines << "=== 全量分析结果 ===";
+    QStringList problem_lines;
 
-    QVector<const SlotRuleAnalysis*> abnormal_results;
+    int abnormal_count = 0;
+    int high_count = 0;
     for (const SlotRuleAnalysis &result : results)
     {
         if (result.status == SlotDiffStatus::Matched || result.status == SlotDiffStatus::Empty)
@@ -1638,36 +1697,60 @@ void MainWindow::runClaudeApiDiffAnalysis()
             continue;
         }
 
-        abnormal_results.push_back(&result);
-        const QString item_line = QString("%1：%2")
-                                      .arg(slot_label(result))
-                                      .arg(message_for_result(result));
-        lines << item_line;
-        ai_input_lines << item_line;
+        ++abnormal_count;
+        if (result.priority >= 80)
+        {
+            ++high_count;
+        }
+
+        const QString slot = slot_label(result);
+        const QString status = status_text(result.status);
+        if (problem_lines.size() < 8)
+        {
+            problem_lines << QString("%1 %2").arg(slot).arg(status);
+        }
+
+        ai_input_lines << QString("槽位：%1").arg(slot);
+        ai_input_lines << QString("- 异常类型：%1").arg(status);
+        ai_input_lines << QString("- 规则结论：%1").arg(result.summary);
+        ai_input_lines << QString("- 规则依据：%1").arg(result.reason);
+        ai_input_lines << QString("- 优先级：%1").arg(result.priority);
+        ai_input_lines << QString("- 台账类别：%1").arg(field_text(result.input.manual_category_id));
+        ai_input_lines << QString("- 台账包裹：%1").arg(field_text(result.input.manual_package_id));
+        ai_input_lines << QString("- 巡检类别：%1").arg(field_text(result.input.observed_category_id));
+        ai_input_lines << QString("- 巡检包裹：%1").arg(field_text(result.input.observed_package_id));
+        ai_input_lines << QString("- 巡检位置码：%1").arg(field_text(result.input.observed_slot_code));
+        ai_input_lines << QString("- 巡检时间：%1").arg(field_text(result.input.observed_time_text));
+        ai_input_lines << QString("- 图片证据：%1").arg(result.input.has_image ? "有" : "无");
+        ai_input_lines << QString("- 规则建议复查：%1").arg(result.should_revisit ? "是" : "否");
+        ai_input_lines << "";
     }
 
-    if (abnormal_results.isEmpty())
+    if (abnormal_count == 0)
     {
-        lines << "无异常结果";
-        run_log_view_->appendPlainText(lines.join('\n'));
+        ai_log_view_->appendPlainText(QString("仓库状态：正常，异常0/%1。").arg(results.size()));
         return;
     }
 
-    run_log_view_->appendPlainText(lines.join('\n'));
+    lines << QString("仓库状态：异常%1/%2，高优先级%3。")
+                 .arg(abnormal_count)
+                 .arg(results.size())
+                 .arg(high_count);
+    lines << QString("问题槽位：%1").arg(problem_lines.join("；"));
+    lines << "AI正在生成简短建议...";
+    ai_log_view_->appendPlainText(lines.join('\n'));
 
     QStringList prompt_lines;
-    prompt_lines << "你是仓储巡检结果总结助手。";
-    prompt_lines << "下面是规则分析输出，请生成简短总结与逐条复查项。";
-    prompt_lines << "输出要求：";
-    prompt_lines << "1. 只输出纯文本，不要 markdown，不要 JSON。";
-    prompt_lines << "2. 第一行固定为：=== AI总结建议 ===";
-    prompt_lines << "3. 第二行输出一句总述，例如：异常主要集中在台账冲突、识别不完整和图片证据不足。";
-    prompt_lines << "4. 空一行后输出一行：优先复查：";
-    prompt_lines << "5. 后面每个槽位单独一行，格式固定为：槽位：动作。";
-    prompt_lines << "6. 动作句不要出现“建议”“先”等字眼。";
-    prompt_lines << "7. 只基于已给结果总结，不要臆造额外事实。";
+    prompt_lines << "你是仓储巡检值班助手。";
+    prompt_lines << "根据异常槽位事实，输出最短可执行结论。";
+    prompt_lines << "严格要求：只输出3行；不要markdown；不要解释规则；不要复述全部输入；每行尽量不超过35个中文字符。";
+    prompt_lines << "固定格式：";
+    prompt_lines << "仓库状态：异常X处，高优先级Y处。";
+    prompt_lines << "问题槽位：槽位1原因；槽位2原因。";
+    prompt_lines << "下一步：动作1；动作2。";
+    prompt_lines << "只列最重要的槽位，最多4个。只能基于给定事实，不要臆造现场情况。";
     prompt_lines << "";
-    prompt_lines << "规则分析结果：";
+    prompt_lines << "异常槽位事实：";
     prompt_lines << ai_input_lines;
 
     const QString temp_dir = QDir::tempPath();
@@ -1679,7 +1762,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     QFile prompt_file(prompt_path);
     if (!prompt_file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
-        run_log_view_->appendPlainText("AI总结失败：无法写入 prompt 文件");
+        ai_log_view_->appendPlainText("AI总结失败：无法写入 prompt 文件");
         return;
     }
     prompt_file.write(prompt_lines.join('\n').toUtf8());
@@ -1691,7 +1774,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     QFile image_meta_file(image_meta_path);
     if (!image_meta_file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
-        run_log_view_->appendPlainText("AI总结失败：无法写入输入元数据文件");
+        ai_log_view_->appendPlainText("AI总结失败：无法写入输入元数据文件");
         return;
     }
     image_meta_file.write(QJsonDocument(image_meta).toJson(QJsonDocument::Compact));
@@ -1706,8 +1789,8 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
         if (exit_code != 0)
         {
-            run_log_view_->appendPlainText("AI总结失败：调用脚本退出异常");
-            run_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
+            ai_log_view_->appendPlainText("AI总结失败：调用脚本退出异常");
+            ai_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
             process->deleteLater();
             return;
         }
@@ -1715,7 +1798,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
         QFile output_file(output_path);
         if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
         {
-            run_log_view_->appendPlainText("AI总结失败：无法读取输出结果");
+            ai_log_view_->appendPlainText("AI总结失败：无法读取输出结果");
             process->deleteLater();
             return;
         }
@@ -1725,8 +1808,8 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
         if (!output_text.isEmpty())
         {
-            run_log_view_->appendPlainText("");
-            run_log_view_->appendPlainText(output_text);
+            ai_log_view_->appendPlainText("");
+            ai_log_view_->appendPlainText(output_text);
         }
 
         process->deleteLater();

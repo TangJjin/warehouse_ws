@@ -131,6 +131,8 @@ private:
     QPlainTextEdit *run_log_view_{nullptr};
     QWidget *logwaypoint_panel_ = nullptr;//航点日志面板
     QPlainTextEdit *waypoint_log_view_{nullptr};
+    QWidget *ai_log_panel_ = nullptr;//AI分析日志面板
+    QPlainTextEdit *ai_log_view_{nullptr};
     QTimer *clock_timer_ = nullptr;//用于每秒刷新一次顶部时间
 
     QWidget *attitude_panel_ = nullptr;//姿态面板
