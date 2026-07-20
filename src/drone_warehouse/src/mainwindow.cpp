@@ -65,7 +65,7 @@ MainWindow::MainWindow(QWidget *parent)
     top_status_bar_->setTriggerTime(mission_trigger_time_text_);//传入想要定的时间
     top_status_bar_->setTimeTriggerEnabled(mission_time_trigger_enabled_);//传入是否开启时间定时
     /******************************************************/
-    top_status_bar_->setConnected(true);
+    //top_status_bar_->setConnected(true);
     updateOverlayGeometry();
 
     /*********************ros移植部分***********************/
@@ -1651,7 +1651,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     }
 
     ai_log_view_->clear();
-    ai_log_view_->appendPlainText("AI分析开始...");
+    // ai_log_view_->appendPlainText("AI分析开始...");
 
     auto slot_label = [](const SlotRuleAnalysis &result) {
         const QString shelf_short = result.input.shelf_name.endsWith("A") ? "A" :
@@ -1690,6 +1690,18 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
     auto field_text = [](const QString &value) {
         return value.isEmpty() ? QString("空") : value;
+    };
+
+    auto risk_level_text = [](int priority) {
+        if (priority >= 80)
+        {
+            return QString("高");
+        }
+        if (priority >= 60)
+        {
+            return QString("中");
+        }
+        return QString("低");
     };
 
     auto short_reason_text = [](SlotDiffStatus status) {
@@ -1756,7 +1768,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
     if (abnormal_count == 0)
     {
-        ai_log_view_->appendPlainText(QString("仓库状态：正常，异常0/%1。").arg(results.size()));
+        // ai_log_view_->appendPlainText(QString("仓库状态：正常，异常0/%1。").arg(results.size()));
         return;
     }
 
@@ -1775,11 +1787,16 @@ void MainWindow::runClaudeApiDiffAnalysis()
         const SlotRuleAnalysis &result = *abnormal_results.at(index);
         const QString slot = slot_label(result);
 
+        if (index >= 3)
+        {
+            continue;
+        }
+
         ai_input_lines << QString("槽位：%1").arg(slot);
         ai_input_lines << QString("- 异常类型：%1").arg(status_text(result.status));
         ai_input_lines << QString("- 规则结论：%1").arg(result.summary);
         ai_input_lines << QString("- 规则依据：%1").arg(result.reason);
-        ai_input_lines << QString("- 优先级：%1").arg(result.priority);
+        ai_input_lines << QString("- 风险等级：%1").arg(risk_level_text(result.priority));
         ai_input_lines << QString("- 台账类别：%1").arg(field_text(result.input.manual_category_id));
         ai_input_lines << QString("- 台账包裹：%1").arg(field_text(result.input.manual_package_id));
         ai_input_lines << QString("- 巡检类别：%1").arg(field_text(result.input.observed_category_id));
@@ -1800,24 +1817,31 @@ void MainWindow::runClaudeApiDiffAnalysis()
     }
 
     QStringList lines;
-    lines << QString("仓库状态：异常%1/%2，高优先级%3。")
-                 .arg(abnormal_count)
-                 .arg(results.size())
-                 .arg(high_count);
-    lines << QString("问题槽位：%1").arg(problem_lines.join("；"));
+    // lines << QString("仓库状态：异常%1/%2，高优先级%3。")
+    //              .arg(abnormal_count)
+    //              .arg(results.size())
+    //              .arg(high_count);
+    // lines << QString("问题槽位：%1").arg(problem_lines.join("；"));
     lines << "AI正在生成简短建议...";
     ai_log_view_->appendPlainText(lines.join('\n'));
 
     QStringList prompt_lines;
     prompt_lines << "你是仓储巡检值班助手。";
-    prompt_lines << "根据异常槽位事实，判断最需要优先处理的问题并输出最短可执行结论。";
-    prompt_lines << "严格要求：只输出3行；不要markdown；不要解释规则；不要复述全部输入；每行尽量不超过60个中文字符。";
-    prompt_lines << "第一行必须以“仓库状态：”开头，说明异常数和高优先级数。";
-    prompt_lines << "第二行必须以“问题槽位：”开头，只列优先级最高的1到3个真实槽位，并比较台账与巡检的实际字段值说明问题。";
-    prompt_lines << "第三行必须以“下一步：”开头，针对最高风险问题给出具体复查动作。";
-    prompt_lines << "不要照抄规则结论或异常类型；不得使用槽位1、槽位2、原因、动作1等占位词；事实不足时写待复查，不能编造现场情况。";
+    prompt_lines << "只能依据以下事实回答，不能增加槽位、数量或现场信息。";
+    prompt_lines << "必须只输出3行，不要markdown，不要解释规则。";
+    prompt_lines << QString("第一行必须以“仓库状态：”开头，并使用：异常%1处，高优先级%2处。")
+                        .arg(abnormal_count)
+                        .arg(high_count);
+    prompt_lines << "第二行必须以“问题槽位：”开头，只能使用下列允许槽位，说明台账和巡检的实际差异。";
+    prompt_lines << "第三行必须以“下一步：”开头，针对最高风险槽位给出具体复查动作。";
+    prompt_lines << "禁止输出槽位1、槽位2、原因、动作1等占位词；不得重复三行内容。";
+    prompt_lines << "允许输出的异常槽位：";
+    for (const QString &slot : expected_slots)
+    {
+        prompt_lines << QString("- %1").arg(slot);
+    }
     prompt_lines << "";
-    prompt_lines << "异常槽位事实：";
+    prompt_lines << "槽位事实：";
     prompt_lines << ai_input_lines;
 
     const QString fallback_text = QStringList{
@@ -1857,7 +1881,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     connect(process,
         QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
         this,
-        [this, process, output_path, fallback_text, expected_slots](int exit_code, QProcess::ExitStatus exit_status) {
+        [this, process, output_path, fallback_text, expected_slots, abnormal_count, high_count](int exit_code, QProcess::ExitStatus exit_status) {
         Q_UNUSED(exit_status);
 
         if (exit_code != 0)
@@ -1893,16 +1917,58 @@ void MainWindow::runClaudeApiDiffAnalysis()
             output_is_valid = false;
         }
 
+        auto normalize_text = [](QString text) {
+            text.remove(QRegularExpression("\\s+"));
+            return text;
+        };
+
+        const QString normalized_output = normalize_text(output_text);
+
         bool has_real_slot = false;
         for (const QString &slot : expected_slots)
         {
-            if (output_text.contains(slot))
+            if (normalized_output.contains(normalize_text(slot)))
             {
                 has_real_slot = true;
                 break;
             }
         }
-        output_is_valid = output_is_valid && has_real_slot;
+
+        const QString normalized_status = normalize_text(output_lines.at(0));
+        const bool has_correct_counts =
+            normalized_status.contains(QString("异常%1").arg(abnormal_count))
+            && normalized_status.contains(QString("高优先级%1").arg(high_count));
+
+        bool has_unknown_slot = false;
+        const QRegularExpression slot_pattern("R\\d+C\\d+");
+        QRegularExpressionMatchIterator matches =
+            slot_pattern.globalMatch(normalized_output);
+
+        while (matches.hasNext())
+        {
+            const QString detected_code = matches.next().captured(0);
+            bool is_allowed = false;
+
+            for (const QString &slot : expected_slots)
+            {
+                if (normalize_text(slot).contains(detected_code))
+                {
+                    is_allowed = true;
+                    break;
+                }
+            }
+
+            if (!is_allowed)
+            {
+                has_unknown_slot = true;
+                break;
+            }
+        }
+
+        output_is_valid = output_is_valid
+            && has_real_slot
+            && has_correct_counts
+            && !has_unknown_slot;
 
         ai_log_view_->appendPlainText("");
         if (output_is_valid)
@@ -1912,6 +1978,10 @@ void MainWindow::runClaudeApiDiffAnalysis()
         else
         {
             ai_log_view_->appendPlainText("AI输出无效，已显示规则保底结果。");
+            ai_log_view_->appendPlainText("AI原始输出：");
+            ai_log_view_->appendPlainText(
+                output_text.isEmpty() ? "（空输出）" : output_text);
+            ai_log_view_->appendPlainText("规则保底结果：");
             ai_log_view_->appendPlainText(fallback_text);
         }
 
