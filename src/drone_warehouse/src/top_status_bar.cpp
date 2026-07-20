@@ -95,7 +95,10 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(waypoint_button_, &QPushButton::clicked, this, &TopStatusBar::waypointButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
-    connect(scheduled_check_button_, &QPushButton::clicked, this, &TopStatusBar::scheduledcheckbuttonnClicked);
+    connect(scheduled_check_button_, &QPushButton::clicked, this, [this]() {
+        const QString mission_trigger_time_text_ = QDateTime::currentDateTime().toString("HH:mm:ss");
+        emit scheduledcheckbuttonnClicked(mission_trigger_time_text_);
+    });
 
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次时间文本
         const QString current_time_text = QDateTime::currentDateTime().toString("HH:mm:ss");
@@ -220,7 +223,7 @@ void TopStatusBar::setTimeText(const QString &text)
 void TopStatusBar::setTriggerTime(const QString &text)
 {
     trigger_time_text_ = text;
-    last_triggered_time_text_.clear();
+    last_triggered_time_text_ = text;
 }
 
 void TopStatusBar::setTimeTriggerEnabled(bool enabled)

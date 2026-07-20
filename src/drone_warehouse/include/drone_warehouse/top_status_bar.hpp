@@ -39,7 +39,7 @@ signals:
     void aiAnalyzeButtonClicked();//分析按钮被点击
     void executeButtonClicked();//执行按钮被点击
     void waypointButtonClicked();//航点飞行按钮被点击
-    void scheduledcheckbuttonnClicked();//巡检按钮被点击
+    void scheduledcheckbuttonnClicked(QString mission_trigger_time);//巡检按钮被点击
 
     void exitRequested();//退出信号
 
