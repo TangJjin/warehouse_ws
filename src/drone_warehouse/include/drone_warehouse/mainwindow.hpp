@@ -119,7 +119,7 @@ private:
     RosManager *ros_manager_ = nullptr;//ROS 管理器，负责订阅状态、调用服务、把 ROS 数据转成 Qt 信号
     WarehouseSceneData scene_data_;//当前主场景正在使用的数据，后面 ROS 状态和位置更新都会直接改这份数据再刷新 SceneView
     QString mission_trigger_time_text_;//预留给后续时间触发使用的目标时刻，本轮先不启用
-    int mission_trigger_time_text_flag_ = -1;
+    int mission_trigger_time_text_flag_ = 1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
 

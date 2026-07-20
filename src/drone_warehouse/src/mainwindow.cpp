@@ -354,13 +354,16 @@ void MainWindow::setupConnections()
     
     if (ros_manager_)
     {
-        connect(top_status_bar_, &TopStatusBar::scheduledcheckbuttonnClicked, this, [this]() {
+        connect(top_status_bar_, &TopStatusBar::scheduledcheckbuttonnClicked, 
+            this, 
+            [this](const QString &mission_trigger_time_text) {
             if(mission_trigger_time_text_flag_ == 1)
             {
-                mission_trigger_time_text_ = "20:33:00";
+                mission_trigger_time_text_ = mission_trigger_time_text;
                 run_log_view_->appendPlainText(QString("已设置定时巡检：%1").arg(mission_trigger_time_text_));
                 mission_trigger_time_text_flag_ = 0;
                 top_status_bar_->setTriggerTime(mission_trigger_time_text_);
+                triggerMissionUpload("time");
                 clock_timer_->start(5000);
             }
             else
