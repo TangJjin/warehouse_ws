@@ -7,7 +7,7 @@ mission:
 
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 0.30]
+      position: [0.00, 0.00, 1.10]
       yaw: 0.00
       tolerance: 0.10
       yaw_tolerance_deg: 4.0
@@ -16,11 +16,11 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
 
     - type: "move"
       frame: "world_body"
-      position: [0.00, 0.00, 0.30]
+      position: [0.00, 0.00, 1.10]
       yaw: 1.57
       tolerance: 0.10
       yaw_tolerance_deg: 4.0
@@ -29,7 +29,47 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
+
+    - type: "move"
+      frame: "world_body"
+      position: [1.75, 0.00, 1.10]
+      yaw: 1.57
+      tolerance: 0.10
+      yaw_tolerance_deg: 4.0
+      max_xy_speed_mps: 0.50
+      max_z_speed_mps: 0.30
+      max_yaw_rate_deg_s: 40.0
+
+    - type: "hover"
+      duration: 3.00
+      vision_hover: true
+
+    - type: "move"
+      frame: "world_body"
+      position: [1.75, 0.00, 0.70]
+      yaw: 1.57
+      tolerance: 0.10
+      yaw_tolerance_deg: 4.0
+      max_xy_speed_mps: 0.50
+      max_z_speed_mps: 0.30
+      max_yaw_rate_deg_s: 40.0
+
+    - type: "hover"
+      duration: 3.00
+
+    - type: "move"
+      frame: "world_body"
+      position: [1.75, 0.00, 0.30]
+      yaw: 1.57
+      tolerance: 0.10
+      yaw_tolerance_deg: 4.0
+      max_xy_speed_mps: 0.50
+      max_z_speed_mps: 0.30
+      max_yaw_rate_deg_s: 40.0
+
+    - type: "hover"
+      duration: 3.00
 
     - type: "move"
       frame: "world_body"
@@ -42,7 +82,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
       vision_hover: true
 
     - type: "move"
@@ -56,77 +96,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
-      vision_hover: true
-
-    - type: "move"
-      frame: "world_body"
-      position: [1.25, 0.00, 0.30]
-      yaw: 1.57
-      tolerance: 0.10
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.50
-      max_z_speed_mps: 0.30
-      max_yaw_rate_deg_s: 40.0
-
-    - type: "hover"
-      duration: 2.00
-      vision_hover: true
-
-    - type: "move"
-      frame: "world_body"
-      position: [0.75, 0.00, 0.30]
-      yaw: 1.57
-      tolerance: 0.10
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.50
-      max_z_speed_mps: 0.30
-      max_yaw_rate_deg_s: 40.0
-
-    - type: "hover"
-      duration: 2.00
-      vision_hover: true
-
-    - type: "move"
-      frame: "world_body"
-      position: [1.25, 0.00, 0.30]
-      yaw: 1.57
-      tolerance: 0.10
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.50
-      max_z_speed_mps: 0.30
-      max_yaw_rate_deg_s: 40.0
-
-    - type: "hover"
-      duration: 2.00
-      vision_hover: true
-
-    - type: "move"
-      frame: "world_body"
-      position: [1.75, 0.00, 0.30]
-      yaw: 1.57
-      tolerance: 0.10
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.50
-      max_z_speed_mps: 0.30
-      max_yaw_rate_deg_s: 40.0
-
-    - type: "hover"
-      duration: 2.00
-      vision_hover: true
-
-    - type: "move"
-      frame: "world_body"
-      position: [0.75, 0.00, 0.30]
-      yaw: 1.57
-      tolerance: 0.10
-      yaw_tolerance_deg: 4.0
-      max_xy_speed_mps: 0.50
-      max_z_speed_mps: 0.30
-      max_yaw_rate_deg_s: 40.0
-
-    - type: "hover"
-      duration: 2.00
+      duration: 3.00
       vision_hover: true
 
     - type: "move"
@@ -140,7 +110,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
 
     - type: "move"
       frame: "world_body"
@@ -153,7 +123,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
 
     - type: "move"
       frame: "world_body"
@@ -166,7 +136,7 @@ mission:
       max_yaw_rate_deg_s: 40.0
 
     - type: "hover"
-      duration: 2.00
+      duration: 3.00
 
     - type: "hover"
       duration: 1.00
@@ -182,7 +152,7 @@ system:
   camera_aim_stable_cycles: 15
   camera_aim_max_step: 0.05
   camera_aim_wait_first_targets_timeout_s: 8.00
-  camera_aim_no_target_confirm_s: 2.00
+  camera_aim_no_target_confirm_s: 3.00
   camera_aim_record_result_timeout_s: 10.00
   camera_aim_scan_point_timeout_s: 30.00
   auto_start_mission: false
