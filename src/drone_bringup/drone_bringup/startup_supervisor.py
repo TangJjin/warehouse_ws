@@ -17,10 +17,10 @@ class StartupStep:
     ready_type: str
     timeout_sec: int
     ready_qos_reliability: str = 'reliable'
-    ready_stable_sec=3.0      # 话题至少连续稳定 3 秒
-    ready_min_messages=10      # 至少收到 10 条消息
-    ready_max_gap_sec=1.5     # 两条消息之间超过 1.5 秒就认为不稳定，重新计数
-    post_ready_delay_sec=3.0  # ready 成功后再等 3 秒，再启动下一步
+    ready_stable_sec=2.0      # 话题至少连续稳定 2 秒
+    ready_min_messages=5      # 至少收到 5 条消息
+    ready_max_gap_sec=2     # 两条消息之间超过 2 秒就认为不稳定，重新计数
+    post_ready_delay_sec=1.0  # ready 成功后再等 1 秒，再启动下一步
 
 
 class StartupSupervisor:
@@ -40,7 +40,7 @@ class StartupSupervisor:
                 command=['ros2', 'launch', 'mavros', 'px4.launch'],
                 ready_topic='/mavros/state',
                 ready_type='mavros_msgs/msg/State',
-                timeout_sec=15,
+                timeout_sec=60,
                 ready_qos_reliability='best_effort',
             ),
             StartupStep(

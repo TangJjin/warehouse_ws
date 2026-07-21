@@ -4,6 +4,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <mavros_msgs/msg/state.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -18,18 +19,24 @@ class PoseYawComparerNode : public rclcpp::Node {
     mavros_pose_qos.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
     mavros_pose_qos.durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
 
-    vision_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-        "/mavros/vision_pose/pose", mavros_pose_qos,
-        std::bind(&PoseYawComparerNode::visionCallback, this,
+    external_odom_topic_ = declare_parameter<std::string>(
+        "external_odom_topic", "/mavros/odometry/out");
+    local_pose_topic_ = declare_parameter<std::string>(
+        "local_pose_topic", "/mavros/local_position/pose");
+    state_topic_ = declare_parameter<std::string>("state_topic", "/mavros/state");
+
+    external_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        external_odom_topic_, mavros_pose_qos,
+        std::bind(&PoseYawComparerNode::externalOdomCallback, this,
                   std::placeholders::_1));
 
     local_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-        "/mavros/local_position/pose", mavros_pose_qos,
+        local_pose_topic_, mavros_pose_qos,
         std::bind(&PoseYawComparerNode::localCallback, this,
                   std::placeholders::_1));
 
     state_sub_ = create_subscription<mavros_msgs::msg::State>(
-        "/mavros/state", mavros_pose_qos,
+        state_topic_, mavros_pose_qos,
         std::bind(&PoseYawComparerNode::stateCallback, this,
                   std::placeholders::_1));
 
@@ -81,9 +88,11 @@ class PoseYawComparerNode : public rclcpp::Node {
         std::bind(&PoseYawComparerNode::printResult, this));
 
     RCLCPP_INFO(get_logger(), "pose yaw comparer started");
-    RCLCPP_INFO(get_logger(), "subscribed: /mavros/vision_pose/pose");
-    RCLCPP_INFO(get_logger(), "subscribed: /mavros/local_position/pose");
-    RCLCPP_INFO(get_logger(), "subscribed: /mavros/state");
+    RCLCPP_INFO(get_logger(), "subscribed external odometry: %s",
+                external_odom_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "subscribed local pose: %s",
+                local_pose_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "subscribed state: %s", state_topic_.c_str());
     RCLCPP_INFO(get_logger(), "subscription QoS: BEST_EFFORT / VOLATILE");
     RCLCPP_INFO(get_logger(), "publishing delta to: /pose_yaw_compare/delta");
     RCLCPP_INFO(get_logger(), "delta meaning: x=dx(m), y=dy(m), z=dyaw(deg)");
@@ -130,9 +139,22 @@ class PoseYawComparerNode : public rclcpp::Node {
     return data;
   }
 
-  void visionCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-    vision_pose_ = poseToData(*msg);
-    vision_received_ = true;
+  static PoseData odometryToData(const nav_msgs::msg::Odometry& msg) {
+    const auto& p = msg.pose.pose.position;
+    const auto& q = msg.pose.pose.orientation;
+    const double yaw_rad = quatToYaw(q.x, q.y, q.z, q.w);
+
+    PoseData data;
+    data.x = p.x;
+    data.y = p.y;
+    data.z = p.z;
+    data.yaw_deg = radToDeg(yaw_rad);
+    return data;
+  }
+
+  void externalOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    external_pose_ = odometryToData(*msg);
+    external_received_ = true;
   }
 
   void localCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
@@ -148,23 +170,25 @@ class PoseYawComparerNode : public rclcpp::Node {
   void printResult() {
     const rclcpp::Time now_time = now();
 
-    if (!vision_received_ || !local_received_) {
+    if (!external_received_ || !local_received_) {
       if ((now_time - last_wait_log_time_).seconds() > 1.0) {
         last_wait_log_time_ = now_time;
-        if (!vision_received_) {
-          RCLCPP_WARN(get_logger(), "/mavros/odometry/out not received yet");
+        if (!external_received_) {
+          RCLCPP_WARN(get_logger(), "%s not received yet",
+                      external_odom_topic_.c_str());
         }
         if (!local_received_) {
-          RCLCPP_WARN(get_logger(), "/mavros/local_position/pose not received yet");
+          RCLCPP_WARN(get_logger(), "%s not received yet",
+                      local_pose_topic_.c_str());
         }
       }
       return;
     }
 
-    const double vx = vision_pose_.x;
-    const double vy = vision_pose_.y;
-    const double vz = vision_pose_.z;
-    const double vyaw = vision_pose_.yaw_deg;
+    const double vx = external_pose_.x;
+    const double vy = external_pose_.y;
+    const double vz = external_pose_.z;
+    const double vyaw = external_pose_.yaw_deg;
 
     const double lx = local_pose_.x;
     const double ly = local_pose_.y;
@@ -184,7 +208,7 @@ class PoseYawComparerNode : public rclcpp::Node {
 
     RCLCPP_INFO(
         get_logger(),
-        "\nvision: x=%+8.3f  y=%+8.3f  z=%+8.3f  yaw=%+8.2f deg\nlocal : x=%+8.3f  y=%+8.3f  z=%+8.3f  yaw=%+8.2f deg\ndelta : dx=%+8.3f dy=%+8.3f dz=%+8.3f dyaw=%+8.2f deg",
+        "\nexternal: x=%+8.3f  y=%+8.3f  z=%+8.3f  yaw=%+8.2f deg\nlocal   : x=%+8.3f  y=%+8.3f  z=%+8.3f  yaw=%+8.2f deg\ndelta   : dx=%+8.3f dy=%+8.3f dz=%+8.3f dyaw=%+8.2f deg",
         vx, vy, vz, vyaw, lx, ly, lz, lyaw, dx, dy, dz, dyaw);
 
     // 冷启动宽限期判断：在 startup_grace_sec 时间内，即使偏差超限也不触发重启。
@@ -248,15 +272,15 @@ class PoseYawComparerNode : public rclcpp::Node {
   }
 
  private:
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr vision_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr external_odom_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_sub_;
   rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr state_sub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
-  PoseData vision_pose_;
+  PoseData external_pose_;
   PoseData local_pose_;
-  bool vision_received_ = false;
+  bool external_received_ = false;
   bool local_received_ = false;
   bool state_received_ = false;
   bool armed_ = false;
@@ -267,6 +291,10 @@ class PoseYawComparerNode : public rclcpp::Node {
   double startup_grace_sec_ = 15.0;
   int consecutive_limit_ = 10;
   int consecutive_exceed_count_ = 0;
+
+  std::string external_odom_topic_ = "/mavros/odometry/out";
+  std::string local_pose_topic_ = "/mavros/local_position/pose";
+  std::string state_topic_ = "/mavros/state";
 
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_wait_log_time_{0, 0, RCL_ROS_TIME};
