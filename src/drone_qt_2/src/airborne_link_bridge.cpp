@@ -137,7 +137,7 @@ AirborneLinkBridge::AirborneLinkBridge()
 void AirborneLinkBridge::setupRosInterfaces()
 {
     status_sub_ = this->create_subscription<drone_msgs::msg::DroneStatus>(
-        "/serial/drone/status",
+        "/drone/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const drone_msgs::msg::DroneStatus::SharedPtr msg) {
             publishDroneStatus(msg);
@@ -151,7 +151,7 @@ void AirborneLinkBridge::setupRosInterfaces()
         });
 
     task_status_sub_ = this->create_subscription<drone_msgs::msg::TaskStatus>(
-        "/serial/drone/task/status",
+        "/drone/task/status",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg) {
             publishTaskStatus(msg);
@@ -165,21 +165,21 @@ void AirborneLinkBridge::setupRosInterfaces()
         });
 
     vision_barcode_sub_ = this->create_subscription<drone_msgs::msg::BarcodeCapture>(
-        "/serial/drone/vision/barcode",
+        "/drone/vision/barcode",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg) {
             publishVisionBarcode(msg);
         });
 
     delta_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-        "/serial/drone/pose_yaw_compare/delta",
+        "/drone/pose_yaw_compare/delta",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const geometry_msgs::msg::Vector3::SharedPtr msg) {
             publishDelta(msg);
         });
 
     local_position_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-        "/serial/drone/local_position",
+        "/drone/local_position",
         rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
         [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
             publishLocalPosition(msg);
