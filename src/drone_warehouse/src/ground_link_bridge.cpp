@@ -1,4 +1,4 @@
-#include "drone_qt/ground_link_bridge.hpp"
+#include "drone_warehouse/ground_link_bridge.hpp"
 
 #include <QCoreApplication>
 #include <QDataStream>
@@ -133,6 +133,9 @@ void GroundLinkBridge::setupRosInterfaces()
 
     delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
         "/serial/drone/pose_yaw_compare/delta", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+
+    local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+        "/serial/drone/local_position", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
         "/serial/drone/upload_mission_summary",
@@ -402,6 +405,10 @@ void GroundLinkBridge::handlePacket(const Packet &packet)
     case lp::kTypeDelta:
         handleDeltaReport(packet.payload);
         break;
+    case lp::kTypeLocalPosition:
+        handleLocalPositionReport(packet.payload);
+        break;
+    
     case lp::kTypeUploadMissionSummaryResp:
         handleUploadMissionSummaryResponse(packet.seq, packet.payload);
         break;
@@ -740,6 +747,47 @@ void GroundLinkBridge::handleDeltaReport(const QByteArray &payload)
     msg.z = z;
 
     delta_pub_->publish(msg);
+}
+
+// 对应机载端 publishLocalPosition()，依次读取x、y、z、qx、qy、qz、qw，分别是位置和四元数。
+void GroundLinkBridge::handleLocalPositionReport(const QByteArray &payload)
+{
+    QDataStream stream(payload);
+    configureStream(stream);
+    useSinglePrecision(stream);
+
+    const double x = 0.0f;
+    const double y = 0.0f;
+    const double z = 0.0f;
+
+    const double qx = 0.0f;
+    const double qy = 0.0f;
+    const double qz = 0.0f;
+    const double qw = 0.0f;
+
+    stream >> x;
+    stream >> y;
+    stream >> z;
+    stream >> qx;
+    stream >> qy;
+    stream >> qz;
+    stream >> qw;
+
+    if (!streamFullyConsumed(stream)) {
+        RCLCPP_ERROR(this->get_logger(), "invalid LocalPosition payload");
+        return;
+    }
+
+    geometry_msgs::msg::PoseStamped msg;
+    msg.pose.position.x = x;
+    msg.pose.position.y = y;
+    msg.pose.position.z = z;
+    msg.pose.orientation.x = qx;
+    msg.pose.orientation.y = qy;
+    msg.pose.orientation.z = qz;
+    msg.pose.orientation.w = qw;
+
+    local_position_pub_->publish(msg);
 }
 
 // 上传任务响应格式：是否成功、提示文字、保存路径、动作数量。
