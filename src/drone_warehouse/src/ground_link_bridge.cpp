@@ -475,6 +475,8 @@ QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
     for (const auto &point : points) {
         stream << static_cast<float>(point.x);
         stream << static_cast<float>(point.y);
+        stream << static_cast<float>(point.z);
+        stream << static_cast<float>(point.yaw);
     }
 
     const auto &summary = request.summary;

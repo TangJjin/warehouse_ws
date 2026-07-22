@@ -528,12 +528,18 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
     for (quint16 i = 0; i < point_count; ++i) {
         float x = 0.0f;
         float y = 0.0f;
+        float z = 0.0f;
+        float yaw = 0.0f;
         stream >> x;
         stream >> y;
+        stream >> z;
+        stream >> yaw;
 
         drone_msgs::msg::WorldPoint point;
         point.x = x;
         point.y = y;
+        point.z = z;
+        point.yaw = yaw;
         request->points.push_back(point);
     }
 
