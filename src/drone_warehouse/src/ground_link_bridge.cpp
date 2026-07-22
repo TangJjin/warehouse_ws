@@ -756,7 +756,7 @@ void GroundLinkBridge::handleLocalPositionReport(const QByteArray &payload)
 {
     QDataStream stream(payload);
     configureStream(stream);
-    useSinglePrecision(stream);
+    useDoublePrecision(stream);
 
     double x = 0.0f;
     double y = 0.0f;
