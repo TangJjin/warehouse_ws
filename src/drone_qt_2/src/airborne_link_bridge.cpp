@@ -455,17 +455,17 @@ void AirborneLinkBridge::publishLocalPosition(const geometry_msgs::msg::PoseStam
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
     configureStream(stream);
-    useSinglePrecision(stream);
+    useDoublePrecision(stream);
 
     /*************************消息打包**************************/
 
-    stream << static_cast<float>(msg->pose.position.x);
-    stream << static_cast<float>(msg->pose.position.y);
-    stream << static_cast<float>(msg->pose.position.z);
-    stream << static_cast<float>(msg->pose.orientation.qx);
-    stream << static_cast<float>(msg->pose.orientation.qy);
-    stream << static_cast<float>(msg->pose.orientation.qz);
-    stream << static_cast<float>(msg->pose.orientation.qw);
+    stream << static_cast<double>(msg->pose.position.x);
+    stream << static_cast<double>(msg->pose.position.y);
+    stream << static_cast<double>(msg->pose.position.z);
+    stream << static_cast<double>(msg->pose.orientation.x);
+    stream << static_cast<double>(msg->pose.orientation.y);
+    stream << static_cast<double>(msg->pose.orientation.z);
+    stream << static_cast<double>(msg->pose.orientation.w);
 
     /**********************************************************/    
 
@@ -510,7 +510,7 @@ void AirborneLinkBridge::handleUploadMissionSummaryRequest(uint16_t seq, const Q
         2 +       // camera_aim_stable_cycles(uint16)
         2;        // frame_len
 
-    if (payload.size() < 2 + static_cast<int>(point_count) * 8 + fixed_summary_size) {
+    if (payload.size() < 2 + static_cast<int>(point_count) * 16 + fixed_summary_size) {
         const QByteArray msg = QByteArray("invalid payload for UploadMissionSummaryReq");
         const QByteArray saved_path;
         cacheAndSendResponse(
