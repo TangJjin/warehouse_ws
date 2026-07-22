@@ -758,14 +758,14 @@ void GroundLinkBridge::handleLocalPositionReport(const QByteArray &payload)
     configureStream(stream);
     useSinglePrecision(stream);
 
-    const double x = 0.0f;
-    const double y = 0.0f;
-    const double z = 0.0f;
+    double x = 0.0f;
+    double y = 0.0f;
+    double z = 0.0f;
 
-    const double qx = 0.0f;
-    const double qy = 0.0f;
-    const double qz = 0.0f;
-    const double qw = 0.0f;
+    double qx = 0.0f;
+    double qy = 0.0f;
+    double qz = 0.0f;
+    double qw = 0.0f;
 
     stream >> x;
     stream >> y;

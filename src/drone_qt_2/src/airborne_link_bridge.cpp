@@ -446,7 +446,7 @@ void AirborneLinkBridge::publishDelta(const geometry_msgs::msg::Vector3::SharedP
     serial_.write(frame);
 }
 
-void AirborneLinkBridge::publishLocalPosition(const geometry_msgs::msg::Vector3::SharedPtr msg)
+void AirborneLinkBridge::publishLocalPosition(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
     if (!msg) {
         return;

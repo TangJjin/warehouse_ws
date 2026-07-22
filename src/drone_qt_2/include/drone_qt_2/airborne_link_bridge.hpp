@@ -74,7 +74,7 @@ private:
     void publishReturnWorldGroup(const drone_msgs::msg::WorldGroup::SharedPtr msg);
     void publishVisionBarcode(const drone_msgs::msg::BarcodeCapture::SharedPtr msg);
     void publishDelta(const geometry_msgs::msg::Vector3::SharedPtr msg);
-    void publishLocalPosition(const geometry_msgs::msg::Vector3::SharedPtr msg);
+    void publishLocalPosition(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
     //发送ACK帧，包含被确认的序列号
     void sendAck(uint16_t seq);
