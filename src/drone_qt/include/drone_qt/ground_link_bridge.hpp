@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QSerialPort>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include "drone_msgs/msg/drone_status.hpp"
@@ -120,6 +121,7 @@ private:
     void handleReturnWorldGroupReport(const QByteArray &payload);
     void handleVisionBarcodeReport(const QByteArray &payload);
     void handleDeltaReport(const QByteArray &payload);
+    void handleLocalPositionReport(const QByteArray &payload);
     void handleUploadMissionSummaryResponse(uint16_t seq, const QByteArray &payload);
     void handleStartOffboardResponse(uint16_t seq, const QByteArray &payload);
     void handleStartTaskResponse(uint16_t seq, const QByteArray &payload);
@@ -140,6 +142,7 @@ private:
     rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_pub_;
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_pub_;
 
     std::unordered_map<uint16_t, PendingUploadMissionSummaryCall> pending_upload_calls_;
     std::unordered_map<uint16_t, PendingStartOffboardCall> pending_start_offboard_calls_;
