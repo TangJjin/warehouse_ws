@@ -3,6 +3,7 @@
 #include "drone_warehouse/models.hpp"
 #include "drone_warehouse/scene_view.hpp"
 #include "drone_warehouse/shelf_info_dialog.hpp"
+#include "drone_warehouse/connection_info_dialog.hpp"
 #include "drone_warehouse/top_status_bar.hpp"
 #include "drone_warehouse/color_palette.hpp"
 #include "drone_warehouse/ros_manager.hpp"
@@ -34,8 +35,15 @@
 #include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
+    : QMainWindow(parent),
+      config_(createDefaultWarehouseConfig())
 {
+    QString config_error;
+    if (!loadWarehouseConfig(config_, &config_error))
+    {
+        throw std::invalid_argument(config_error.toStdString());
+    }
+
     /*********************ros移植部分***********************/
     // 注册跨线程 Qt 信号里会用到的 WorldCoord 元类型。
     // 原 drone_qt 工程里 returnWorldGroupUpdated 会跨线程发 QVector<WorldCoord>，
@@ -86,18 +94,19 @@ void MainWindow::setupUi()
 
     //创建主场景视图和顶部状态栏，并把它们放在主容器里，方便统一管理布局和坐标
     scene_view_ = new SceneView(central_container_);
+
     //主场景视图占满整个主容器，悬浮控件会在上面调整位置
     scene_view_->setGeometry(central_container_->rect());
     
     top_status_bar_ = new TopStatusBar(central_container_);
-    //创建货架信息弹窗模板，先由主窗口持有，点击顶部按钮时再弹出显示
-    shelf_info_dialog_ = new ShelfInfoDialog(this);
 
-    /*********************ros移植部分***********************/
-    // RosManager 是本次从 drone_qt 移植过来的 ROS 入口。
-    // 这里先在主窗口创建它，后面统一在 setupConnections() 里连信号，在构造末尾启动 spin 线程。
-    ros_manager_ = new RosManager(this);
-    /*****************************************************/
+    //这里传入 config_.slots，确保弹窗里能正确显示当前仓库的槽位结构和航点映射。
+    shelf_info_dialog_ = new ShelfInfoDialog(config_.slots, this);
+
+    // config_.ros 已经保存了当前连接方式对应的话题和服务名称。
+    // bridge_ros 只供 ground_link_bridge 使用，地面站不在两者之间临时选择。
+    ros_manager_ = new RosManager(config_.ros, this);
+
 }
 
 void MainWindow::setupFloatingWidgets()
@@ -302,6 +311,28 @@ void MainWindow::setupConnections()
         else if(value == 2)
         {
             scene_view_->setView2DMode(View2DMode::Perspective0);
+        }
+    });
+
+    // 点击连接状态按钮后，打开连接方式和数传串口配置窗口。
+    connect(top_status_bar_, &TopStatusBar::connectionButtonClicked, this, [this]() {
+        const QPoint button_bottom_left =
+            top_status_bar_->connectionButtonBottomLeftGlobal();
+        const int margin = 20;
+
+        ConnectionInfoDialog dialog(config_, this);
+        dialog.adjustSize();
+        dialog.move(
+            button_bottom_left.x(),
+            button_bottom_left.y() + margin);
+
+        if (dialog.exec() == QDialog::Accepted)
+        {
+            // 弹窗已经完成 JSON 保存，这里同步主窗口内存中的配置。
+            // RosManager 和数传串口均在启动时创建，因此新连接方式重启后生效。
+            config_ = dialog.savedConfig();
+            run_log_view_->appendPlainText(
+                "连接配置已保存，重启地面站后生效");
         }
     });
 
@@ -579,37 +610,41 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         return;
     }
 
+    const MissionConfig &mission = config_.mission;
     drone_msgs::msg::MissionSummary summary;
-    summary.takeoff_altitude = 0.0;//起飞高度
-    summary.move_altitude = 1.2;//移动高度
-    summary.start_altitude = 0.0;//解锁高度
-    summary.yaw = 0.0;//偏航角
-    summary.tolerance = 0.10;//误差容忍
-    summary.takeoff_hover_duration = 0.0;//起飞悬停时长
-    summary.landing_hover_duration = 1.0;//降落悬停时长
-    summary.move_hover_duration = 3.0;//移动悬停时长
-    summary.add_hover_between_takeoff = false;//是否在起飞后添加悬停
-    summary.add_hover_between_landing = true;//是否在降落前添加悬停
-    summary.add_hover_between_moves = true;//是否在移动之间添加悬停
-    summary.use_camera_aim = false;//是否开启相机
-    summary.auto_start_mission = false;//是否自动启动任务
-    summary.compress_straight_segments = false;//是否压缩直线段
-    summary.frame = "world_body";
-
-    summary.cam_tolerance = 10.0;
-    summary.camera_aim_pid_p = 0.01;
-    summary.camera_aim_pid_i = 0.00;
-    summary.camera_aim_pid_d = 0.01;
-    summary.camera_aim_target_timeout_s = 1.0;
-    summary.camera_aim_stable_cycles = 15;
-    summary.camera_aim_max_step = 0.05;
-    summary.camera_aim_wait_first_targets_timeout_s = 8.0;
-    summary.camera_aim_no_target_confirm_s = 3.0;
-    summary.camera_aim_record_result_timeout_s = 10.0;
-    summary.camera_aim_scan_point_timeout_s = 30.0;
+    summary.takeoff_altitude = mission.takeoff_altitude;
+    summary.move_altitude = mission.move_altitude;
+    summary.start_altitude = mission.start_altitude;
+    summary.yaw = mission.yaw;
+    summary.tolerance = mission.tolerance;
+    summary.takeoff_hover_duration = mission.takeoff_hover_duration;
+    summary.landing_hover_duration = mission.landing_hover_duration;
+    summary.move_hover_duration = mission.move_hover_duration;
+    summary.add_hover_between_takeoff = mission.add_hover_between_takeoff;
+    summary.add_hover_between_landing = mission.add_hover_between_landing;
+    summary.add_hover_between_moves = mission.add_hover_between_moves;
+    summary.use_camera_aim = mission.use_camera_aim;
+    summary.auto_start_mission = mission.auto_start_mission;
+    summary.frame = mission.frame.toStdString();
+    summary.cam_tolerance = mission.cam_tolerance;
+    summary.camera_aim_pid_p = mission.camera_aim_pid_p;
+    summary.camera_aim_pid_i = mission.camera_aim_pid_i;
+    summary.camera_aim_pid_d = mission.camera_aim_pid_d;
+    summary.camera_aim_target_timeout_s = mission.camera_aim_target_timeout_s;
+    summary.camera_aim_stable_cycles = mission.camera_aim_stable_cycles;
+    summary.camera_aim_max_step = mission.camera_aim_max_step;
+    summary.camera_aim_wait_first_targets_timeout_s =
+        mission.camera_aim_wait_first_targets_timeout_s;
+    summary.camera_aim_no_target_confirm_s =
+        mission.camera_aim_no_target_confirm_s;
+    summary.camera_aim_record_result_timeout_s =
+        mission.camera_aim_record_result_timeout_s;
+    summary.camera_aim_scan_point_timeout_s =
+        mission.camera_aim_scan_point_timeout_s;
 
     if(trigger_source == "waypoint"){
-        summary.compress_straight_segments = true;
+        summary.compress_straight_segments =
+            mission.compress_waypoint_segments;
 
         if(path_points_.isEmpty()){
             run_log_view_->appendPlainText("航点为空，不允许航点飞行");
@@ -619,7 +654,8 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         ros_manager_->uploadMissionSummary(path_points_, summary);
     }
     else{
-        summary.compress_straight_segments = false;
+        summary.compress_straight_segments =
+            mission.compress_non_waypoint_segments;
         QVector<WorldCoord> empty_points;
         mission_upload_in_progress_ = true;
         ros_manager_->uploadMissionSummary(empty_points, summary);
@@ -653,49 +689,39 @@ void MainWindow::clearWaypointRequest()
 
 void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int row, int col)
 {
-    if (shelf_index < 0) {
+    if (shelf_index < 0 || shelf_index >= config_.shelves.size())
+    {
         run_log_view_->appendPlainText("添加航点失败：货架索引非法");
         return;
     }
-
-    if (side != "front" && side != "back") {
+    if (side != "front" && side != "back")
+    {
         run_log_view_->appendPlainText(QString("添加航点失败：side 非法：%1").arg(side));
         return;
     }
-
-    if (row < 0 || row > 3) {
+    if (row < 0 || row >= config_.slots.rows)
+    {
         run_log_view_->appendPlainText(QString("添加航点失败：row 非法：%1").arg(row));
         return;
     }
-
-    if (col < 0 || col > 2) {
+    if (col < 0 || col >= config_.slots.columns)
+    {
         run_log_view_->appendPlainText(QString("添加航点失败：col 非法：%1").arg(col));
         return;
     }
 
-    static const double z_map[4] = {1.50, 1.10, 0.70, 0.30};
-    static const double x_front_map[3] = {0.75, 1.25, 1.75};
-    static const double x_back_map[3]  = {1.75, 1.25, 0.75};
-
-    const double y = (side == "front")
-        ? static_cast<double>(shelf_index) * 1.5
-        : static_cast<double>(shelf_index + 1) * 1.5;
-
-    const double x = (side == "front")
-        ? x_front_map[col]
-        : x_back_map[col];
-
-    const double z = z_map[row];
-    const double yaw = (side == "front") ? 1.57 : 4.71;
+    const ShelfConfig &shelf = config_.shelves.at(shelf_index);
+    const bool front = side == "front";
+    const double x = front
+        ? config_.slots.waypoint_front_x_m.at(col)
+        : config_.slots.waypoint_back_x_m.at(col);
+    const double y = front ? shelf.front_waypoint_y_m : shelf.back_waypoint_y_m;
+    const double z = config_.slots.waypoint_row_z_m.at(row);
+    const double yaw = front
+        ? config_.slots.front_yaw_rad
+        : config_.slots.back_yaw_rad;
 
     path_points_.push_back({x, y, z, yaw});
-
-    //run_log_view_->appendPlainText(
-        // QString("已添加航点：x=%5 y=%6 z=%7 yaw=%8")
-        //     .arg(x, 0, 'f', 2)
-        //     .arg(y, 0, 'f', 2)
-        //     .arg(z, 0, 'f', 2)
-        //     .arg(yaw, 0, 'f', 2));
     waypoint_labels_.push_back(QString("R%1C%2").arg(row + 1).arg(col + 1));
     refreshWaypointLog();
 }
@@ -1046,32 +1072,45 @@ SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
 {
     SlotLocation location;
     static const QRegularExpression pattern("^([A-Z])-(\\d+)-(\\d+)$");
-    const QRegularExpressionMatch match = pattern.match(slot_code.trimmed());
+    const QRegularExpressionMatch match = pattern.match(slot_code.trimmed().toUpper());
     if (!match.hasMatch())
     {
         return location;
     }
 
-    const QString shelf_code = match.captured(1);
-    const int encoded_row = match.captured(2).toInt();
-    const int encoded_col = match.captured(3).toInt();
-
-    if (encoded_row < 0 || encoded_row > 3 || encoded_col < 0 || encoded_col > 2)
+    const int row = match.captured(2).toInt();
+    const int col = match.captured(3).toInt();
+    if (row < 0 || row >= config_.slots.rows ||
+        col < 0 || col >= config_.slots.columns)
     {
         return location;
     }
 
-    const int shelf_bucket = shelf_code.at(0).unicode() - QChar('A').unicode();
-    if (shelf_bucket < 0)
+    const QString prefix = match.captured(1);
+    for (int shelf_index = 0; shelf_index < config_.shelves.size(); ++shelf_index)
     {
+        const ShelfConfig &shelf = config_.shelves.at(shelf_index);
+        if (prefix == shelf.front_slot_prefix.trimmed().toUpper())
+        {
+            location.shelf_index = shelf_index;
+            location.side = "front";
+        }
+        else if (prefix == shelf.back_slot_prefix.trimmed().toUpper())
+        {
+            location.shelf_index = shelf_index;
+            location.side = "back";
+        }
+        else
+        {
+            continue;
+        }
+
+        location.row = row;
+        location.col = col;
+        location.valid = shelf_index < shelf_panel_data_.size();
         return location;
     }
 
-    location.shelf_index = shelf_bucket / 2;
-    location.side = (shelf_bucket % 2 == 0) ? "front" : "back";
-    location.row = encoded_row;
-    location.col = encoded_col;
-    location.valid = location.shelf_index >= 0 && location.shelf_index < shelf_panel_data_.size();
     return location;
 }
 
@@ -1083,7 +1122,7 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
         return nullptr;
     }
 
-    if (row < 0 || row >= 4 || col < 0 || col >= 3)
+    if (row < 0 || row >= config_.slots.rows || col < 0 || col >= config_.slots.columns)
     {
         return nullptr;
     }
@@ -1094,12 +1133,16 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
     {
         slot_list = &shelf_panel_data_[shelf_index].front_slots;
     }
-    else
+    else if (side == "back")
     {
         slot_list = &shelf_panel_data_[shelf_index].back_slots;
     }
+    else
+    {
+        return nullptr;
+    }
 
-    const int index = row * 3 + col;//行列转一维下标
+    const int index = row * config_.slots.columns + col;//行列转一维下标
     if (!slot_list || index < 0 || index >= slot_list->size())
     {
         return nullptr;
@@ -1110,41 +1153,53 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
 
 SlotLocation MainWindow::resolveSlotFromPose(const Pose3D &pose) const
 {
-    SlotLocation location;//准备一个默认无效结果
+    SlotLocation location;
 
-    if (shelf_panel_data_.size() < 2)
+    for (int shelf_index = 0; shelf_index < config_.shelves.size(); ++shelf_index)
     {
-        return location;
+        const ShelfConfig &shelf = config_.shelves.at(shelf_index);
+        for (const ShelfPoseRegionConfig &region : shelf.pose_regions)
+        {
+            if (pose.x >= region.x_min && pose.x <= region.x_max &&
+                pose.yaw >= region.yaw_min && pose.yaw <= region.yaw_max)
+            {
+                location.shelf_index = shelf_index;
+                location.side = region.side;
+                break;
+            }
+        }
+        if (location.shelf_index >= 0)
+        {
+            break;
+        }
     }
 
-    if (((pose.x >= 110.0) && (pose.x <= 140.0) && (pose.yaw >= 80.0) && (pose.yaw <= 100.0)) ||
-        ((pose.x >= -10.0) && (pose.x <= 10.0) && (pose.yaw >= -100.0) && (pose.yaw <= -80.0)))//第 1 个货架判定标准
+    if (location.shelf_index < 0 ||
+        location.shelf_index >= shelf_panel_data_.size())
     {
-        location.shelf_index = 0;
-    }
-    else if (((pose.x >= -10.0) && (pose.x <= 10.0) && (pose.yaw >= 80.0) && (pose.yaw <= 100.0)) ||
-        ((pose.x >= -140.0) && (pose.x <= -110.0) && (pose.yaw >= -100.0) && (pose.yaw <= -80.0)))//第 2 个货架判定标准
-    {
-        location.shelf_index = 1;
-    }
-    else
-    {
-        return location;
+        return {};
     }
 
-    const double normalized_yaw = std::fmod(std::fmod(pose.yaw, 360.0) + 360.0, 360.0);//归一化 yaw
-    location.side = (std::abs(normalized_yaw - 90.0) <= std::abs(normalized_yaw - 180.0)) ? "front" : "back";//比较离 90° 和 180° 哪个更近
+    const double clamped_y = qBound(
+        config_.slots.pose_y_min, pose.y, config_.slots.pose_y_max);
+    const double clamped_z = qBound(
+        config_.slots.pose_z_min, pose.z, config_.slots.pose_z_max);
+    const double normalized_col =
+        (clamped_y - config_.slots.pose_y_min) /
+        (config_.slots.pose_y_max - config_.slots.pose_y_min);
+    const double normalized_row =
+        (clamped_z - config_.slots.pose_z_min) /
+        (config_.slots.pose_z_max - config_.slots.pose_z_min);
 
-    const double clamped_y = qBound(-100.0, pose.y, 50.0);//先把 `y` 限制到 `[-100, 50]`
-    const double clamped_z = qBound(0.0, pose.z, 160.0);//先把 `z` 限制到 `[0, 160]`
-
-    const double normalized_col = (clamped_y + 100.0) / 150.0;//把 `y` 从 `[-100, 50]` 映射到 `[0, 1]`
-    const double normalized_row = clamped_z / 160.0;//把 `z` 从 `[0, 160]` 映射到 `[0, 1]`
-
-    //判断行列
-    location.col = qBound(0, static_cast<int>(normalized_col * 3.0), 2);
-    location.row = qBound(0, static_cast<int>(normalized_row * 4.0), 3);
-    location.valid = true;//标志成功定位
+    location.col = qBound(
+        0,
+        static_cast<int>(normalized_col * config_.slots.columns),
+        config_.slots.columns - 1);
+    location.row = qBound(
+        0,
+        static_cast<int>(normalized_row * config_.slots.rows),
+        config_.slots.rows - 1);
+    location.valid = true;
     return location;
 }
 
@@ -1327,85 +1382,40 @@ void MainWindow::applyWindowStyle()
 
 void MainWindow::setupDemoData()
 {
-
-    /*********************无人机位置修改***********************/
-
     WarehouseSceneData data;
-
     data.drone_state.flight_mode = "OFFBOARD";
-
     data.drone_state.pose.z = 0.0;
     data.drone_state.speed = 4.2;
     data.drone_state.battery = 87.0;
 
-    scene_data_ = data;//先把演示数据复制到成员里，后面 ROS 实时更新时会直接改这份成员数据
+    shelf_panel_data_.clear();
+    for (const ShelfConfig &shelf_config : config_.shelves)
+    {
+        ShelfBlock shelf;
+        shelf.base_rect = shelf_config.base_rect;
+        shelf.height = shelf_config.height;
+        shelf.name = shelf_config.code;
+        shelf.color = shelf_config.scene_color;
+        data.shelves.push_back(shelf);
 
-    /*********************************************************/
+        ShelfPanelData panel;
+        panel.display_name = shelf_config.display_name;
+        panel.button_status_color = shelf_config.button_status_color;
+        panel.front_slots.resize(config_.slots.slotCountPerSide());
+        panel.back_slots.resize(config_.slots.slotCountPerSide());
+        shelf_panel_data_.push_back(panel);
+    }
 
-    /**********************货架尺寸更改************************/
-
-    //QRectF(-200, -120, 80, 160)：左上角x，左上角y，底面宽，底面长
-    //height是货架的高度，name是货架的名字
-    ShelfBlock shelf1;
-    shelf1.base_rect = QRectF(-90, -100, 30, 150);
-    shelf1.height = 160;
-    shelf1.name = "A01";
-    shelf1.color = ColorPalette::withAlpha(ColorPalette::BlueGrayDark, 180);
-    data.shelves.push_back(shelf1);
-
-    ShelfBlock shelf2;
-    shelf2.base_rect = QRectF(60, -100, 30, 150);
-    shelf2.height = 160;
-    shelf2.name = "A02";
-    shelf2.color = ColorPalette::withAlpha(ColorPalette::BlueGrayDark, 180);
-    data.shelves.push_back(shelf2);
-
-    /*********************************************************/
-
-    /**********************轨迹位置更改************************/
-
-    // data.trajectory.push_back({140, 125, 0});
-
-    /*********************************************************/
-
-    scene_view_->setSceneData(data);
-    scene_data_ = data;//把最终演示场景保存成成员，后面 ROS 位置/状态更新时直接在这份数据上改
-
+    scene_data_ = data;
+    scene_view_->setSceneData(scene_data_);
     top_status_bar_->setConnected(data.drone_state.connected);
     top_status_bar_->setTaskText("任务待命");
 
-
-    /**********************货架信息更改************************/
-
-    // 这里开始统一准备“货架弹窗”需要的全部演示数据。
-    // 现在不再像之前那样拆成很多 QStringList，而是一个货架对应一个 ShelfPanelData。
-    // 这样做的好处是：
-    // 1. 所有假数据都集中在 MainWindow 里，后面查起来不容易乱。
-    // 2. 一个货架的名称、前面点位、后面点位都装在一起，结构更清楚。
-    // 3. 后面如果你要把假数据换成 ROS / 数据库 / 接口数据，也更容易整体替换。
-
-    // -------------------- 货架1数据 --------------------
-    shelf_panel_data_.clear();
-
-    ShelfPanelData shelf1_panel;
-    shelf1_panel.display_name = "货架1";//顶部按钮和弹窗标题里显示的名称
-    shelf1_panel.button_status_color = "#00d48a";//顶部按钮前面的状态灯颜色，这里交给主窗口统一决定
-    shelf1_panel.front_slots.resize(12);//前面固定16个点位，对应4x4网格
-    shelf1_panel.back_slots.resize(12);//后面固定16个点位，对应4x4网格
-
-    // -------------------- 货架2数据 --------------------
-    ShelfPanelData shelf2_panel;
-    shelf2_panel.display_name = "货架2";//第二个顶部按钮和标题显示名称
-    shelf2_panel.button_status_color = "#f0b400";//第二个顶部按钮前面的状态灯颜色
-    shelf2_panel.front_slots.resize(12);
-    shelf2_panel.back_slots.resize(12);
-
-    // 把两个货架的数据一起压进总列表。
-    shelf_panel_data_.push_back(shelf1_panel);
-    shelf_panel_data_.push_back(shelf2_panel);
-
     QString storage_error;
-    if (ShelfPanelStorage::load(shelf_panel_data_, &storage_error))
+    if (ShelfPanelStorage::load(
+            config_.slots.slotCountPerSide(),
+            shelf_panel_data_,
+            &storage_error))
     {
         run_log_view_->appendPlainText(
             QString("已加载货架持久化数据：%1，文件：%2")
@@ -1420,12 +1430,7 @@ void MainWindow::setupDemoData()
                 .arg(ShelfPanelStorage::defaultFilePath()));
     }
 
-    // 最后把整包货架弹窗数据一次性传给 ShelfInfoDialog。
-    // 从这里开始，弹窗只负责显示，不再自己写任何假数据。
     shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
-
-    /*********************************************************/
-
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
@@ -1495,11 +1500,11 @@ QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
         const ShelfPanelData &shelf = shelf_panel_data_[shelf_index];
 
         auto append_slot_items = [&](const QVector<ShelfSlotItem> &slot_items, const QString &side) {
-            for (int row = 0; row < 4; ++row)
+            for (int row = 0; row < config_.slots.rows; ++row)
             {
-                for (int col = 0; col < 3; ++col)
+                for (int col = 0; col < config_.slots.columns; ++col)
                 {
-                    const int index = row * 3 + col;
+                    const int index = row * config_.slots.columns + col;
                     if (index < 0 || index >= slot_items.size())
                     {
                         continue;

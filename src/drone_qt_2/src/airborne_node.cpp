@@ -79,8 +79,6 @@ void AirborneNode::setupInterfaces()
     status_sub_ = this->create_subscription<mavros_msgs::msg::State>(
         "/mavros/state", status_qos,
         [this](const mavros_msgs::msg::State::SharedPtr msg) {
-            mavros_state_received_ = true;
-            last_mavros_state_time_ = std::chrono::steady_clock::now();
             if (msg->mode == "MANUAL") {
                 flight_mode = drone_msgs::msg::DroneStatus::MODE_MANUAL;
             } else if (msg->mode == "OFFBOARD") {
@@ -121,7 +119,14 @@ void AirborneNode::setupInterfaces()
     local_position_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
         "/mavros/local_position/pose", position_qos,
         [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-            local_position_pub_->publish(*msg);
+            position_x = msg->pose.position.x;
+            position_y = msg->pose.position.y;
+            position_z = msg->pose.position.z;
+
+            position_qx = msg->pose.orientation.x;
+            position_qy = msg->pose.orientation.y;
+            position_qz = msg->pose.orientation.z;
+            position_qw = msg->pose.orientation.w;
         });
 
     auto control_status_qos =
@@ -217,28 +222,7 @@ void AirborneNode::setupInterfaces()
 
 void AirborneNode::onTimer()
 {
-    updateMavrosConnectionTimeout();
     publishStatus();
-}
-
-void AirborneNode::updateMavrosConnectionTimeout()
-{
-    if (!mavros_state_received_) {
-        connected = false;
-        armed = false;
-        flight_mode = drone_msgs::msg::DroneStatus::MODE_UNKNOWN;
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    const double elapsed_sec =
-        std::chrono::duration<double>(now - last_mavros_state_time_).count();
-
-    if (elapsed_sec > mavros_state_timeout_sec_) {
-        connected = false;
-        armed = false;
-        flight_mode = drone_msgs::msg::DroneStatus::MODE_UNKNOWN;
-    }
 }
 
 void AirborneNode::publishStatus()
@@ -251,6 +235,16 @@ void AirborneNode::publishStatus()
     status_msg.battery_voltage = battery_voltage;
     status_msg.battery_percent = battery_percent;
     status_pub_->publish(status_msg);
+
+    geometry_msgs::msg::PoseStamped position_msg;
+    position_msg.pose.position.x = position_x;
+    position_msg.pose.position.y = position_y;
+    position_msg.pose.position.z = position_z;
+    position_msg.pose.orientation.x = position_qx;
+    position_msg.pose.orientation.y = position_qy;
+    position_msg.pose.orientation.z = position_qz;
+    position_msg.pose.orientation.w = position_qw;
+    local_position_pub_->publish(position_msg);
 
     if (armed == true) {
         if (unlock_flag_ == false) {
@@ -399,7 +393,7 @@ bool AirborneNode::saveMissionYamlToFile(
     std::string &error_message)
 {
     //将接收到的yaml字符串保存到文件中，并返回保存路径和错误信息
-    const std::string dir_path = "/home/sunrise/warehouse_ws/src/drone_mission/config";
+    const std::string dir_path = "/home/orangepi/drone_ws/src/drone_mission/config";
     const std::string file_path = dir_path + "/ground_mission.yaml";
 
     //使用std::filesystem创建目录，如果目录不存在的话
@@ -486,11 +480,11 @@ void AirborneNode::handleUploadMissionSummary(
 
     if(waypoint_or_button_ == false)
     {
-        current_mission_path_ = "/home/sunrise/warehouse_ws/src/drone_mission/warehouse/mission.yaml";
+        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/warehouse/mission.yaml";
     }
     else
     {
-        current_mission_path_ = "/home/sunrise/warehouse_ws/src/drone_mission/config/ground_mission.yaml";
+        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/config/ground_mission.yaml";
     }
 
     response->success = true;
@@ -543,7 +537,7 @@ bool AirborneNode::startOffboardCommand()
 
     const QString command = QString(
         "source /opt/ros/humble/setup.bash && "
-        "source ~/warehouse_ws/install/setup.bash && "
+        "source ~/drone_ws/install/setup.bash && "
         "exec ros2 launch drone_bringup run_offboard.launch.py "
         "mission_config_path:=%1 "
         "enable_offboard_control:=true ")
@@ -566,7 +560,7 @@ bool AirborneNode::startTaskCommand()
 {
     const std::string command =
         "bash -lc 'source /opt/ros/humble/setup.bash && "
-        "source ~/warehouse_ws/install/setup.bash && "
+        "source ~/drone_ws/install/setup.bash && "
         "ros2 topic pub --once /start_mission std_msgs/msg/Empty \"{}\"'";
 
     std::thread([this, command]() {

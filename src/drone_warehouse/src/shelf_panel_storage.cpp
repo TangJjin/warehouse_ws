@@ -1,18 +1,16 @@
 #include "drone_warehouse/shelf_panel_storage.hpp"
 
-#include <QCoreApplication>
+#include "drone_warehouse/warehouse_config.hpp"
+
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
-#include <QStandardPaths>
 
 namespace
 {
-    constexpr int kExpectedSlotCountPerSide = 12;
-
     QJsonObject slotImageToJson(const SlotImageData &image)
     {
         QJsonObject object;
@@ -52,8 +50,6 @@ namespace
         }
 
         QJsonObject object;
-        object.insert("display_name", shelf.display_name);
-        object.insert("button_status_color", shelf.button_status_color);
         object.insert("front_slots", front_slots);
         object.insert("back_slots", back_slots);
         return object;
@@ -88,18 +84,17 @@ namespace
         return slot;
     }
 
-    bool fillShelfPanelFromJson(const QJsonObject &object, ShelfPanelData &shelf)
+    bool fillShelfPanelFromJson(const QJsonObject &object,
+                                int expected_slots_per_side,
+                                ShelfPanelData &shelf)
     {
         const QJsonArray front_slots = object.value("front_slots").toArray();
         const QJsonArray back_slots = object.value("back_slots").toArray();
-        if (front_slots.size() != kExpectedSlotCountPerSide ||
-            back_slots.size() != kExpectedSlotCountPerSide)
+        if (front_slots.size() != expected_slots_per_side ||
+            back_slots.size() != expected_slots_per_side)
         {
             return false;
         }
-
-        shelf.display_name = object.value("display_name").toString();
-        shelf.button_status_color = object.value("button_status_color").toString();
         shelf.front_slots.clear();
         shelf.back_slots.clear();
         shelf.front_slots.reserve(front_slots.size());
@@ -129,19 +124,12 @@ namespace
 
 QString ShelfPanelStorage::defaultFilePath()
 {
-    QString base_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (base_dir.isEmpty())
+    QDir data_directory(warehouseDataDirectory());
+    if (!data_directory.exists())
     {
-        base_dir = QCoreApplication::applicationDirPath();
+        data_directory.mkpath(".");
     }
-
-    QDir dir(base_dir);
-    if (!dir.exists())
-    {
-        dir.mkpath(".");
-    }
-
-    return dir.filePath("shelf_panel_data.json");
+    return shelfPanelDataFilePath();
 }
 
 bool ShelfPanelStorage::save(const QVector<ShelfPanelData> &shelves, QString *error_message)
@@ -190,6 +178,7 @@ bool ShelfPanelStorage::save(const QVector<ShelfPanelData> &shelves, QString *er
 }
 
 bool ShelfPanelStorage::load(const QString &file_path,
+                             int expected_slots_per_side,
                              QVector<ShelfPanelData> &shelves,
                              QString *error_message)
 {
@@ -233,10 +222,22 @@ bool ShelfPanelStorage::load(const QString &file_path,
         return false;
     }
 
+    if (shelves_array.size() != shelves.size())
+    {
+        if (error_message)
+        {
+            *error_message = QString("货架数量不匹配：配置为 %1，文件为 %2")
+                .arg(shelves.size())
+                .arg(shelves_array.size());
+        }
+        return false;
+    }
+
     QVector<ShelfPanelData> loaded_shelves;
     loaded_shelves.reserve(shelves_array.size());
-    for (const QJsonValue &value : shelves_array)
+    for (int shelf_index = 0; shelf_index < shelves_array.size(); ++shelf_index)
     {
+        const QJsonValue value = shelves_array.at(shelf_index);
         if (!value.isObject())
         {
             if (error_message)
@@ -246,8 +247,9 @@ bool ShelfPanelStorage::load(const QString &file_path,
             return false;
         }
 
-        ShelfPanelData shelf;
-        if (!fillShelfPanelFromJson(value.toObject(), shelf))
+        ShelfPanelData shelf = shelves.at(shelf_index);
+        if (!fillShelfPanelFromJson(
+                value.toObject(), expected_slots_per_side, shelf))
         {
             if (error_message)
             {
@@ -263,7 +265,10 @@ bool ShelfPanelStorage::load(const QString &file_path,
     return true;
 }
 
-bool ShelfPanelStorage::load(QVector<ShelfPanelData> &shelves, QString *error_message)
+bool ShelfPanelStorage::load(int expected_slots_per_side,
+                             QVector<ShelfPanelData> &shelves,
+                             QString *error_message)
 {
-    return load(defaultFilePath(), shelves, error_message);
+    return load(
+        defaultFilePath(), expected_slots_per_side, shelves, error_message);
 }

@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "drone_warehouse/models.hpp"
+#include "drone_warehouse/warehouse_config.hpp"
 #include "drone_msgs/msg/mission_summary.hpp"
 
 class QLabel;
@@ -88,7 +89,7 @@ private:
         const QByteArray &image_data,
         const QString &image_format,
         const QString &time_text);
-        
+
     void appendVisionBarcodeCount(
         const QString &barcode,
         const QString &time_text);
@@ -110,6 +111,8 @@ private:
     /******************************************************/
 
 private:
+    WarehouseConfig config_;//当前仓库配置，包含货架、槽位、任务、串口和 ROS 接口
+
     QWidget *central_container_ = nullptr;//主容器，所有内容都放在这里面，方便统一管理布局和坐标
     SceneView *scene_view_ = nullptr;//主场景视图，负责绘制仓库、无人机和轨迹
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏

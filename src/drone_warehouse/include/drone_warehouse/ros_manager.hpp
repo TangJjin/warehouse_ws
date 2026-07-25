@@ -14,6 +14,7 @@
 #include "drone_warehouse/models.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include <QMap>
+#include "drone_warehouse/warehouse_config.hpp"
 
 #include "drone_msgs/msg/drone_status.hpp"
 #include "drone_msgs/msg/task_status.hpp"
@@ -35,7 +36,9 @@ class RosManager : public QObject
 
     public:
         //构造函数和析构函数
-        explicit RosManager(QObject *parent = nullptr);
+        explicit RosManager(
+            const RosTopicConfig &topic_config,
+            QObject *parent = nullptr);
         ~RosManager() override;
 
         //定义一个公共方法，用于启动ROS spinning线程
@@ -110,6 +113,8 @@ class RosManager : public QObject
     private:
         //负责设置ROS接口，如订阅、服务客户端等
         void setupRosInterfaces();
+
+        RosTopicConfig topic_config_;
 
         //成员变量：一个标志表示是否已启动
         //一个ROS节点指针，两个状态订阅者，一个服务客户端，一个ROS执行器，以及一个线程用于ROS spinning

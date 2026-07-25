@@ -1,7 +1,7 @@
 #pragma once
 
 #include "drone_warehouse/models.hpp"
-#include "drone_warehouse/mainwindow.hpp"
+#include "drone_warehouse/warehouse_config.hpp"
 
 #include <QDialog>
 #include <QIcon>
@@ -11,6 +11,7 @@
 class QColor;
 class QEvent;
 class QGridLayout;
+class QHBoxLayout;
 class QLabel;
 class QObject;
 class QPushButton;
@@ -20,7 +21,9 @@ class ShelfInfoDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit ShelfInfoDialog(QWidget *parent = nullptr);//货架信息弹窗模板，后续可在这里继续扩展真实内容
+    explicit ShelfInfoDialog(
+        const SlotGridConfig &slot_config,//传入槽位结构和航点映射配置
+        QWidget *parent = nullptr);
 
     // 主窗口会把“所有货架的完整弹窗数据”一次性传进来。
     // 这里不再像之前那样分散传很多 QStringList，而是直接传结构化后的 QVector<ShelfPanelData>。
@@ -32,19 +35,18 @@ signals:
                               const QString &category_id, const QString &package_id);
     void manualStockOutRequested(int shelf_index, const QString &side, int row, int col,
                                 const QString &category_id, const QString &package_id);
-            
+
     void setWaypointRequested(int shelf_index, const QString &side, int row, int col);
     void clearWaypointRequested();
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;//监听槽位按钮双击事件
-    void showShelf1Info();//切换并显示货架1的面板内容
-    void showShelf2Info();//切换并显示货架2的面板内容
     void showShelfInfo(int index);//按索引切换当前货架，再刷新网格和详情
 
     void switchToFront();//切换到前面网格
     void switchToBack();//切换到后面网格
-    void buildSlotGrid();//创建4x4网格按钮
+    void buildSlotGrid();//根据配置创建槽位网格按钮
+    void buildShelfButtons();//根据配置创建货架切换按钮
     void updateSlotGrid();//按当前面刷新所有网格按钮显示
     void handleSlotClicked(int row, int col);//点击某个点位后的处理
     void updateSlotDetail(const QString &slot_name, const QString &category_id, const QString &package_id);//刷新下方详情区
@@ -71,10 +73,10 @@ private:
                                         QByteArray &payload) const;
 
 private:
+    SlotGridConfig slot_config_;
+
     QLabel *title_label_ = nullptr;//弹窗标题
 
-    QPushButton *shelf1_button_ = nullptr;//顶部货架1切换按钮
-    QPushButton *shelf2_button_ = nullptr;//顶部货架2切换按钮
     QPushButton *stock_in_button_ = nullptr;//入库按钮
     QPushButton *outgoing_button_ = nullptr;//出库按钮
     QPushButton *add_button_ = nullptr;//添加航点按钮
@@ -84,8 +86,10 @@ private:
     QPushButton *front_button_ = nullptr;//切换到前面货位网格
     QPushButton *back_button_ = nullptr;//切换到后面货位网格
 
-    QVector<QPushButton*> slot_buttons_;//保存4x4网格里的16个按钮
-    QGridLayout *slot_grid_layout_ = nullptr;//4x4货位网格布局
+    QVector<QPushButton*> shelf_buttons_;//保存当前配置对应的全部货架按钮
+    QVector<QPushButton*> slot_buttons_;//保存当前配置对应的全部槽位按钮
+    QHBoxLayout *shelf_switch_layout_ = nullptr;//动态货架切换按钮布局
+    QGridLayout *slot_grid_layout_ = nullptr;//配置驱动的货位网格布局
 
     QLabel *slot_value_label_ = nullptr;//当前点击的点位，例如 前面 R1C1
     QLabel *category_value_label_ = nullptr;//当前点位的类别编号

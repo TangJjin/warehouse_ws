@@ -105,9 +105,13 @@ namespace
     }
 }
 
-GroundLinkBridge::GroundLinkBridge()
+GroundLinkBridge::GroundLinkBridge(
+    const RosTopicConfig &topic_config,
+    const SerialPortConfig &serial_config)
     : QObject(),
-      rclcpp::Node("ground_link_bridge")
+      rclcpp::Node(topic_config.node_name.toStdString()),
+      topic_config_(topic_config),
+      serial_config_(serial_config)
 {
     setupRosInterfaces();
     setupSerial();
@@ -117,28 +121,28 @@ void GroundLinkBridge::setupRosInterfaces()
 {
     /*************** 创建与机载端相对应的通信接口 ***************/
     status_pub_ = this->create_publisher<drone_msgs::msg::DroneStatus>(
-        "/serial/drone/status", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        topic_config_.drone_status.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     task_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
-        "/serial/drone/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        topic_config_.task_status.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
-        "/serial/drone/control/path_ready", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        topic_config_.path_ready.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
-        "/serial/drone/return/world_group", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        topic_config_.return_world_group.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     vision_barcode_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
-        "/serial/drone/vision/barcode", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        topic_config_.vision_barcode.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
-        "/serial/drone/pose_yaw_compare/delta", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        topic_config_.pose_delta.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
-        "/serial/drone/local_position", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        topic_config_.local_position.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
-        "/serial/drone/upload_mission_summary",
+        topic_config_.upload_mission_service.toStdString(),
         [this](
         const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
         std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response)
@@ -190,7 +194,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
-        "/serial/drone/start_offboard",
+        topic_config_.start_offboard_service.toStdString(),
         [this](
         const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
         std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response)
@@ -233,7 +237,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     start_task_srv_ = this->create_service<drone_msgs::srv::StartTask>(
-        "/serial/drone/start_task",
+        topic_config_.start_task_service.toStdString(),
         [this](
         const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
         std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
@@ -276,7 +280,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     stop_push_srv_ = this->create_service<drone_msgs::srv::StartTask>(
-        "/serial/drone/stop_push",
+        topic_config_.stop_push_service.toStdString(),
         [this](
         const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
         std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
@@ -324,19 +328,21 @@ void GroundLinkBridge::setupRosInterfaces()
 /************************ 用户层 *************************/
 void GroundLinkBridge::setupSerial()
 {
-    serial_.setPortName("/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0");
-    serial_.setBaudRate(QSerialPort::Baud115200);
-    serial_.setDataBits(QSerialPort::Data8);
-    serial_.setParity(QSerialPort::NoParity);
-    serial_.setStopBits(QSerialPort::OneStop);
-    serial_.setFlowControl(QSerialPort::NoFlowControl);
+    serial_.setPortName(serial_config_.port_name);
+    serial_.setBaudRate(serial_config_.baud_rate);
+    serial_.setDataBits(serial_config_.data_bits);
+    serial_.setParity(serial_config_.parity);
+    serial_.setStopBits(serial_config_.stop_bits);
+    serial_.setFlowControl(serial_config_.flow_control);
 
     QObject::connect(&serial_, &QSerialPort::readyRead, [this]() {
         onSerialReadyRead();
     });
 
     if (!serial_.open(QIODevice::ReadWrite)) {
-        RCLCPP_ERROR(this->get_logger(), "failed to open serial port");
+        RCLCPP_ERROR(
+            this->get_logger(), "failed to open serial port: %s",
+            serial_config_.port_name.toStdString().c_str());
     }
 }
 

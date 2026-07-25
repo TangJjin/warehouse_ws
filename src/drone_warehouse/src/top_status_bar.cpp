@@ -89,6 +89,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     exit_long_press_timer_ = new QTimer(this);
     exit_long_press_timer_->setSingleShot(true);
 
+    connect(connection_button_, &QPushButton::clicked, this, &TopStatusBar::connectionButtonClicked);
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(analysis_button_, &QPushButton::clicked, this, &TopStatusBar::aiAnalyzeButtonClicked);
@@ -236,6 +237,11 @@ void TopStatusBar::setTimeTriggerEnabled(bool enabled)
 }
 /******************************************************/
 
+QPoint TopStatusBar::connectionButtonBottomLeftGlobal() const
+{
+    return connection_button_->mapToGlobal(
+        QPoint(0, connection_button_->height()));
+}
 QPoint TopStatusBar::shelfButtonBottomLeftGlobal() const
 {
     return shelf_button_->mapToGlobal(QPoint(0, shelf_button_->height()));
