@@ -17,6 +17,7 @@
 #include "drone_msgs/msg/ready_status.hpp"
 #include "drone_msgs/msg/world_group.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
+#include "drone_msgs/msg/industrial_camera_params.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 #include "drone_msgs/srv/start_offboard.hpp"
@@ -110,6 +111,9 @@ private:
         const drone_msgs::srv::StartOffboard::Request &request) const;
     QByteArray encodeStartTaskRequest(
         const drone_msgs::srv::StartTask::Request &request) const;
+    // 完整相机参数使用独立帧发送，机载端收到后原样发布到视觉节点。
+    QByteArray encodeIndustrialCameraParams(
+        const drone_msgs::msg::IndustrialCameraParams &message) const;
     QByteArray encodeStopPushRequest(
         const drone_msgs::srv::StartTask::Request &request) const;
 
@@ -148,6 +152,7 @@ private:
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_pub_;
+    rclcpp::Subscription<drone_msgs::msg::IndustrialCameraParams>::SharedPtr industrial_camera_params_sub_;
 
     std::unordered_map<uint16_t, PendingUploadMissionSummaryCall> pending_upload_calls_;
     std::unordered_map<uint16_t, PendingStartOffboardCall> pending_start_offboard_calls_;

@@ -84,6 +84,7 @@ MainWindow::MainWindow(QWidget *parent)
     if (ros_manager_)
     {
         ros_manager_->start();
+        ros_manager_->publishIndustrialCameraParams(config_.industrial_camera);
     }
     /******************************************************/
 }
@@ -367,6 +368,7 @@ void MainWindow::setupConnections()
             {
                 //
                 config_ = parameter_dialog.savedConfig();
+                ros_manager_->publishIndustrialCameraParams(config_.industrial_camera);
 
                 // run_log_view_->appendPlainText(
                 //     "仓储智航参数已启用");
@@ -655,30 +657,45 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     summary.start_altitude = mission.start_altitude;
     summary.yaw = mission.yaw;
     summary.tolerance = mission.tolerance;
+    summary.yaw_tolerance_deg = mission.yaw_tolerance_deg;
+    summary.max_xy_speed_mps = mission.max_xy_speed_mps;
+    summary.max_z_speed_mps = mission.max_z_speed_mps;
+    summary.max_yaw_rate_deg_s = mission.max_yaw_rate_deg_s;
     summary.takeoff_hover_duration = mission.takeoff_hover_duration;
     summary.landing_hover_duration = mission.landing_hover_duration;
     summary.move_hover_duration = mission.move_hover_duration;
     summary.add_hover_between_takeoff = mission.add_hover_between_takeoff;
     summary.add_hover_between_landing = mission.add_hover_between_landing;
     summary.add_hover_between_moves = mission.add_hover_between_moves;
-    summary.use_camera_aim = mission.use_camera_aim;
     summary.auto_start_mission = mission.auto_start_mission;
     summary.frame = mission.frame.toStdString();
-    summary.cam_tolerance = mission.cam_tolerance;
-    summary.camera_aim_pid_p = mission.camera_aim_pid_p;
-    summary.camera_aim_pid_i = mission.camera_aim_pid_i;
-    summary.camera_aim_pid_d = mission.camera_aim_pid_d;
-    summary.camera_aim_target_timeout_s = mission.camera_aim_target_timeout_s;
-    summary.camera_aim_stable_cycles = mission.camera_aim_stable_cycles;
-    summary.camera_aim_max_step = mission.camera_aim_max_step;
-    summary.camera_aim_wait_first_targets_timeout_s =
-        mission.camera_aim_wait_first_targets_timeout_s;
-    summary.camera_aim_no_target_confirm_s =
-        mission.camera_aim_no_target_confirm_s;
-    summary.camera_aim_record_result_timeout_s =
-        mission.camera_aim_record_result_timeout_s;
-    summary.camera_aim_scan_point_timeout_s =
-        mission.camera_aim_scan_point_timeout_s;
+
+    // The ROS message is structured even though YAML writes these keys flat under system.
+    const VisualServoConfig &visual = config_.visual_servo;
+    summary.visual_servo.target_id = visual.target_id.toStdString();
+    summary.visual_servo.require_confirmed = visual.require_confirmed;
+    summary.visual_servo.image_x_axis = visual.image_x_axis.toStdString();
+    summary.visual_servo.image_y_axis = visual.image_y_axis.toStdString();
+    summary.visual_servo.image_x_sign = visual.image_x_sign;
+    summary.visual_servo.image_y_sign = visual.image_y_sign;
+    summary.visual_servo.kp_x = visual.kp_x;
+    summary.visual_servo.ki_x = visual.ki_x;
+    summary.visual_servo.kd_x = visual.kd_x;
+    summary.visual_servo.kp_y = visual.kp_y;
+    summary.visual_servo.ki_y = visual.ki_y;
+    summary.visual_servo.kd_y = visual.kd_y;
+    summary.visual_servo.integral_limit = visual.integral_limit;
+    summary.visual_servo.filter_alpha = visual.filter_alpha;
+    summary.visual_servo.enter_tolerance_x = visual.enter_tolerance_x;
+    summary.visual_servo.enter_tolerance_y = visual.enter_tolerance_y;
+    summary.visual_servo.exit_tolerance_x = visual.exit_tolerance_x;
+    summary.visual_servo.exit_tolerance_y = visual.exit_tolerance_y;
+    summary.visual_servo.settle_time_s = visual.settle_time_s;
+    summary.visual_servo.acquire_timeout_s = visual.acquire_timeout_s;
+    summary.visual_servo.lost_timeout_s = visual.lost_timeout_s;
+    summary.visual_servo.overall_timeout_s = visual.overall_timeout_s;
+    summary.visual_servo.max_body_speed_mps = visual.max_body_speed_mps;
+    summary.visual_servo.continue_on_timeout = visual.continue_on_timeout;
 
     if(trigger_source == "waypoint"){
         summary.compress_straight_segments =

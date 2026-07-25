@@ -217,6 +217,11 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
             has_delta_msg_ = true;//设置标志，表示已经接收到过delta消息
         });
 
+    // Keep the latest complete settings for a vision node that starts later.
+    industrial_camera_params_pub_ =
+        node_->create_publisher<drone_msgs::msg::IndustrialCameraParams>(
+            topic_config_.industrial_camera_params.toStdString(),
+            rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
     //创建一个服务客户端，用于调用任务启动服务
     start_task_client_ = node_->create_client<drone_msgs::srv::StartTask>(
         topic_config_.start_task_service.toStdString());
@@ -278,6 +283,33 @@ void RosManager::start()
     });
 
     started_ = true;
+}
+
+void RosManager::publishIndustrialCameraParams(const IndustrialCameraConfig &config)
+{
+    if (!industrial_camera_params_pub_)
+    {
+        return;
+    }
+
+    drone_msgs::msg::IndustrialCameraParams message;
+    message.auto_exposure = config.auto_exposure;
+    message.exposure_absolute = config.exposure_absolute;
+    message.auto_exposure_priority = config.auto_exposure_priority;
+    message.gain = config.gain;
+    message.brightness = config.brightness;
+    message.contrast = config.contrast;
+    message.saturation = config.saturation;
+    message.gamma = config.gamma;
+    message.sharpness = config.sharpness;
+    message.backlight_compensation = config.backlight_compensation;
+    message.auto_white_balance = config.auto_white_balance;
+    message.white_balance_temperature = config.white_balance_temperature;
+    message.power_line_frequency = config.power_line_frequency;
+    message.auto_focus = config.auto_focus;
+    message.focus_absolute = config.focus_absolute;
+    message.zoom_absolute = config.zoom_absolute;
+    industrial_camera_params_pub_->publish(message);
 }
 
 /*********************ros移植部分***********************/

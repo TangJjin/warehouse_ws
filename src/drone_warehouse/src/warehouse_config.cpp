@@ -28,6 +28,7 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
         config.vision_barcode,
         config.local_position,
         config.pose_delta,
+        config.industrial_camera_params,
         config.start_task_service,
         config.stop_push_service,
         config.start_offboard_service,
@@ -112,6 +113,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.ros.vision_barcode = "/drone/vision/barcode";
     config.ros.local_position = "/drone/local_position";
     config.ros.pose_delta = "/drone/pose_yaw_compare/delta";
+    config.ros.industrial_camera_params = "/industrial_camera/params";
     config.ros.start_task_service = "/drone/start_task";
     config.ros.stop_push_service = "/drone/stop_push";
     config.ros.start_offboard_service = "/drone/start_offboard";
@@ -127,6 +129,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.bridge_ros.vision_barcode = "/serial/drone/vision/barcode";
     config.bridge_ros.local_position = "/serial/drone/local_position";
     config.bridge_ros.pose_delta = "/serial/drone/pose_yaw_compare/delta";
+    config.bridge_ros.industrial_camera_params = "/serial/industrial_camera/params";
     config.bridge_ros.start_task_service = "/serial/drone/start_task";
     config.bridge_ros.stop_push_service = "/serial/drone/stop_push";
     config.bridge_ros.start_offboard_service = "/serial/drone/start_offboard";
@@ -148,30 +151,20 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.mission.start_altitude = 0.0;
     config.mission.yaw = 0.0;
     config.mission.tolerance = 0.10;
+    config.mission.yaw_tolerance_deg = 4.0;
+    config.mission.max_xy_speed_mps = 0.50;
+    config.mission.max_z_speed_mps = 0.30;
+    config.mission.max_yaw_rate_deg_s = 40.0;
     config.mission.takeoff_hover_duration = 0.0;
     config.mission.landing_hover_duration = 1.0;
     config.mission.move_hover_duration = 3.0;
     config.mission.add_hover_between_takeoff = false;
     config.mission.add_hover_between_landing = true;
     config.mission.add_hover_between_moves = true;
-    config.mission.use_camera_aim = false;
     config.mission.auto_start_mission = false;
     config.mission.compress_waypoint_segments = true;
     config.mission.compress_non_waypoint_segments = false;
     config.mission.frame = "world_body";
-
-    // 相机对准参数。
-    config.mission.cam_tolerance = 10.0;
-    config.mission.camera_aim_pid_p = 0.01;
-    config.mission.camera_aim_pid_i = 0.00;
-    config.mission.camera_aim_pid_d = 0.01;
-    config.mission.camera_aim_target_timeout_s = 1.0;
-    config.mission.camera_aim_stable_cycles = 15;
-    config.mission.camera_aim_max_step = 0.05;
-    config.mission.camera_aim_wait_first_targets_timeout_s = 8.0;
-    config.mission.camera_aim_no_target_confirm_s = 3.0;
-    config.mission.camera_aim_record_result_timeout_s = 10.0;
-    config.mission.camera_aim_scan_point_timeout_s = 30.0;
 
     return config;
 }
@@ -219,37 +212,56 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
         return "ground_link_bridge has invalid serial port settings";
     }
 
-    const QVector<double> mission_values = {
+    const VisualServoConfig &visual = config.visual_servo;
+    const QVector<double> numeric_values = {
         config.mission.takeoff_altitude,
         config.mission.move_altitude,
         config.mission.start_altitude,
         config.mission.yaw,
         config.mission.tolerance,
+        config.mission.yaw_tolerance_deg,
+        config.mission.max_xy_speed_mps,
+        config.mission.max_z_speed_mps,
+        config.mission.max_yaw_rate_deg_s,
         config.mission.takeoff_hover_duration,
         config.mission.landing_hover_duration,
         config.mission.move_hover_duration,
-        config.mission.cam_tolerance,
-        config.mission.camera_aim_pid_p,
-        config.mission.camera_aim_pid_i,
-        config.mission.camera_aim_pid_d,
-        config.mission.camera_aim_target_timeout_s,
-        config.mission.camera_aim_max_step,
-        config.mission.camera_aim_wait_first_targets_timeout_s,
-        config.mission.camera_aim_no_target_confirm_s,
-        config.mission.camera_aim_record_result_timeout_s,
-        config.mission.camera_aim_scan_point_timeout_s
+        visual.image_x_sign,
+        visual.image_y_sign,
+        visual.kp_x,
+        visual.ki_x,
+        visual.kd_x,
+        visual.kp_y,
+        visual.ki_y,
+        visual.kd_y,
+        visual.integral_limit,
+        visual.filter_alpha,
+        visual.enter_tolerance_x,
+        visual.enter_tolerance_y,
+        visual.exit_tolerance_x,
+        visual.exit_tolerance_y,
+        visual.settle_time_s,
+        visual.acquire_timeout_s,
+        visual.lost_timeout_s,
+        visual.overall_timeout_s,
+        visual.max_body_speed_mps
     };
-    for (double value : mission_values)
+    for (double value : numeric_values)
     {
         if (!std::isfinite(value))
         {
             return "mission config contains a non-finite number";
         }
     }
+
     if (config.mission.takeoff_altitude < 0.0 ||
         config.mission.move_altitude < 0.0 ||
         config.mission.start_altitude < 0.0 ||
         config.mission.tolerance <= 0.0 ||
+        config.mission.yaw_tolerance_deg <= 0.0 ||
+        config.mission.max_xy_speed_mps <= 0.0 ||
+        config.mission.max_z_speed_mps <= 0.0 ||
+        config.mission.max_yaw_rate_deg_s <= 0.0 ||
         config.mission.takeoff_hover_duration < 0.0 ||
         config.mission.landing_hover_duration < 0.0 ||
         config.mission.move_hover_duration < 0.0 ||
@@ -257,19 +269,46 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
     {
         return "mission flight settings are invalid";
     }
-    if (config.mission.use_camera_aim &&
-        (config.mission.cam_tolerance <= 0.0 ||
-         config.mission.camera_aim_target_timeout_s <= 0.0 ||
-         config.mission.camera_aim_stable_cycles == 0 ||
-         config.mission.camera_aim_max_step <= 0.0 ||
-         config.mission.camera_aim_wait_first_targets_timeout_s <= 0.0 ||
-         config.mission.camera_aim_no_target_confirm_s < 0.0 ||
-         config.mission.camera_aim_record_result_timeout_s <= 0.0 ||
-         config.mission.camera_aim_scan_point_timeout_s <= 0.0))
-    {
-        return "mission camera-aim settings are invalid";
-    }
 
+    const QStringList valid_axes = {"x", "y", "z"};
+    if (!valid_axes.contains(visual.image_x_axis.toLower()) ||
+        !valid_axes.contains(visual.image_y_axis.toLower()) ||
+        visual.image_x_axis.compare(visual.image_y_axis, Qt::CaseInsensitive) == 0 ||
+        (visual.image_x_sign != -1.0 && visual.image_x_sign != 1.0) ||
+        (visual.image_y_sign != -1.0 && visual.image_y_sign != 1.0) ||
+        visual.integral_limit <= 0.0 ||
+        visual.filter_alpha < 0.0 || visual.filter_alpha > 1.0 ||
+        visual.enter_tolerance_x <= 0.0 ||
+        visual.enter_tolerance_y <= 0.0 ||
+        visual.exit_tolerance_x < visual.enter_tolerance_x ||
+        visual.exit_tolerance_y < visual.enter_tolerance_y ||
+        visual.settle_time_s < 0.0 ||
+        visual.acquire_timeout_s <= 0.0 ||
+        visual.lost_timeout_s <= 0.0 ||
+        visual.overall_timeout_s < visual.acquire_timeout_s ||
+        visual.overall_timeout_s < visual.lost_timeout_s ||
+        visual.max_body_speed_mps <= 0.0)
+    {
+        return "visual-servo settings are invalid";
+    }
+    const IndustrialCameraConfig &camera = config.industrial_camera;
+    if (camera.exposure_absolute < 1 || camera.exposure_absolute > 10000 ||
+        camera.gain < 0 || camera.gain > 190 ||
+        camera.brightness < 0 || camera.brightness > 255 ||
+        camera.contrast < 0 || camera.contrast > 128 ||
+        camera.saturation < 0 || camera.saturation > 128 ||
+        camera.gamma < 0 || camera.gamma > 255 ||
+        camera.sharpness < 0 || camera.sharpness > 255 ||
+        camera.backlight_compensation < 16 ||
+        camera.backlight_compensation > 160 ||
+        camera.white_balance_temperature < 2800 ||
+        camera.white_balance_temperature > 6500 ||
+        camera.power_line_frequency > 2 ||
+        camera.focus_absolute < 0 || camera.focus_absolute > 1023 ||
+        camera.zoom_absolute < 100 || camera.zoom_absolute > 200)
+    {
+        return "industrial-camera settings are outside supported ranges";
+    }
     QSet<QString> shelf_codes;
     QSet<QString> slot_prefixes;
     for (const ShelfConfig &shelf : config.shelves)
@@ -412,23 +451,6 @@ bool readInt(const QJsonObject &object,
     return true;
 }
 
-bool readUInt16(const QJsonObject &object,
-                const QString &key,
-                quint16 &value,
-                QString *error_message)
-{
-    int number = 0;
-    if (!readInt(object, key, number, error_message))
-    {
-        return false;
-    }
-    if (number < 0 || number > std::numeric_limits<quint16>::max())
-    {
-        return jsonError(error_message, key + " 超出 0 到 65535 的范围");
-    }
-    value = static_cast<quint16>(number);
-    return true;
-}
 
 bool readBool(const QJsonObject &object,
               const QString &key,
@@ -493,6 +515,7 @@ QJsonObject rosConfigToJson(const RosTopicConfig &config)
     object.insert("vision_barcode", config.vision_barcode);
     object.insert("local_position", config.local_position);
     object.insert("pose_delta", config.pose_delta);
+    object.insert("industrial_camera_params", config.industrial_camera_params);
     object.insert("start_task_service", config.start_task_service);
     object.insert("stop_push_service", config.stop_push_service);
     object.insert("start_offboard_service", config.start_offboard_service);
@@ -504,19 +527,29 @@ bool rosConfigFromJson(const QJsonObject &object,
                        RosTopicConfig &config,
                        QString *error_message)
 {
-    return readString(object, "node_name", config.node_name, error_message) &&
-           readString(object, "drone_status", config.drone_status, error_message) &&
-           readString(object, "task_status", config.task_status, error_message) &&
-           readString(object, "path_ready", config.path_ready, error_message) &&
-           readString(object, "return_world_group", config.return_world_group, error_message) &&
-           readString(object, "barcode_capture", config.barcode_capture, error_message) &&
-           readString(object, "vision_barcode", config.vision_barcode, error_message) &&
-           readString(object, "local_position", config.local_position, error_message) &&
-           readString(object, "pose_delta", config.pose_delta, error_message) &&
-           readString(object, "start_task_service", config.start_task_service, error_message) &&
-           readString(object, "stop_push_service", config.stop_push_service, error_message) &&
-           readString(object, "start_offboard_service", config.start_offboard_service, error_message) &&
-           readString(object, "upload_mission_service", config.upload_mission_service, error_message);
+    const bool core_valid =
+        readString(object, "node_name", config.node_name, error_message) &&
+        readString(object, "drone_status", config.drone_status, error_message) &&
+        readString(object, "task_status", config.task_status, error_message) &&
+        readString(object, "path_ready", config.path_ready, error_message) &&
+        readString(object, "return_world_group", config.return_world_group, error_message) &&
+        readString(object, "barcode_capture", config.barcode_capture, error_message) &&
+        readString(object, "vision_barcode", config.vision_barcode, error_message) &&
+        readString(object, "local_position", config.local_position, error_message) &&
+        readString(object, "pose_delta", config.pose_delta, error_message) &&
+        readString(object, "start_task_service", config.start_task_service, error_message) &&
+        readString(object, "stop_push_service", config.stop_push_service, error_message) &&
+        readString(object, "start_offboard_service", config.start_offboard_service, error_message) &&
+        readString(object, "upload_mission_service", config.upload_mission_service, error_message);
+    if (!core_valid)
+    {
+        return false;
+    }
+
+    // Older JSON versions keep the current code default for this new topic.
+    return !object.contains("industrial_camera_params") ||
+           readString(object, "industrial_camera_params",
+                      config.industrial_camera_params, error_message);
 }
 
 QString parityToString(QSerialPort::Parity parity)
@@ -772,32 +805,20 @@ QJsonObject missionConfigToJson(const MissionConfig &config)
     object.insert("start_altitude", config.start_altitude);
     object.insert("yaw", config.yaw);
     object.insert("tolerance", config.tolerance);
+    object.insert("yaw_tolerance_deg", config.yaw_tolerance_deg);
+    object.insert("max_xy_speed_mps", config.max_xy_speed_mps);
+    object.insert("max_z_speed_mps", config.max_z_speed_mps);
+    object.insert("max_yaw_rate_deg_s", config.max_yaw_rate_deg_s);
     object.insert("takeoff_hover_duration", config.takeoff_hover_duration);
     object.insert("landing_hover_duration", config.landing_hover_duration);
     object.insert("move_hover_duration", config.move_hover_duration);
     object.insert("add_hover_between_takeoff", config.add_hover_between_takeoff);
     object.insert("add_hover_between_landing", config.add_hover_between_landing);
     object.insert("add_hover_between_moves", config.add_hover_between_moves);
-    object.insert("use_camera_aim", config.use_camera_aim);
     object.insert("auto_start_mission", config.auto_start_mission);
     object.insert("compress_waypoint_segments", config.compress_waypoint_segments);
     object.insert("compress_non_waypoint_segments", config.compress_non_waypoint_segments);
     object.insert("frame", config.frame);
-    object.insert("cam_tolerance", config.cam_tolerance);
-    object.insert("camera_aim_pid_p", config.camera_aim_pid_p);
-    object.insert("camera_aim_pid_i", config.camera_aim_pid_i);
-    object.insert("camera_aim_pid_d", config.camera_aim_pid_d);
-    object.insert("camera_aim_target_timeout_s", config.camera_aim_target_timeout_s);
-    object.insert("camera_aim_stable_cycles", config.camera_aim_stable_cycles);
-    object.insert("camera_aim_max_step", config.camera_aim_max_step);
-    object.insert("camera_aim_wait_first_targets_timeout_s",
-                  config.camera_aim_wait_first_targets_timeout_s);
-    object.insert("camera_aim_no_target_confirm_s",
-                  config.camera_aim_no_target_confirm_s);
-    object.insert("camera_aim_record_result_timeout_s",
-                  config.camera_aim_record_result_timeout_s);
-    object.insert("camera_aim_scan_point_timeout_s",
-                  config.camera_aim_scan_point_timeout_s);
     return object;
 }
 
@@ -805,39 +826,148 @@ bool missionConfigFromJson(const QJsonObject &object,
                            MissionConfig &config,
                            QString *error_message)
 {
-    return readDouble(object, "takeoff_altitude", config.takeoff_altitude, error_message) &&
-           readDouble(object, "move_altitude", config.move_altitude, error_message) &&
-           readDouble(object, "start_altitude", config.start_altitude, error_message) &&
-           readDouble(object, "yaw", config.yaw, error_message) &&
-           readDouble(object, "tolerance", config.tolerance, error_message) &&
-           readDouble(object, "takeoff_hover_duration", config.takeoff_hover_duration, error_message) &&
-           readDouble(object, "landing_hover_duration", config.landing_hover_duration, error_message) &&
-           readDouble(object, "move_hover_duration", config.move_hover_duration, error_message) &&
-           readBool(object, "add_hover_between_takeoff", config.add_hover_between_takeoff, error_message) &&
-           readBool(object, "add_hover_between_landing", config.add_hover_between_landing, error_message) &&
-           readBool(object, "add_hover_between_moves", config.add_hover_between_moves, error_message) &&
-           readBool(object, "use_camera_aim", config.use_camera_aim, error_message) &&
-           readBool(object, "auto_start_mission", config.auto_start_mission, error_message) &&
-           readBool(object, "compress_waypoint_segments", config.compress_waypoint_segments, error_message) &&
-           readBool(object, "compress_non_waypoint_segments", config.compress_non_waypoint_segments, error_message) &&
-           readString(object, "frame", config.frame, error_message) &&
-           readDouble(object, "cam_tolerance", config.cam_tolerance, error_message) &&
-           readDouble(object, "camera_aim_pid_p", config.camera_aim_pid_p, error_message) &&
-           readDouble(object, "camera_aim_pid_i", config.camera_aim_pid_i, error_message) &&
-           readDouble(object, "camera_aim_pid_d", config.camera_aim_pid_d, error_message) &&
-           readDouble(object, "camera_aim_target_timeout_s", config.camera_aim_target_timeout_s, error_message) &&
-           readUInt16(object, "camera_aim_stable_cycles", config.camera_aim_stable_cycles, error_message) &&
-           readDouble(object, "camera_aim_max_step", config.camera_aim_max_step, error_message) &&
-           readDouble(object, "camera_aim_wait_first_targets_timeout_s",
-                      config.camera_aim_wait_first_targets_timeout_s, error_message) &&
-           readDouble(object, "camera_aim_no_target_confirm_s",
-                      config.camera_aim_no_target_confirm_s, error_message) &&
-           readDouble(object, "camera_aim_record_result_timeout_s",
-                      config.camera_aim_record_result_timeout_s, error_message) &&
-           readDouble(object, "camera_aim_scan_point_timeout_s",
-                      config.camera_aim_scan_point_timeout_s, error_message);
+    const bool common_valid =
+        readDouble(object, "takeoff_altitude", config.takeoff_altitude, error_message) &&
+        readDouble(object, "move_altitude", config.move_altitude, error_message) &&
+        readDouble(object, "start_altitude", config.start_altitude, error_message) &&
+        readDouble(object, "yaw", config.yaw, error_message) &&
+        readDouble(object, "tolerance", config.tolerance, error_message) &&
+        readDouble(object, "takeoff_hover_duration", config.takeoff_hover_duration, error_message) &&
+        readDouble(object, "landing_hover_duration", config.landing_hover_duration, error_message) &&
+        readDouble(object, "move_hover_duration", config.move_hover_duration, error_message) &&
+        readBool(object, "add_hover_between_takeoff", config.add_hover_between_takeoff, error_message) &&
+        readBool(object, "add_hover_between_landing", config.add_hover_between_landing, error_message) &&
+        readBool(object, "add_hover_between_moves", config.add_hover_between_moves, error_message) &&
+        readBool(object, "auto_start_mission", config.auto_start_mission, error_message) &&
+        readBool(object, "compress_waypoint_segments", config.compress_waypoint_segments, error_message) &&
+        readBool(object, "compress_non_waypoint_segments", config.compress_non_waypoint_segments, error_message) &&
+        readString(object, "frame", config.frame, error_message);
+    if (!common_valid)
+    {
+        return false;
+    }
+
+    // Versions 1 and 2 did not contain the four global move limits.
+    if (!object.contains("yaw_tolerance_deg"))
+    {
+        return true;
+    }
+    return readDouble(object, "yaw_tolerance_deg", config.yaw_tolerance_deg, error_message) &&
+           readDouble(object, "max_xy_speed_mps", config.max_xy_speed_mps, error_message) &&
+           readDouble(object, "max_z_speed_mps", config.max_z_speed_mps, error_message) &&
+           readDouble(object, "max_yaw_rate_deg_s", config.max_yaw_rate_deg_s, error_message);
 }
 
+QJsonObject visualServoConfigToJson(const VisualServoConfig &config)
+{
+    QJsonObject object;
+    object.insert("target_id", config.target_id);
+    object.insert("require_confirmed", config.require_confirmed);
+    object.insert("image_x_axis", config.image_x_axis);
+    object.insert("image_y_axis", config.image_y_axis);
+    object.insert("image_x_sign", config.image_x_sign);
+    object.insert("image_y_sign", config.image_y_sign);
+    object.insert("kp_x", config.kp_x);
+    object.insert("ki_x", config.ki_x);
+    object.insert("kd_x", config.kd_x);
+    object.insert("kp_y", config.kp_y);
+    object.insert("ki_y", config.ki_y);
+    object.insert("kd_y", config.kd_y);
+    object.insert("integral_limit", config.integral_limit);
+    object.insert("filter_alpha", config.filter_alpha);
+    object.insert("enter_tolerance_x", config.enter_tolerance_x);
+    object.insert("enter_tolerance_y", config.enter_tolerance_y);
+    object.insert("exit_tolerance_x", config.exit_tolerance_x);
+    object.insert("exit_tolerance_y", config.exit_tolerance_y);
+    object.insert("settle_time_s", config.settle_time_s);
+    object.insert("acquire_timeout_s", config.acquire_timeout_s);
+    object.insert("lost_timeout_s", config.lost_timeout_s);
+    object.insert("overall_timeout_s", config.overall_timeout_s);
+    object.insert("max_body_speed_mps", config.max_body_speed_mps);
+    object.insert("continue_on_timeout", config.continue_on_timeout);
+    return object;
+}
+
+bool visualServoConfigFromJson(const QJsonObject &object,
+                               VisualServoConfig &config,
+                               QString *error_message)
+{
+    return readString(object, "target_id", config.target_id, error_message) &&
+           readBool(object, "require_confirmed", config.require_confirmed, error_message) &&
+           readString(object, "image_x_axis", config.image_x_axis, error_message) &&
+           readString(object, "image_y_axis", config.image_y_axis, error_message) &&
+           readDouble(object, "image_x_sign", config.image_x_sign, error_message) &&
+           readDouble(object, "image_y_sign", config.image_y_sign, error_message) &&
+           readDouble(object, "kp_x", config.kp_x, error_message) &&
+           readDouble(object, "ki_x", config.ki_x, error_message) &&
+           readDouble(object, "kd_x", config.kd_x, error_message) &&
+           readDouble(object, "kp_y", config.kp_y, error_message) &&
+           readDouble(object, "ki_y", config.ki_y, error_message) &&
+           readDouble(object, "kd_y", config.kd_y, error_message) &&
+           readDouble(object, "integral_limit", config.integral_limit, error_message) &&
+           readDouble(object, "filter_alpha", config.filter_alpha, error_message) &&
+           readDouble(object, "enter_tolerance_x", config.enter_tolerance_x, error_message) &&
+           readDouble(object, "enter_tolerance_y", config.enter_tolerance_y, error_message) &&
+           readDouble(object, "exit_tolerance_x", config.exit_tolerance_x, error_message) &&
+           readDouble(object, "exit_tolerance_y", config.exit_tolerance_y, error_message) &&
+           readDouble(object, "settle_time_s", config.settle_time_s, error_message) &&
+           readDouble(object, "acquire_timeout_s", config.acquire_timeout_s, error_message) &&
+           readDouble(object, "lost_timeout_s", config.lost_timeout_s, error_message) &&
+           readDouble(object, "overall_timeout_s", config.overall_timeout_s, error_message) &&
+           readDouble(object, "max_body_speed_mps", config.max_body_speed_mps, error_message) &&
+           readBool(object, "continue_on_timeout", config.continue_on_timeout, error_message);
+}
+QJsonObject industrialCameraConfigToJson(const IndustrialCameraConfig &config)
+{
+    QJsonObject object;
+    object.insert("auto_exposure", config.auto_exposure);
+    object.insert("exposure_absolute", config.exposure_absolute);
+    object.insert("auto_exposure_priority", config.auto_exposure_priority);
+    object.insert("gain", config.gain);
+    object.insert("brightness", config.brightness);
+    object.insert("contrast", config.contrast);
+    object.insert("saturation", config.saturation);
+    object.insert("gamma", config.gamma);
+    object.insert("sharpness", config.sharpness);
+    object.insert("backlight_compensation", config.backlight_compensation);
+    object.insert("auto_white_balance", config.auto_white_balance);
+    object.insert("white_balance_temperature", config.white_balance_temperature);
+    object.insert("power_line_frequency", config.power_line_frequency);
+    object.insert("auto_focus", config.auto_focus);
+    object.insert("focus_absolute", config.focus_absolute);
+    object.insert("zoom_absolute", config.zoom_absolute);
+    return object;
+}
+
+bool industrialCameraConfigFromJson(const QJsonObject &object,
+                                    IndustrialCameraConfig &config,
+                                    QString *error_message)
+{
+    int power_line_frequency = 0;
+    const bool valid =
+        readBool(object, "auto_exposure", config.auto_exposure, error_message) &&
+        readInt(object, "exposure_absolute", config.exposure_absolute, error_message) &&
+        readBool(object, "auto_exposure_priority", config.auto_exposure_priority, error_message) &&
+        readInt(object, "gain", config.gain, error_message) &&
+        readInt(object, "brightness", config.brightness, error_message) &&
+        readInt(object, "contrast", config.contrast, error_message) &&
+        readInt(object, "saturation", config.saturation, error_message) &&
+        readInt(object, "gamma", config.gamma, error_message) &&
+        readInt(object, "sharpness", config.sharpness, error_message) &&
+        readInt(object, "backlight_compensation", config.backlight_compensation, error_message) &&
+        readBool(object, "auto_white_balance", config.auto_white_balance, error_message) &&
+        readInt(object, "white_balance_temperature", config.white_balance_temperature, error_message) &&
+        readInt(object, "power_line_frequency", power_line_frequency, error_message) &&
+        readBool(object, "auto_focus", config.auto_focus, error_message) &&
+        readInt(object, "focus_absolute", config.focus_absolute, error_message) &&
+        readInt(object, "zoom_absolute", config.zoom_absolute, error_message);
+    if (!valid || power_line_frequency < 0 || power_line_frequency > 255)
+    {
+        return valid ? jsonError(error_message, "power_line_frequency 超出 uint8 范围") : false;
+    }
+    config.power_line_frequency = static_cast<quint8>(power_line_frequency);
+    return true;
+}
 QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
 {
     QJsonArray shelves;
@@ -890,13 +1020,15 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
     slot_grid_object.insert("pose_z_max", config.slot_grid.pose_z_max);
 
     QJsonObject root;
-    root.insert("version", 2);
+    root.insert("version", 4);
     root.insert("shelves", shelves);
     root.insert("slots", slot_grid_object);
     root.insert("ros", rosConfigToJson(config.ros));
     root.insert("bridge_ros", rosConfigToJson(config.bridge_ros));
     root.insert("connection", connectionConfigToJson(config.connection));
     root.insert("mission", missionConfigToJson(config.mission));
+    root.insert("visual_servo", visualServoConfigToJson(config.visual_servo));
+    root.insert("industrial_camera", industrialCameraConfigToJson(config.industrial_camera));
     return root;
 }
 
@@ -909,7 +1041,7 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     {
         return false;
     }
-    if (version != 1 && version != 2)
+    if (version != 1 && version != 2 && version != 3 && version != 4)
     {
         return jsonError(
             error_message,
@@ -921,6 +1053,8 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     QJsonObject ros_object;
     QJsonObject bridge_ros_object;
     QJsonObject mission_object;
+    QJsonObject visual_servo_object;
+    QJsonObject industrial_camera_object;
     if (!readArray(root, "shelves", shelves_array, error_message) ||
         !readObject(root, "slots", slots_object, error_message) ||
         !readObject(root, "ros", ros_object, error_message) ||
@@ -930,6 +1064,16 @@ bool warehouseConfigFromJson(const QJsonObject &root,
         return false;
     }
 
+    if (version >= 3 &&
+        !readObject(root, "visual_servo", visual_servo_object, error_message))
+    {
+        return false;
+    }
+    if (version >= 4 &&
+        !readObject(root, "industrial_camera", industrial_camera_object, error_message))
+    {
+        return false;
+    }
     // 版本 1 只有 bridge_serial，读取时自动迁移为默认 WiFi 模式。
     ConnectionConfig connection;
     if (version == 1)
@@ -1052,13 +1196,20 @@ bool warehouseConfigFromJson(const QJsonObject &root,
         return false;
     }
 
-    WarehouseConfig loaded_config;
+    // Start from current defaults so old JSON versions receive new settings.
+    WarehouseConfig loaded_config = createDefaultWarehouseConfig();
     loaded_config.shelves = shelves;
     loaded_config.slot_grid = slot_grid;
     loaded_config.connection = connection;
     if (!rosConfigFromJson(ros_object, loaded_config.ros, error_message) ||
         !rosConfigFromJson(bridge_ros_object, loaded_config.bridge_ros, error_message) ||
-        !missionConfigFromJson(mission_object, loaded_config.mission, error_message))
+        !missionConfigFromJson(mission_object, loaded_config.mission, error_message) ||
+        (version >= 3 &&
+         !visualServoConfigFromJson(
+             visual_servo_object, loaded_config.visual_servo, error_message)) ||
+        (version >= 4 &&
+         !industrialCameraConfigFromJson(
+             industrial_camera_object, loaded_config.industrial_camera, error_message)))
     {
         return false;
     }
@@ -1114,6 +1265,8 @@ void applyConnectionModeToRosConfig(
         remove_serial_prefix(config.ros.local_position);
     config.ros.pose_delta =
         remove_serial_prefix(config.ros.pose_delta);
+    config.ros.industrial_camera_params =
+        remove_serial_prefix(config.ros.industrial_camera_params);
     config.ros.start_task_service =
         remove_serial_prefix(config.ros.start_task_service);
     config.ros.stop_push_service =
@@ -1224,7 +1377,8 @@ bool loadWarehouseConfig(WarehouseConfig &config, QString *error_message)
                 .arg(file.fileName(), parse_error.errorString()));
     }
 
-    WarehouseConfig loaded_config;
+    // Start from current defaults so old JSON versions receive new settings.
+    WarehouseConfig loaded_config = createDefaultWarehouseConfig();
     if (!warehouseConfigFromJson(
             document.object(), loaded_config, error_message))
     {
