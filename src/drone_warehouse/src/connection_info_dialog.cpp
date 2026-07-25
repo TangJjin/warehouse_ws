@@ -28,6 +28,7 @@ ConnectionInfoDialog::ConnectionInfoDialog(
       working_config_(config),
       pending_mode_(config.connection.mode)
 {
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     setObjectName("connectionInfoDialog");
     setWindowTitle("连接方式");
     setModal(true);
@@ -179,7 +180,7 @@ void ConnectionInfoDialog::buildUi()
         "min-width: 110px;"
         "padding: 8px 12px;"
         "border: 1px solid #52667d;"
-        "background: #253447;"
+        "background: rgba(18, 24, 34, 0);"//透明深色背景
         "color: #d7e3f4;"
         "border-radius: 5px;"
         "}"
@@ -190,7 +191,7 @@ void ConnectionInfoDialog::buildUi()
         "color: white;"
         "}"
         "#serialPanel {"
-        "background: #1d2a39;"
+        "background: rgba(18, 24, 34, 0);"//透明深色背景
         "border: 1px solid #52667d;"
         "border-radius: 6px;"
         "}"

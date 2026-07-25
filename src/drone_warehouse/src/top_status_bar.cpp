@@ -78,7 +78,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(scheduled_check_button_);
     layout->addWidget(time_label_);
 
-    title_button_->hide();
+    // title_button_->hide();
     //shelf_button_->hide();
     analysis_button_->hide();
     task_button_->hide();
@@ -182,7 +182,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
 void TopStatusBar::setConnected(bool connected)
 {
-    title_button_->setVisible(connected);
+    // title_button_->setVisible(connected);
     //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
 

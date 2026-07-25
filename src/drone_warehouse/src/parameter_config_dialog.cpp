@@ -39,6 +39,7 @@ ParameterConfigDialog::ParameterConfigDialog(
       original_config_(config),
       working_config_(config)
 {
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     setWindowTitle("参数设置");
     setWindowFlag(Qt::FramelessWindowHint, true);
 
