@@ -68,21 +68,26 @@ void ParameterConfigDialog::buildUi()
 
     auto *left_panel = new QWidget(this);
     auto *left_layout = new QVBoxLayout(left_panel);
+    left_panel->setObjectName("leftPanel");
 
     project_page_button_ = new QPushButton("项目选择", left_panel);
     parameter_page_button_ = new QPushButton("参数设置", left_panel);
+    close_page_button_ = new QPushButton("关闭", left_panel);
 
     //设置按钮为可选中
     project_page_button_->setCheckable(true);
     parameter_page_button_->setCheckable(true);
+    close_page_button_->setCheckable(true);
 
     main_page_button_group_ = new QButtonGroup(this);//主界面按钮组
     main_page_button_group_->setExclusive(true);//设置按钮为互斥模式
     main_page_button_group_->addButton(project_page_button_);
     main_page_button_group_->addButton(parameter_page_button_);
+    main_page_button_group_->addButton(close_page_button_);
 
     left_layout->addWidget(project_page_button_);
     left_layout->addWidget(parameter_page_button_);
+    left_layout->addWidget(close_page_button_);
     left_layout->addStretch();
 
     //主界面堆叠窗口，用于切换项目选择和参数编辑页面
@@ -101,6 +106,9 @@ void ParameterConfigDialog::buildUi()
 
     connect(parameter_page_button_, &QPushButton::clicked,
             this, [this]() { selectMainPage(1); });
+
+    // connect(parameter_page_button_, &QPushButton::clicked,
+    //         this, [this]() {dialog.exec()});
 
     connect(restore_button_, &QPushButton::clicked,
         this, [this]() {
@@ -131,6 +139,17 @@ void ParameterConfigDialog::buildUi()
         "font-size: 22px;"
         "font-weight: 600;"
         "color: #e7f3ff;"
+        "}"
+    );
+
+    left_panel->setStyleSheet(
+        "leftPanel {"
+        "background: rgba(42, 58, 82, 180);"
+        "border: 1px solid rgba(90, 130, 180, 140);"
+        "border-radius: 8px;"
+        "color: #d7e3f4;"
+        "padding: 4px 8px;"
+        "min-width: 56px;"
         "}"
     );
 }

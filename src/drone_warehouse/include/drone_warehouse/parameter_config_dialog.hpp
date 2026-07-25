@@ -48,6 +48,7 @@ private:
 
     QPushButton *project_page_button_ = nullptr;//主界面项目选择按钮
     QPushButton *parameter_page_button_ = nullptr;//主界面参数编辑按钮
+    QPushButton *close_page_button_ = nullptr;//关闭按钮
     QButtonGroup *main_page_button_group_ = nullptr;//主界面按钮组，用于切换项目选择和参数编辑页面
 
     QPushButton *restore_button_ = nullptr;//恢复默认参数按钮

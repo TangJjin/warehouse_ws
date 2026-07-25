@@ -163,7 +163,7 @@ ShelfInfoDialog::ShelfInfoDialog(
 {
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     resize(300, 410);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
-    setMinimumSize(380, 410);//限制最小尺寸，避免窗口过小导致控件挤压
+    setMinimumSize(380, 440);//限制最小尺寸，避免窗口过小导致控件挤压
     setModal(false);//这里先用非模态窗口，点击后可与主界面同时操作
 
     setupSerial();//打开串口
@@ -174,7 +174,7 @@ ShelfInfoDialog::ShelfInfoDialog(
 
     title_label_ = new QLabel("货架信息面板", this);
     title_label_->setObjectName("shelfDialogTitle");
-    main_layout->addWidget(title_label_);
+    main_layout->addWidget(title_label_,1);
 
     /*********************顶部货架切换控件***********************/
 
@@ -200,7 +200,7 @@ ShelfInfoDialog::ShelfInfoDialog(
     shelf_switch_layout_->setSpacing(10);
     shelf_switch_layout_->addStretch();
     shelf_scroll->setWidget(switch_panel);
-    main_layout->addWidget(shelf_scroll);
+    main_layout->addWidget(shelf_scroll,1);
 
     /***********************************************************/
 
@@ -233,7 +233,7 @@ ShelfInfoDialog::ShelfInfoDialog(
 
     content_layout->addWidget(side_button_panel);
     content_layout->addWidget(grid_panel, 1);
-    main_layout->addWidget(content_panel);
+    main_layout->addWidget(content_panel,4);
 
     /***********************************************************/
 
@@ -253,7 +253,7 @@ ShelfInfoDialog::ShelfInfoDialog(
     detail_layout->addWidget(slot_value_label_);
     detail_layout->addWidget(package_value_label_);
     detail_layout->addWidget(category_value_label_);
-    main_layout->addWidget(detail_panel);
+    main_layout->addWidget(detail_panel,3);
 
     /***********************************************************/
 
@@ -276,7 +276,7 @@ ShelfInfoDialog::ShelfInfoDialog(
     button_layout->addWidget(clear_button_);
     button_layout->addWidget(close_button_);
 
-    main_layout->addLayout(button_layout);
+    main_layout->addLayout(button_layout,1);
 
     /***********************************************************/
 
@@ -463,6 +463,7 @@ void ShelfInfoDialog::buildShelfButtons()
         button->setCheckable(true);
         button->setIcon(makeStatusIcon(shelfStatusColor(shelf)));
         button->setIconSize(QSize(14, 14));
+        button->setMinimumSize(70, 50);
 
         connect(button, &QPushButton::clicked, this, [this, index]() {
             showShelfInfo(index);

@@ -171,6 +171,17 @@ void ConnectionInfoDialog::buildUi()
             this, &ConnectionInfoDialog::reject);
 
     setStyleSheet(
+        "QDialog {"
+        "background: #101722;"
+        "color: #d7e3f4;"
+        "border: 1px solid rgba(90, 130, 180, 120);"
+        "border-radius: 12px;"
+        "}"
+        "#shelfDialogTitle {"
+        "font-size: 22px;"
+        "font-weight: 600;"
+        "color: #e7f3ff;"
+        "}"
         "#connectionInfoDialog {"
         "background: #16202d;"
         "color: #d7e3f4;"

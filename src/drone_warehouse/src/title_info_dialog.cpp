@@ -19,7 +19,7 @@ void TitleInfoDialog::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(5, 5, 5, 5);
-    layout->setSpacing(8);
+    layout->setSpacing(16);
 
     parameter_button_ = new QPushButton("参数", this);
     close_button_ = new QPushButton("关闭", this);
