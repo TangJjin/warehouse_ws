@@ -39,7 +39,6 @@ ParameterConfigDialog::ParameterConfigDialog(
       original_config_(config),
       working_config_(config)
 {
-    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     setWindowTitle("参数设置");
     setWindowFlag(Qt::FramelessWindowHint, true);
 
@@ -120,6 +119,20 @@ void ParameterConfigDialog::buildUi()
 
     connect(apply_button_, &QPushButton::clicked,
             this, &ParameterConfigDialog::handleApply);
+
+    setStyleSheet(
+        "QDialog {"
+        "background: #101722;"
+        "color: #d7e3f4;"
+        "border: 1px solid rgba(90, 130, 180, 120);"
+        "border-radius: 12px;"
+        "}"
+        "#shelfDialogTitle {"
+        "font-size: 22px;"
+        "font-weight: 600;"
+        "color: #e7f3ff;"
+        "}"
+    );
 }
 
 const WarehouseConfig &
