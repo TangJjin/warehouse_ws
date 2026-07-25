@@ -30,6 +30,7 @@ public:
     /******************************************************/
 
     QPoint connectionButtonBottomLeftGlobal() const;//返回连接按钮左下角的全局坐标
+    QPoint titleButtonBottomLeftGlobal() const;//返回标题按钮左下角的全局坐标
     QPoint shelfButtonBottomLeftGlobal() const;//返回货架信息按钮左下角的全局坐标
 
 signals:

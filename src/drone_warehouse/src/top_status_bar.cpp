@@ -242,6 +242,11 @@ QPoint TopStatusBar::connectionButtonBottomLeftGlobal() const
     return connection_button_->mapToGlobal(
         QPoint(0, connection_button_->height()));
 }
+QPoint TopStatusBar::titleButtonBottomLeftGlobal() const
+{
+    return title_button_->mapToGlobal(
+        QPoint(0, title_button_->height()));
+}
 QPoint TopStatusBar::shelfButtonBottomLeftGlobal() const
 {
     return shelf_button_->mapToGlobal(QPoint(0, shelf_button_->height()));

@@ -4,6 +4,7 @@
 #include "drone_warehouse/scene_view.hpp"
 #include "drone_warehouse/shelf_info_dialog.hpp"
 #include "drone_warehouse/connection_info_dialog.hpp"
+#include "drone_warehouse/title_info_dialog.hpp"
 #include "drone_warehouse/top_status_bar.hpp"
 #include "drone_warehouse/color_palette.hpp"
 #include "drone_warehouse/ros_manager.hpp"
@@ -100,8 +101,8 @@ void MainWindow::setupUi()
     
     top_status_bar_ = new TopStatusBar(central_container_);
 
-    //这里传入 config_.slots，确保弹窗里能正确显示当前仓库的槽位结构和航点映射。
-    shelf_info_dialog_ = new ShelfInfoDialog(config_.slots, this);
+    //这里传入 config_.slot_grid，确保弹窗里能正确显示当前仓库的槽位结构和航点映射。
+    shelf_info_dialog_ = new ShelfInfoDialog(config_.slot_grid, this);
 
     // config_.ros 已经保存了当前连接方式对应的话题和服务名称。
     // bridge_ros 只供 ground_link_bridge 使用，地面站不在两者之间临时选择。
@@ -333,6 +334,27 @@ void MainWindow::setupConnections()
             config_ = dialog.savedConfig();
             run_log_view_->appendPlainText(
                 "连接配置已保存，重启地面站后生效");
+        }
+    });
+
+    // 点击标题按钮后，打开详细配置窗口。
+    connect(top_status_bar_, &TopStatusBar::titleClicked, this, [this]() {
+        const QPoint button_bottom_left =
+            top_status_bar_->titleButtonBottomLeftGlobal();
+        const int margin = 20;
+
+        ConnectionInfoDialog dialog(config_, this);
+        dialog.adjustSize();
+        dialog.move(
+            button_bottom_left.x(),
+            button_bottom_left.y() + margin);
+
+        if (dialog.exec() == QDialog::Accepted)
+        {
+            // 弹窗已经完成 JSON 保存，这里同步主窗口内存中的配置。
+            config_ = dialog.savedConfig();
+            run_log_view_->appendPlainText(
+                "信息配置已保存，重启地面站后生效");
         }
     });
 
@@ -699,12 +721,12 @@ void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int ro
         run_log_view_->appendPlainText(QString("添加航点失败：side 非法：%1").arg(side));
         return;
     }
-    if (row < 0 || row >= config_.slots.rows)
+    if (row < 0 || row >= config_.slot_grid.rows)
     {
         run_log_view_->appendPlainText(QString("添加航点失败：row 非法：%1").arg(row));
         return;
     }
-    if (col < 0 || col >= config_.slots.columns)
+    if (col < 0 || col >= config_.slot_grid.columns)
     {
         run_log_view_->appendPlainText(QString("添加航点失败：col 非法：%1").arg(col));
         return;
@@ -713,13 +735,13 @@ void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int ro
     const ShelfConfig &shelf = config_.shelves.at(shelf_index);
     const bool front = side == "front";
     const double x = front
-        ? config_.slots.waypoint_front_x_m.at(col)
-        : config_.slots.waypoint_back_x_m.at(col);
+        ? config_.slot_grid.waypoint_front_x_m.at(col)
+        : config_.slot_grid.waypoint_back_x_m.at(col);
     const double y = front ? shelf.front_waypoint_y_m : shelf.back_waypoint_y_m;
-    const double z = config_.slots.waypoint_row_z_m.at(row);
+    const double z = config_.slot_grid.waypoint_row_z_m.at(row);
     const double yaw = front
-        ? config_.slots.front_yaw_rad
-        : config_.slots.back_yaw_rad;
+        ? config_.slot_grid.front_yaw_rad
+        : config_.slot_grid.back_yaw_rad;
 
     path_points_.push_back({x, y, z, yaw});
     waypoint_labels_.push_back(QString("R%1C%2").arg(row + 1).arg(col + 1));
@@ -1080,8 +1102,8 @@ SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
 
     const int row = match.captured(2).toInt();
     const int col = match.captured(3).toInt();
-    if (row < 0 || row >= config_.slots.rows ||
-        col < 0 || col >= config_.slots.columns)
+    if (row < 0 || row >= config_.slot_grid.rows ||
+        col < 0 || col >= config_.slot_grid.columns)
     {
         return location;
     }
@@ -1122,7 +1144,7 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
         return nullptr;
     }
 
-    if (row < 0 || row >= config_.slots.rows || col < 0 || col >= config_.slots.columns)
+    if (row < 0 || row >= config_.slot_grid.rows || col < 0 || col >= config_.slot_grid.columns)
     {
         return nullptr;
     }
@@ -1142,7 +1164,7 @@ ShelfSlotItem *MainWindow::findShelfSlot(int shelf_index, const QString &side, i
         return nullptr;
     }
 
-    const int index = row * config_.slots.columns + col;//行列转一维下标
+    const int index = row * config_.slot_grid.columns + col;//行列转一维下标
     if (!slot_list || index < 0 || index >= slot_list->size())
     {
         return nullptr;
@@ -1181,24 +1203,24 @@ SlotLocation MainWindow::resolveSlotFromPose(const Pose3D &pose) const
     }
 
     const double clamped_y = qBound(
-        config_.slots.pose_y_min, pose.y, config_.slots.pose_y_max);
+        config_.slot_grid.pose_y_min, pose.y, config_.slot_grid.pose_y_max);
     const double clamped_z = qBound(
-        config_.slots.pose_z_min, pose.z, config_.slots.pose_z_max);
+        config_.slot_grid.pose_z_min, pose.z, config_.slot_grid.pose_z_max);
     const double normalized_col =
-        (clamped_y - config_.slots.pose_y_min) /
-        (config_.slots.pose_y_max - config_.slots.pose_y_min);
+        (clamped_y - config_.slot_grid.pose_y_min) /
+        (config_.slot_grid.pose_y_max - config_.slot_grid.pose_y_min);
     const double normalized_row =
-        (clamped_z - config_.slots.pose_z_min) /
-        (config_.slots.pose_z_max - config_.slots.pose_z_min);
+        (clamped_z - config_.slot_grid.pose_z_min) /
+        (config_.slot_grid.pose_z_max - config_.slot_grid.pose_z_min);
 
     location.col = qBound(
         0,
-        static_cast<int>(normalized_col * config_.slots.columns),
-        config_.slots.columns - 1);
+        static_cast<int>(normalized_col * config_.slot_grid.columns),
+        config_.slot_grid.columns - 1);
     location.row = qBound(
         0,
-        static_cast<int>(normalized_row * config_.slots.rows),
-        config_.slots.rows - 1);
+        static_cast<int>(normalized_row * config_.slot_grid.rows),
+        config_.slot_grid.rows - 1);
     location.valid = true;
     return location;
 }
@@ -1401,8 +1423,8 @@ void MainWindow::setupDemoData()
         ShelfPanelData panel;
         panel.display_name = shelf_config.display_name;
         panel.button_status_color = shelf_config.button_status_color;
-        panel.front_slots.resize(config_.slots.slotCountPerSide());
-        panel.back_slots.resize(config_.slots.slotCountPerSide());
+        panel.front_slots.resize(config_.slot_grid.slotCountPerSide());
+        panel.back_slots.resize(config_.slot_grid.slotCountPerSide());
         shelf_panel_data_.push_back(panel);
     }
 
@@ -1413,7 +1435,7 @@ void MainWindow::setupDemoData()
 
     QString storage_error;
     if (ShelfPanelStorage::load(
-            config_.slots.slotCountPerSide(),
+            config_.slot_grid.slotCountPerSide(),
             shelf_panel_data_,
             &storage_error))
     {
@@ -1500,11 +1522,11 @@ QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
         const ShelfPanelData &shelf = shelf_panel_data_[shelf_index];
 
         auto append_slot_items = [&](const QVector<ShelfSlotItem> &slot_items, const QString &side) {
-            for (int row = 0; row < config_.slots.rows; ++row)
+            for (int row = 0; row < config_.slot_grid.rows; ++row)
             {
-                for (int col = 0; col < config_.slots.columns; ++col)
+                for (int col = 0; col < config_.slot_grid.columns; ++col)
                 {
-                    const int index = row * config_.slots.columns + col;
+                    const int index = row * config_.slot_grid.columns + col;
                     if (index < 0 || index >= slot_items.size())
                     {
                         continue;

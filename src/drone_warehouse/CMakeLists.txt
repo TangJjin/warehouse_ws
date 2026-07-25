@@ -35,6 +35,7 @@ add_executable(warehouse_gcs
   src/shelf_info_dialog.cpp
   src/shelf_panel_storage.cpp
   src/connection_info_dialog.cpp
+  src/title_info_dialog.cpp
   src/warehouse_config.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
@@ -46,6 +47,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/shelf_info_dialog.hpp
   include/drone_warehouse/shelf_panel_storage.hpp
   include/drone_warehouse/connection_info_dialog.hpp
+  include/drone_warehouse/title_info_dialog.hpp
   include/drone_warehouse/warehouse_config.hpp
 )
 
