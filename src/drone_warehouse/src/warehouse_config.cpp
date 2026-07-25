@@ -50,21 +50,21 @@ WarehouseConfig createDefaultWarehouseConfig()
     WarehouseConfig config;
 
     // 每个货架面的槽位数量等于 rows * columns。
-    config.slots.rows = 4;
-    config.slots.columns = 3;
+    config.slot_grid.rows = 4;
+    config.slot_grid.columns = 3;
 
     // 航点坐标单位为米；数组顺序必须与槽位行号或列号一致。
-    config.slots.waypoint_row_z_m = {1.50, 1.10, 0.70, 0.30};
-    config.slots.waypoint_front_x_m = {0.75, 1.25, 1.75};
-    config.slots.waypoint_back_x_m = {1.75, 1.25, 0.75};
-    config.slots.front_yaw_rad = 1.57;
-    config.slots.back_yaw_rad = 4.71;
+    config.slot_grid.waypoint_row_z_m = {1.50, 1.10, 0.70, 0.30};
+    config.slot_grid.waypoint_front_x_m = {0.75, 1.25, 1.75};
+    config.slot_grid.waypoint_back_x_m = {1.75, 1.25, 0.75};
+    config.slot_grid.front_yaw_rad = 1.57;
+    config.slot_grid.back_yaw_rad = 4.71;
 
     // 将无人机原始位姿映射到槽位行列时使用的坐标范围。
-    config.slots.pose_y_min = -100.0;
-    config.slots.pose_y_max = 50.0;
-    config.slots.pose_z_min = 0.0;
-    config.slots.pose_z_max = 160.0;
+    config.slot_grid.pose_y_min = -100.0;
+    config.slot_grid.pose_y_max = 50.0;
+    config.slot_grid.pose_z_min = 0.0;
+    config.slot_grid.pose_z_max = 160.0;
 
     ShelfConfig shelf1;
     shelf1.code = "A01";                          // 场景货架编号。
@@ -182,21 +182,21 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
     {
         return "at least one shelf must be configured";
     }
-    if (config.slots.rows <= 0 || config.slots.columns <= 0)
+    if (config.slot_grid.rows <= 0 || config.slot_grid.columns <= 0)
     {
         return "slot rows and columns must be greater than zero";
     }
-    if (config.slots.waypoint_row_z_m.size() != config.slots.rows)
+    if (config.slot_grid.waypoint_row_z_m.size() != config.slot_grid.rows)
     {
         return "slot row count does not match waypoint height count";
     }
-    if (config.slots.waypoint_front_x_m.size() != config.slots.columns ||
-        config.slots.waypoint_back_x_m.size() != config.slots.columns)
+    if (config.slot_grid.waypoint_front_x_m.size() != config.slot_grid.columns ||
+        config.slot_grid.waypoint_back_x_m.size() != config.slot_grid.columns)
     {
         return "slot column count does not match waypoint X count";
     }
-    if (config.slots.pose_y_max <= config.slots.pose_y_min ||
-        config.slots.pose_z_max <= config.slots.pose_z_min)
+    if (config.slot_grid.pose_y_max <= config.slot_grid.pose_y_min ||
+        config.slot_grid.pose_z_max <= config.slot_grid.pose_z_min)
     {
         return "slot pose mapping ranges are invalid";
     }
@@ -876,23 +876,23 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
         shelves.append(shelf_object);
     }
 
-    QJsonObject slots;
-    slots.insert("rows", config.slots.rows);
-    slots.insert("columns", config.slots.columns);
-    slots.insert("waypoint_row_z_m", doubleVectorToJson(config.slots.waypoint_row_z_m));
-    slots.insert("waypoint_front_x_m", doubleVectorToJson(config.slots.waypoint_front_x_m));
-    slots.insert("waypoint_back_x_m", doubleVectorToJson(config.slots.waypoint_back_x_m));
-    slots.insert("front_yaw_rad", config.slots.front_yaw_rad);
-    slots.insert("back_yaw_rad", config.slots.back_yaw_rad);
-    slots.insert("pose_y_min", config.slots.pose_y_min);
-    slots.insert("pose_y_max", config.slots.pose_y_max);
-    slots.insert("pose_z_min", config.slots.pose_z_min);
-    slots.insert("pose_z_max", config.slots.pose_z_max);
+    QJsonObject slot_grid_object;
+    slot_grid_object.insert("rows", config.slot_grid.rows);
+    slot_grid_object.insert("columns", config.slot_grid.columns);
+    slot_grid_object.insert("waypoint_row_z_m", doubleVectorToJson(config.slot_grid.waypoint_row_z_m));
+    slot_grid_object.insert("waypoint_front_x_m", doubleVectorToJson(config.slot_grid.waypoint_front_x_m));
+    slot_grid_object.insert("waypoint_back_x_m", doubleVectorToJson(config.slot_grid.waypoint_back_x_m));
+    slot_grid_object.insert("front_yaw_rad", config.slot_grid.front_yaw_rad);
+    slot_grid_object.insert("back_yaw_rad", config.slot_grid.back_yaw_rad);
+    slot_grid_object.insert("pose_y_min", config.slot_grid.pose_y_min);
+    slot_grid_object.insert("pose_y_max", config.slot_grid.pose_y_max);
+    slot_grid_object.insert("pose_z_min", config.slot_grid.pose_z_min);
+    slot_grid_object.insert("pose_z_max", config.slot_grid.pose_z_max);
 
     QJsonObject root;
     root.insert("version", 2);
     root.insert("shelves", shelves);
-    root.insert("slots", slots);
+    root.insert("slots", slot_grid_object);
     root.insert("ros", rosConfigToJson(config.ros));
     root.insert("bridge_ros", rosConfigToJson(config.bridge_ros));
     root.insert("connection", connectionConfigToJson(config.connection));
@@ -1033,28 +1033,28 @@ bool warehouseConfigFromJson(const QJsonObject &root,
         shelves.push_back(shelf);
     }
 
-    SlotGridConfig slots;
-    if (!readInt(slots_object, "rows", slots.rows, error_message) ||
-        !readInt(slots_object, "columns", slots.columns, error_message) ||
+    SlotGridConfig slot_grid;
+    if (!readInt(slots_object, "rows", slot_grid.rows, error_message) ||
+        !readInt(slots_object, "columns", slot_grid.columns, error_message) ||
         !doubleVectorFromJson(slots_object, "waypoint_row_z_m",
-                             slots.waypoint_row_z_m, error_message) ||
+                             slot_grid.waypoint_row_z_m, error_message) ||
         !doubleVectorFromJson(slots_object, "waypoint_front_x_m",
-                             slots.waypoint_front_x_m, error_message) ||
+                             slot_grid.waypoint_front_x_m, error_message) ||
         !doubleVectorFromJson(slots_object, "waypoint_back_x_m",
-                             slots.waypoint_back_x_m, error_message) ||
-        !readDouble(slots_object, "front_yaw_rad", slots.front_yaw_rad, error_message) ||
-        !readDouble(slots_object, "back_yaw_rad", slots.back_yaw_rad, error_message) ||
-        !readDouble(slots_object, "pose_y_min", slots.pose_y_min, error_message) ||
-        !readDouble(slots_object, "pose_y_max", slots.pose_y_max, error_message) ||
-        !readDouble(slots_object, "pose_z_min", slots.pose_z_min, error_message) ||
-        !readDouble(slots_object, "pose_z_max", slots.pose_z_max, error_message))
+                             slot_grid.waypoint_back_x_m, error_message) ||
+        !readDouble(slots_object, "front_yaw_rad", slot_grid.front_yaw_rad, error_message) ||
+        !readDouble(slots_object, "back_yaw_rad", slot_grid.back_yaw_rad, error_message) ||
+        !readDouble(slots_object, "pose_y_min", slot_grid.pose_y_min, error_message) ||
+        !readDouble(slots_object, "pose_y_max", slot_grid.pose_y_max, error_message) ||
+        !readDouble(slots_object, "pose_z_min", slot_grid.pose_z_min, error_message) ||
+        !readDouble(slots_object, "pose_z_max", slot_grid.pose_z_max, error_message))
     {
         return false;
     }
 
     WarehouseConfig loaded_config;
     loaded_config.shelves = shelves;
-    loaded_config.slots = slots;
+    loaded_config.slot_grid = slot_grid;
     loaded_config.connection = connection;
     if (!rosConfigFromJson(ros_object, loaded_config.ros, error_message) ||
         !rosConfigFromJson(bridge_ros_object, loaded_config.bridge_ros, error_message) ||

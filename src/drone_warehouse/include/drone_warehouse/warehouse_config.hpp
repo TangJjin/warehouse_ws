@@ -142,7 +142,7 @@ struct MissionConfig
 struct WarehouseConfig
 {
     QVector<ShelfConfig> shelves; // 所有货架配置。
-    SlotGridConfig slots;         // 共用槽位结构和航点映射。
+    SlotGridConfig slot_grid;     // 共用槽位结构和航点映射。
     RosTopicConfig ros;           // warehouse_gcs 直连 WiFi 时使用的 ROS 接口。
     RosTopicConfig bridge_ros;    // ground_link_bridge 对外提供的串口转发 ROS 接口。
     ConnectionConfig connection;   // 当前连接方式和数传串口参数。
