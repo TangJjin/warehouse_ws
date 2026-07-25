@@ -11,6 +11,7 @@
 #include "drone_warehouse/gpio_output.hpp"
 #include "drone_warehouse/ai_diff_analyzer.hpp"
 #include "drone_warehouse/shelf_panel_storage.hpp"
+#include "drone_warehouse/parameter_config_dialog.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -343,7 +344,7 @@ void MainWindow::setupConnections()
             top_status_bar_->titleButtonBottomLeftGlobal();
         const int margin = 20;
 
-        TitleInfoDialog dialog(config_, this);
+        TitleInfoDialog dialog(this);
         dialog.adjustSize();
         dialog.move(
             button_bottom_left.x(),
@@ -351,7 +352,25 @@ void MainWindow::setupConnections()
 
         if (dialog.exec() == QDialog::Accepted)
         {
-            
+            // 弹窗已经完成 JSON 保存，这里同步主窗口内存中的配置。
+            ParameterConfigDialog parameter_dialog(
+                config_, this);
+
+            // 让弹窗全屏显示，方便在小屏幕上操作。
+            parameter_dialog.setWindowState(
+                parameter_dialog.windowState() |
+                Qt::WindowFullScreen);
+
+            //在主窗口上方显示弹窗
+            if (parameter_dialog.exec() ==
+                QDialog::Accepted)
+            {
+                //
+                config_ = parameter_dialog.savedConfig();
+
+                // run_log_view_->appendPlainText(
+                //     "仓储智航参数已启用");
+            }
         }
     });
 
@@ -771,7 +790,8 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
 
 void MainWindow::updateCommandResult(bool success, const QString &message)
 {
-    
+    Q_UNUSED(success);
+    Q_UNUSED(message);
 }
 
 
