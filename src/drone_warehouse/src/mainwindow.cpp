@@ -343,7 +343,7 @@ void MainWindow::setupConnections()
             top_status_bar_->titleButtonBottomLeftGlobal();
         const int margin = 20;
 
-        ConnectionInfoDialog dialog(config_, this);
+        TitleInfoDialog dialog(config_, this);
         dialog.adjustSize();
         dialog.move(
             button_bottom_left.x(),
@@ -351,10 +351,7 @@ void MainWindow::setupConnections()
 
         if (dialog.exec() == QDialog::Accepted)
         {
-            // 弹窗已经完成 JSON 保存，这里同步主窗口内存中的配置。
-            config_ = dialog.savedConfig();
-            run_log_view_->appendPlainText(
-                "信息配置已保存，重启地面站后生效");
+            
         }
     });
 
