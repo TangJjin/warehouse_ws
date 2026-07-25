@@ -47,7 +47,7 @@ const WarehouseConfig &ConnectionInfoDialog::savedConfig() const
 void ConnectionInfoDialog::buildUi()
 {
     auto *root_layout = new QHBoxLayout(this);
-    root_layout->setContentsMargins(14, 14, 14, 14);
+    root_layout->setContentsMargins(5, 5, 5, 5);
     root_layout->setSpacing(16);
 
     auto *left_panel = new QWidget(this);

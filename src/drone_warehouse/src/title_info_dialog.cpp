@@ -7,6 +7,7 @@
 TitleInfoDialog::TitleInfoDialog(QWidget *parent)
     : QDialog(parent)
 {
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     setObjectName("titleInfoDialog");
     setWindowFlag(Qt::WindowContextHelpButtonHint, false);
     setWindowFlag(Qt::Popup, true);
@@ -17,7 +18,7 @@ TitleInfoDialog::TitleInfoDialog(QWidget *parent)
 void TitleInfoDialog::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(5, 5, 5, 5);
     layout->setSpacing(8);
 
     parameter_button_ = new QPushButton("参数", this);
@@ -35,4 +36,18 @@ void TitleInfoDialog::buildUi()
 
     connect(close_button_, &QPushButton::clicked,
             this, &TitleInfoDialog::reject);
+
+    setStyleSheet(
+        "QDialog {"
+        "background: #101722;"
+        "color: #d7e3f4;"
+        "border: 1px solid rgba(90, 130, 180, 120);"
+        "border-radius: 12px;"
+        "}"
+        "#shelfDialogTitle {"
+        "font-size: 22px;"
+        "font-weight: 600;"
+        "color: #e7f3ff;"
+        "}"
+    );
 }
