@@ -29,9 +29,11 @@ public:
     void updateDelta(double dx, double dy, double dyaw, bool valid);//更新无人机位置增量
     /******************************************************/
 
+    QPoint connectionButtonBottomLeftGlobal() const;//返回连接按钮左下角的全局坐标
     QPoint shelfButtonBottomLeftGlobal() const;//返回货架信息按钮左下角的全局坐标
 
 signals:
+    void connectionButtonClicked();//连接按钮被点击
     void titleClicked();//标题按钮被点击
     void connectionClicked();//连接状态按钮被点击
     void taskClicked();//任务状态按钮被点击

@@ -23,13 +23,15 @@
 #include "drone_msgs/srv/start_task.hpp"
 
 #include "drone_warehouse/link_protocol.hpp"
+#include "drone_warehouse/warehouse_config.hpp"
 
 class GroundLinkBridge : public QObject, public rclcpp::Node
 {
     Q_OBJECT
 
 public:
-    GroundLinkBridge();
+    GroundLinkBridge(const RosTopicConfig &topic_config,
+                     const SerialPortConfig &serial_config);
     ~GroundLinkBridge() override = default;
 
 private:
@@ -130,6 +132,9 @@ private:
     //发送函数，用于发送协议帧到串口
     uint16_t sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
     void sendAck(uint16_t seq);
+
+    RosTopicConfig topic_config_;
+    SerialPortConfig serial_config_;
 
     rclcpp::Service<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_srv_;
     rclcpp::Service<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_srv_;

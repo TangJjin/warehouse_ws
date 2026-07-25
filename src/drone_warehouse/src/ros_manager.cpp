@@ -1,9 +1,13 @@
 #include "drone_warehouse/ros_manager.hpp"
 
 /*********************ros移植部分***********************/
-RosManager::RosManager(QObject *parent)
-    : QObject(parent),
-    node_(std::make_shared<rclcpp::Node>("ground_qt_node"))
+RosManager::RosManager(
+    const RosTopicConfig &topic_config,
+    QObject *parent)
+        : QObject(parent),
+        topic_config_(topic_config),
+        node_(std::make_shared<rclcpp::Node>(
+            topic_config_.node_name.toStdString()))
 {
     // 这里沿用来源工程的做法：RosManager 一创建就把所有 ROS 订阅、服务客户端和定时器接口建好。
     // 后面 MainWindow 只需要负责调用 start() 启动 spin 线程，并接收这些 Qt 信号即可。
@@ -28,8 +32,8 @@ void RosManager::setupRosInterfaces()
     auto status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机状态话题，消息类型为自定义消息
     status_sub_ = node_->create_subscription<drone_msgs::msg::DroneStatus>(
-        "/serial/drone/status", 
-        status_qos, 
+        topic_config_.drone_status.toStdString(),
+        status_qos,
         [this](const drone_msgs::msg::DroneStatus::SharedPtr msg)//回调
         {
             connected = msg->connected;
@@ -55,8 +59,8 @@ void RosManager::setupRosInterfaces()
     auto control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序状态话题，消息类型为自定义消息
     task_status_sub_ = node_->create_subscription<drone_msgs::msg::TaskStatus>(
-        "/serial/drone/task/status", 
-        control_status_qos, 
+        topic_config_.task_status.toStdString(),
+        control_status_qos,
         [this](const drone_msgs::msg::TaskStatus::SharedPtr msg)//回调
         {
             const bool task_running = msg->task_running;
@@ -81,8 +85,8 @@ void RosManager::setupRosInterfaces()
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序的确认消息，消息类型为自定义消息
     ready_status_sub_ = node_->create_subscription<drone_msgs::msg::ReadyStatus>(
-        "/serial/drone/control/path_ready", 
-        control_path_ready_qos, 
+        topic_config_.path_ready.toStdString(),
+        control_path_ready_qos,
         [this](const drone_msgs::msg::ReadyStatus::SharedPtr msg)//回调
         {
             const bool ready = msg->air_route_ready;
@@ -99,8 +103,8 @@ void RosManager::setupRosInterfaces()
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅控制程序的路线消息，消息类型为自定义消息
     return_world_group_sub_ = node_->create_subscription<drone_msgs::msg::WorldGroup>(
-        "/serial/drone/return/world_group", 
-        return_world_group_qos, 
+        topic_config_.return_world_group.toStdString(),
+        return_world_group_qos,
         [this](const drone_msgs::msg::WorldGroup::SharedPtr msg)//回调
         {
             QVector<WorldCoord> points;
@@ -122,7 +126,7 @@ void RosManager::setupRosInterfaces()
     auto barcode_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅条形码捕获话题，消息类型为自定义消息
     barcode_sub_ = node_->create_subscription<drone_msgs::msg::BarcodeCapture>(
-        "/drone/barcode_capture",
+        topic_config_.barcode_capture.toStdString(),
         barcode_qos,
         [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
         {
@@ -137,7 +141,7 @@ void RosManager::setupRosInterfaces()
             const qint64 time_ms =
                 static_cast<qint64>(msg->stamp.sec) * 1000LL +
                 static_cast<qint64>(msg->stamp.nanosec) / 1000000LL;
-            const QString time_text = 
+            const QString time_text =
                 QDateTime::fromMSecsSinceEpoch(time_ms,Qt::LocalTime)
                 .toString("yyyy-MM-dd hh:mm:ss");
 
@@ -153,7 +157,7 @@ void RosManager::setupRosInterfaces()
     auto barcode_sub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个订阅者，订阅条形码捕获话题，消息类型为自定义消息
     vision_barcode_sub_ = node_->create_subscription<drone_msgs::msg::BarcodeCapture>(
-        "/serial/drone/vision/barcode",
+        topic_config_.vision_barcode.toStdString(),
         barcode_sub_qos,
         [this](const drone_msgs::msg::BarcodeCapture::SharedPtr msg)
         {
@@ -162,7 +166,7 @@ void RosManager::setupRosInterfaces()
             const qint64 time_ms =
                 static_cast<qint64>(msg->stamp.sec) * 1000LL +
                 static_cast<qint64>(msg->stamp.nanosec) / 1000000LL;
-            const QString time_text = 
+            const QString time_text =
                 QDateTime::fromMSecsSinceEpoch(time_ms,Qt::LocalTime)
                 .toString("yyyy-MM-dd hh:mm:ss");
 
@@ -177,7 +181,7 @@ void RosManager::setupRosInterfaces()
     auto local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
     local_position_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-        "/serial/drone/local_position",
+        topic_config_.local_position.toStdString(),
         local_position_qos,
         [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg)
         {
@@ -201,7 +205,7 @@ void RosManager::setupRosInterfaces()
 
 auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     delta_sub_ = node_->create_subscription<geometry_msgs::msg::Vector3>(
-        "/serial/drone/pose_yaw_compare/delta",
+        topic_config_.pose_delta.toStdString(),
         delta_qos,
         [this](const geometry_msgs::msg::Vector3::SharedPtr msg)
         {
@@ -215,19 +219,19 @@ auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
 
     //创建一个服务客户端，用于调用任务启动服务
     start_task_client_ = node_->create_client<drone_msgs::srv::StartTask>(
-        "/serial/drone/start_task");
+        topic_config_.start_task_service.toStdString());
 
     //创建一个服务客户端，用于调用路线重传服务
     stop_push_client_ = node_->create_client<drone_msgs::srv::StartTask>(
-        "/serial/drone/stop_push");
+        topic_config_.stop_push_service.toStdString());
 
     //创建一个服务客户端，用于调用offboard启动服务
     start_offboard_client_ = node_->create_client<drone_msgs::srv::StartOffboard>(
-        "/serial/drone/start_offboard");
+        topic_config_.start_offboard_service.toStdString());
 
     //创建一个服务客户端，用于调用任务路线与参数上传服务
     upload_mission_summary_client_ = node_->create_client<drone_msgs::srv::UploadMissionSummary>(
-        "/serial/drone/upload_mission_summary");
+        topic_config_.upload_mission_service.toStdString());
 
     using namespace std::chrono_literals;
     timer_ = node_->create_wall_timer(
@@ -280,12 +284,12 @@ void RosManager::start()
 void RosManager::startTask()
 {
     // 这一段严格沿用来源工程的语义：
-    // 1. 调用 /drone/start_task 服务；
+    // 1. 调用配置中的 start_task 服务；
     // 2. 请求里的 task_name 固定写 action_task_run；
     // 3. 服务回包后，通过 commandResult 信号把结果回传给界面。
     if (!start_task_client_ || !start_task_client_->service_is_ready())
     {
-        emit commandResult(false, "服务 /drone/start_task 未就绪");
+        emit commandResult(false, QString("服务 %1 未就绪").arg(topic_config_.start_task_service));
         return;
     }
 
@@ -313,12 +317,12 @@ void RosManager::startTask()
 void RosManager::stopTask()
 {
     // 这一段也保持来源工程逻辑不变：
-    // 1. 调用 /drone/stop_push 服务；
+    // 1. 调用配置中的 stop_push 服务；
     // 2. 请求体里沿用 stop_task 这个 task_name；
     // 3. 用 stopcommandResult 把回包结果下发给界面。
     if (!stop_push_client_ || !stop_push_client_->service_is_ready())
     {
-        emit stopcommandResult(false, "服务 /drone/stop_push 未就绪");
+        emit stopcommandResult(false, QString("服务 %1 未就绪").arg(topic_config_.stop_push_service));
         return;
     }
 
@@ -346,12 +350,12 @@ void RosManager::stopTask()
 void RosManager::requestStartOffboard()
 {
     // 这里保持来源工程的 offboard 启动逻辑：
-    // 1. 调用 /drone/start_offboard 服务；
+    // 1. 调用配置中的 start_offboard 服务；
     // 2. request_source 固定写 ground_station_upload_flow；
     // 3. 用 offboardCommandResult 把执行结果回传给界面。
     if (!start_offboard_client_ || !start_offboard_client_->service_is_ready())
     {
-        emit offboardCommandResult(false, "服务 /drone/start_offboard 未就绪");
+        emit offboardCommandResult(false, QString("服务 %1 未就绪").arg(topic_config_.start_offboard_service));
         return;
     }
 
@@ -380,13 +384,16 @@ void RosManager::uploadMissionSummary(const QVector<WorldCoord> &path_points,
                                       const drone_msgs::msg::MissionSummary &summary)
 {
     // 这是四个服务里依赖最多的一条链路，保持来源工程的行为：
-    // 1. 服务名固定是 /drone/upload_mission_summary；
+    // 1. 调用配置中的 upload_mission 服务；
     // 2. 先检查服务是否就绪、路径是否为空；
     // 3. 请求里同时带 MissionSummary 和 WorldPoint 列表；
     // 4. 返回时把 success / message / saved_path 通过 missionUploadFinished 发给界面。
     if (!upload_mission_summary_client_ || !upload_mission_summary_client_->service_is_ready())
     {
-        emit missionUploadFinished(false, "服务 /drone/upload_mission_summary 未就绪", "");
+        emit missionUploadFinished(
+            false,
+            QString("服务 %1 未就绪").arg(topic_config_.upload_mission_service),
+            "");
         return;
     }
 

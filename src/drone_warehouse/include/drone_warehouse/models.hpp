@@ -153,8 +153,8 @@ struct SlotLocation
 {
     int shelf_index = -1;//第几个货架
     QString side;//front 或 back
-    int row = -1;//0~3
-    int col = -1;//0~3
+    int row = -1;//从 0 开始，最大值由 SlotGridConfig::rows 决定
+    int col = -1;//从 0 开始，最大值由 SlotGridConfig::columns 决定
     bool valid = false;//是否成功定位
 };
 
@@ -176,8 +176,8 @@ struct ShelfPanelData
 {
     QString display_name;//弹窗顶部显示名称，例如“货架1”
     QString button_status_color;//顶部按钮前面的状态灯颜色，直接存颜色字符串，例如 #00d48a
-    QVector<ShelfSlotItem> front_slots;//前面16个点位
-    QVector<ShelfSlotItem> back_slots;//后面16个点位
+    QVector<ShelfSlotItem> front_slots;//正面槽位，数量由 SlotGridConfig 决定
+    QVector<ShelfSlotItem> back_slots;//背面槽位，数量由 SlotGridConfig 决定
 };
 
 

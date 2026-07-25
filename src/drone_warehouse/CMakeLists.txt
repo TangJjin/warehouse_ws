@@ -34,6 +34,8 @@ add_executable(warehouse_gcs
   src/ai_diff_analyzer.cpp
   src/shelf_info_dialog.cpp
   src/shelf_panel_storage.cpp
+  src/connection_info_dialog.cpp
+  src/warehouse_config.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
   include/drone_warehouse/scene_view.hpp
@@ -43,11 +45,14 @@ add_executable(warehouse_gcs
   include/drone_warehouse/ai_diff_analyzer.hpp
   include/drone_warehouse/shelf_info_dialog.hpp
   include/drone_warehouse/shelf_panel_storage.hpp
+  include/drone_warehouse/connection_info_dialog.hpp
+  include/drone_warehouse/warehouse_config.hpp
 )
 
 add_executable(ground_link_bridge
   src/ground_link_bridge_main.cpp  
   src/ground_link_bridge.cpp
+  src/warehouse_config.cpp
   include/drone_warehouse/ground_link_bridge.hpp
 )
 
@@ -70,6 +75,7 @@ target_link_libraries(warehouse_gcs
 
 target_link_libraries(ground_link_bridge
   Qt5::Core
+  Qt5::Gui
   Qt5::SerialPort
 )
 

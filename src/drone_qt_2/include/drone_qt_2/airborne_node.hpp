@@ -5,7 +5,6 @@
 #include <thread>
 #include <atomic>
 #include <QProcess>
-#include <chrono>
 
 #include "rclcpp/rclcpp.hpp"
 #include <mavros_msgs/msg/state.hpp>
@@ -61,8 +60,6 @@ private:
         const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
         std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response);
 
-    void updateMavrosConnectionTimeout();
-
     std::string buildStatusText() const;
 
     //处理条形码捕获消息的回调函数
@@ -111,6 +108,14 @@ private:
     float battery_voltage{0.0};//电压数值
     float battery_percent{0.0};//电量百分比数值
 
+    double position_x{0};//无人机位置x坐标
+    double position_y{0};//无人机位置y坐标
+    double position_z{0};//无人机位置z坐标
+    double position_qx{0};//无人机姿态四元数qx
+    double position_qy{0};//无人机姿态四元数qy
+    double position_qz{0};//无人机姿态四元数qz
+    double position_qw{0};//无人机姿态四元数qw
+
     bool offboard_started_{false};//防止任务重复启动
     bool task_started_{false};
     bool task_stoped_{false};
@@ -125,8 +130,4 @@ private:
     int disarm_stable_count_{0};    // 连续收到 armed == false 的次数
 
     bool waypoint_or_button_{false};//判断是否是航点上传
-
-    bool mavros_state_received_{false};
-    std::chrono::steady_clock::time_point last_mavros_state_time_;
-    double mavros_state_timeout_sec_{2.0};
 };
