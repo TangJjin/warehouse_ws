@@ -478,14 +478,17 @@ QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
         stream << static_cast<float>(point.z);
         stream << static_cast<float>(point.yaw);
     }
-
     const auto &summary = request.summary;
-    useDoublePrecision(stream);//后续的任务概要信息按照float64写入
+    useDoublePrecision(stream);
     stream << static_cast<double>(summary.takeoff_altitude);
     stream << static_cast<double>(summary.move_altitude);
     stream << static_cast<double>(summary.start_altitude);
     stream << static_cast<double>(summary.yaw);
     stream << static_cast<double>(summary.tolerance);
+    stream << static_cast<double>(summary.yaw_tolerance_deg);
+    stream << static_cast<double>(summary.max_xy_speed_mps);
+    stream << static_cast<double>(summary.max_z_speed_mps);
+    stream << static_cast<double>(summary.max_yaw_rate_deg_s);
     stream << static_cast<double>(summary.takeoff_hover_duration);
     stream << static_cast<double>(summary.landing_hover_duration);
     stream << static_cast<double>(summary.move_hover_duration);
@@ -493,28 +496,45 @@ QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
     stream << static_cast<quint8>(summary.add_hover_between_takeoff ? 1 : 0);
     stream << static_cast<quint8>(summary.add_hover_between_landing ? 1 : 0);
     stream << static_cast<quint8>(summary.add_hover_between_moves ? 1 : 0);
-    stream << static_cast<quint8>(summary.use_camera_aim ? 1 : 0);
     stream << static_cast<quint8>(summary.auto_start_mission ? 1 : 0);
     stream << static_cast<quint8>(summary.compress_straight_segments ? 1 : 0);
 
-    stream << static_cast<double>(summary.cam_tolerance);
-    stream << static_cast<double>(summary.camera_aim_pid_p);
-    stream << static_cast<double>(summary.camera_aim_pid_i);
-    stream << static_cast<double>(summary.camera_aim_pid_d);
-    stream << static_cast<double>(summary.camera_aim_target_timeout_s);
-    stream << static_cast<quint16>(summary.camera_aim_stable_cycles);
-    stream << static_cast<double>(summary.camera_aim_max_step);
-    stream << static_cast<double>(summary.camera_aim_wait_first_targets_timeout_s);
-    stream << static_cast<double>(summary.camera_aim_no_target_confirm_s);
-    stream << static_cast<double>(summary.camera_aim_record_result_timeout_s);
-    stream << static_cast<double>(summary.camera_aim_scan_point_timeout_s);
-
-    const QByteArray frame = QByteArray::fromStdString(summary.frame);
-    if (!writeSizedBytes(stream, frame)) {
-        //如果写入失败，返回一个空的字节数组，表示编码失败
+    // Variable-length strings are length-prefixed to keep the binary layout deterministic.
+    const auto &visual = summary.visual_servo;
+    if (!writeSizedBytes(stream, QByteArray::fromStdString(summary.frame)) ||
+        !writeSizedBytes(stream, QByteArray::fromStdString(visual.target_id))) {
+        return {};
+    }
+    stream << static_cast<quint8>(visual.require_confirmed ? 1 : 0);
+    if (!writeSizedBytes(stream, QByteArray::fromStdString(visual.image_x_axis)) ||
+        !writeSizedBytes(stream, QByteArray::fromStdString(visual.image_y_axis))) {
         return {};
     }
 
+    stream << static_cast<double>(visual.image_x_sign);
+    stream << static_cast<double>(visual.image_y_sign);
+    stream << static_cast<double>(visual.kp_x);
+    stream << static_cast<double>(visual.ki_x);
+    stream << static_cast<double>(visual.kd_x);
+    stream << static_cast<double>(visual.kp_y);
+    stream << static_cast<double>(visual.ki_y);
+    stream << static_cast<double>(visual.kd_y);
+    stream << static_cast<double>(visual.integral_limit);
+    stream << static_cast<double>(visual.filter_alpha);
+    stream << static_cast<double>(visual.enter_tolerance_x);
+    stream << static_cast<double>(visual.enter_tolerance_y);
+    stream << static_cast<double>(visual.exit_tolerance_x);
+    stream << static_cast<double>(visual.exit_tolerance_y);
+    stream << static_cast<double>(visual.settle_time_s);
+    stream << static_cast<double>(visual.acquire_timeout_s);
+    stream << static_cast<double>(visual.lost_timeout_s);
+    stream << static_cast<double>(visual.overall_timeout_s);
+    stream << static_cast<double>(visual.max_body_speed_mps);
+    stream << static_cast<quint8>(visual.continue_on_timeout ? 1 : 0);
+
+    if (stream.status() != QDataStream::Ok) {
+        return {};
+    }
     return payload;
 }
 

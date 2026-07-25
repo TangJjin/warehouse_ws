@@ -356,29 +356,46 @@ void MainWindow::setupConnections()
         summary.move_altitude = 1.2;//移动高度
         summary.start_altitude = 0.0;//解锁高度
         summary.yaw = 0.0;//偏航角
-        summary.tolerance = 0.12;//误差容忍
+        summary.tolerance = 0.10;//位置到达容差
+        summary.yaw_tolerance_deg = 4.0;//航向到达容差
+        summary.max_xy_speed_mps = 0.50;//最大水平速度
+        summary.max_z_speed_mps = 0.30;//最大垂直速度
+        summary.max_yaw_rate_deg_s = 40.0;//最大航向角速度
         summary.takeoff_hover_duration = 0.0;//起飞悬停时长
         summary.landing_hover_duration = 3.0;//降落悬停时长
         summary.move_hover_duration = 0.5;//移动悬停时长
         summary.add_hover_between_takeoff = true;//是否在起飞后添加悬停
         summary.add_hover_between_landing = true;//是否在降落前添加悬停
         summary.add_hover_between_moves = true;//是否在移动之间添加悬停
-        summary.use_camera_aim = false;//是否开启相机
         summary.auto_start_mission = false;//是否自动启动任务
         summary.compress_straight_segments = false;//是否压缩直线段
         summary.frame = "world_body";
 
-        summary.cam_tolerance = 10.0;
-        summary.camera_aim_pid_p = 0.01;
-        summary.camera_aim_pid_i = 0.00;
-        summary.camera_aim_pid_d = 0.01;
-        summary.camera_aim_target_timeout_s = 1.0;
-        summary.camera_aim_stable_cycles = 15;
-        summary.camera_aim_max_step = 0.05;
-        summary.camera_aim_wait_first_targets_timeout_s = 8.0;
-        summary.camera_aim_no_target_confirm_s = 3.0;
-        summary.camera_aim_record_result_timeout_s = 10.0;
-        summary.camera_aim_scan_point_timeout_s = 30.0;
+        // Default visual-servo settings; no action is inserted automatically.
+        summary.visual_servo.target_id = "";
+        summary.visual_servo.require_confirmed = true;
+        summary.visual_servo.image_x_axis = "y";
+        summary.visual_servo.image_y_axis = "z";
+        summary.visual_servo.image_x_sign = -1.0;
+        summary.visual_servo.image_y_sign = -1.0;
+        summary.visual_servo.kp_x = 0.35;
+        summary.visual_servo.ki_x = 0.0;
+        summary.visual_servo.kd_x = 0.02;
+        summary.visual_servo.kp_y = 0.35;
+        summary.visual_servo.ki_y = 0.0;
+        summary.visual_servo.kd_y = 0.02;
+        summary.visual_servo.integral_limit = 0.5;
+        summary.visual_servo.filter_alpha = 0.35;
+        summary.visual_servo.enter_tolerance_x = 0.04;
+        summary.visual_servo.enter_tolerance_y = 0.04;
+        summary.visual_servo.exit_tolerance_x = 0.07;
+        summary.visual_servo.exit_tolerance_y = 0.07;
+        summary.visual_servo.settle_time_s = 0.6;
+        summary.visual_servo.acquire_timeout_s = 5.0;
+        summary.visual_servo.lost_timeout_s = 1.0;
+        summary.visual_servo.overall_timeout_s = 20.0;
+        summary.visual_servo.max_body_speed_mps = 0.20;
+        summary.visual_servo.continue_on_timeout = true;
 
         run_log_view_->appendPlainText("正在上传路线和 mission 参数摘要到机载端...");
         start_button_->setEnabled(false);

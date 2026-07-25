@@ -71,6 +71,7 @@ struct RosTopicConfig
     QString vision_barcode;           // 无线链路转发的扫码结果话题。
     QString local_position;           // 无人机本地位姿话题。
     QString pose_delta;               // 位姿和航向误差话题。
+    QString industrial_camera_params; // 地面站发布完整工业相机参数的话题。
 
     QString start_task_service;       // 启动任务服务。
     QString stop_push_service;        // 停止任务服务。
@@ -103,7 +104,55 @@ struct ConnectionConfig
     SerialPortConfig telemetry_serial;          // 数传连接使用的通信串口。
 };
 
-// 上传给无人机的任务飞行和相机对准参数。
+// 地面站保存并整组发布的工业相机参数；数值范围与当前相机驱动一致。
+struct IndustrialCameraConfig
+{
+    bool auto_exposure = true; // 是否启用自动曝光；关闭后使用手动曝光时间。
+    int exposure_absolute = 40; // 手动曝光时间，范围：1..10000。
+    bool auto_exposure_priority = false; // 自动曝光时是否允许降低帧率。
+    int gain = 190; // 图像增益，范围：0..190。
+    int brightness = 128; // 图像亮度，范围：0..255。
+    int contrast = 65; // 图像对比度，范围：0..128。
+    int saturation = 90; // 图像饱和度，范围：0..128。
+    int gamma = 130; // 图像 Gamma 校正值，范围：0..255。
+    int sharpness = 128; // 图像锐度，范围：0..255。
+    int backlight_compensation = 16; // 逆光补偿，范围：16..160。
+    bool auto_white_balance = true; // 是否启用自动白平衡；关闭后使用手动色温。
+    int white_balance_temperature = 4650; // 手动白平衡色温，范围：2800..6500 K。
+    quint8 power_line_frequency = 1; // 防闪烁频率：0=关闭，1=50 Hz，2=60 Hz。
+    bool auto_focus = true; // 是否启用自动对焦；关闭后使用手动焦点。
+    int focus_absolute = 0; // 手动焦点位置，范围：0..1023。
+    int zoom_absolute = 120; // 相机变焦值，范围：100..200。
+};
+
+// 视觉伺服全局默认参数；只有任务明确包含 visual_servo 动作时才会使用。
+struct VisualServoConfig
+{
+    QString target_id; // 目标 ID；留空表示锁定第一个符合条件的目标。
+    bool require_confirmed = true; // 是否要求视觉端将目标标记为稳定确认。
+    QString image_x_axis = "y"; // 图像水平误差映射到的机体系轴：x、y 或 z。
+    QString image_y_axis = "z"; // 图像垂直误差映射到的机体系轴，不能与 X 映射轴相同。
+    double image_x_sign = -1.0; // 图像水平误差到机体运动方向的符号，只能为 -1 或 1。
+    double image_y_sign = -1.0; // 图像垂直误差到机体运动方向的符号，只能为 -1 或 1。
+    double kp_x = 0.35; // 图像 X 误差的 PID 比例增益。
+    double ki_x = 0.0; // 图像 X 误差的 PID 积分增益。
+    double kd_x = 0.02; // 图像 X 误差的 PID 微分增益。
+    double kp_y = 0.35; // 图像 Y 误差的 PID 比例增益。
+    double ki_y = 0.0; // 图像 Y 误差的 PID 积分增益。
+    double kd_y = 0.02; // 图像 Y 误差的 PID 微分增益。
+    double integral_limit = 0.5; // 积分累计量的绝对值上限。
+    double filter_alpha = 0.35; // 低通滤波系数，范围：0..1。
+    double enter_tolerance_x = 0.04; // X 误差进入对准状态的阈值。
+    double enter_tolerance_y = 0.04; // Y 误差进入对准状态的阈值。
+    double exit_tolerance_x = 0.07; // X 误差退出对准状态的阈值。
+    double exit_tolerance_y = 0.07; // Y 误差退出对准状态的阈值。
+    double settle_time_s = 0.6; // 连续保持对准后判定成功的时间，单位：秒。
+    double acquire_timeout_s = 5.0; // 等待首个有效目标的超时，单位：秒。
+    double lost_timeout_s = 1.0; // 允许目标连续丢失的时间，单位：秒。
+    double overall_timeout_s = 20.0; // 单次视觉伺服动作总超时，单位：秒。
+    double max_body_speed_mps = 0.20; // PID 输出的单轴机体系速度上限，单位：米/秒。
+    bool continue_on_timeout = true; // 超时后是否继续执行后续任务动作。
+};
 struct MissionConfig
 {
     double takeoff_altitude = 0.0; // 起飞高度，单位：米。
@@ -111,31 +160,20 @@ struct MissionConfig
     double start_altitude = 0.0; // 解锁/任务起始高度，单位：米。
     double yaw = 0.0; // 默认任务航向。
     double tolerance = 0.0; // 航点到达误差容忍值。
-
+    double yaw_tolerance_deg = 0.0; // 航向到达容差，单位：度。
+    double max_xy_speed_mps = 0.0; // 最大水平移动速度，单位：米/秒。
+    double max_z_speed_mps = 0.0; // 最大竖直移动速度，单位：米/秒。
+    double max_yaw_rate_deg_s = 0.0; // 最大航向角速度，单位：度/秒。
     double takeoff_hover_duration = 0.0; // 起飞后悬停时间，单位：秒。
     double landing_hover_duration = 0.0; // 降落前悬停时间，单位：秒。
     double move_hover_duration = 0.0; // 移动点之间悬停时间，单位：秒。
     bool add_hover_between_takeoff = false; // 是否在起飞阶段加入悬停。
     bool add_hover_between_landing = false; // 是否在降落阶段加入悬停。
     bool add_hover_between_moves = false; // 是否在移动点之间加入悬停。
-
-    bool use_camera_aim = false; // 是否启用相机对准。
     bool auto_start_mission = false; // 上传完成后是否自动开始任务。
     bool compress_waypoint_segments = true; // 航点飞行是否压缩连续直线段。
     bool compress_non_waypoint_segments = false; // 非航点任务是否压缩连续直线段。
     QString frame; // 任务航点使用的坐标系名称。
-
-    double cam_tolerance = 0.0; // 相机对准允许误差。
-    double camera_aim_pid_p = 0.0; // 相机对准 PID 比例系数。
-    double camera_aim_pid_i = 0.0; // 相机对准 PID 积分系数。
-    double camera_aim_pid_d = 0.0; // 相机对准 PID 微分系数。
-    double camera_aim_target_timeout_s = 0.0; // 单次目标等待超时，单位：秒。
-    quint16 camera_aim_stable_cycles = 0; // 判定稳定所需连续周期数。
-    double camera_aim_max_step = 0.0; // 单次相机对准最大调整量。
-    double camera_aim_wait_first_targets_timeout_s = 0.0; // 首批目标等待超时，单位：秒。
-    double camera_aim_no_target_confirm_s = 0.0; // 无目标确认时间，单位：秒。
-    double camera_aim_record_result_timeout_s = 0.0; // 记录结果超时，单位：秒。
-    double camera_aim_scan_point_timeout_s = 0.0; // 单个扫描点总超时，单位：秒。
 };
 
 // 地面站全部仓库配置。
@@ -146,7 +184,9 @@ struct WarehouseConfig
     RosTopicConfig ros;           // warehouse_gcs 直连 WiFi 时使用的 ROS 接口。
     RosTopicConfig bridge_ros;    // ground_link_bridge 对外提供的串口转发 ROS 接口。
     ConnectionConfig connection;   // 当前连接方式和数传串口参数。
-    MissionConfig mission;        // 上传任务时使用的飞行和相机参数。
+    MissionConfig mission;        // 上传任务时使用的飞行和动作编排参数。
+    VisualServoConfig visual_servo; // 视觉伺服全局默认参数。
+    IndustrialCameraConfig industrial_camera; // 保存并发布的完整工业相机参数。
 };
 // 创建首次运行使用的默认仓库配置；warehouse_config.json 不存在时以此生成文件。
 WarehouseConfig createDefaultWarehouseConfig();

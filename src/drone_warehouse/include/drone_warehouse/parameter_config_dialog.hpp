@@ -6,6 +6,10 @@
 
 class QButtonGroup;
 class QListWidget;
+class QListWidgetItem;
+class QLabel;
+class QLineEdit;
+class QComboBox;
 class QPushButton;
 class QStackedWidget;
 class QWidget;
@@ -38,6 +42,12 @@ private:
         const QString &display_name,
         const QString &display_value);
 
+    void showParameterEditor(QListWidgetItem *item);//显示当前参数的临时编辑器
+    void commitParameterEdit();//确认单个参数修改，但暂不写入 JSON
+    QString parameterRawValue(const WarehouseConfig &config,
+                              const QString &parameter_id) const;
+    bool updateParameterFromEditor(QString *error_message);
+
     void handleApply();//启用修改
 
     WarehouseConfig original_config_;// 打开页面时的配置，用于丢弃
@@ -62,4 +72,12 @@ private:
     QButtonGroup *project_button_group_ = nullptr;//项目选择按钮组，用于切换仓储和动物巡检项目
     QListWidget *parameter_list_ = nullptr;//参数列表，用于显示当前项目的参数项
     QWidget *parameter_editor_ = nullptr;//参数编辑器，用于编辑当前选中的参数项
+    QLabel *editor_title_label_ = nullptr;//正在编辑的参数名称
+    QLabel *editor_description_label_ = nullptr;//参数用途和约束说明
+    QLabel *editor_default_label_ = nullptr;//程序默认值
+    QStackedWidget *editor_input_stack_ = nullptr;//文本输入和枚举选择切换
+    QLineEdit *editor_line_edit_ = nullptr;//数值或字符串输入
+    QComboBox *editor_combo_box_ = nullptr;//布尔值和枚举参数选择
+    QPushButton *editor_confirm_button_ = nullptr;//确认当前参数修改
+    QString editing_parameter_id_;//当前右侧编辑器对应的参数 ID
 };

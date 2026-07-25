@@ -28,6 +28,7 @@
 #include "drone_msgs/srv/upload_mission_yaml.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_msgs/msg/mission_summary.hpp"
+#include "drone_msgs/msg/industrial_camera_params.hpp"
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 
 class RosManager : public QObject
@@ -45,6 +46,9 @@ class RosManager : public QObject
         void start();
 
         //定义一个公共方法，用于上传任务总结，包括路径点列表和任务总结信息
+        // Publish one complete camera parameter set; partial updates are not allowed.
+        void publishIndustrialCameraParams(const IndustrialCameraConfig &config);
+
         void uploadMissionSummary(const QVector<WorldCoord> &path_points,
                           const drone_msgs::msg::MissionSummary &summary);
 
@@ -132,6 +136,7 @@ class RosManager : public QObject
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
         rclcpp::Client<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_client_;
+        rclcpp::Publisher<drone_msgs::msg::IndustrialCameraParams>::SharedPtr industrial_camera_params_pub_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;
         rclcpp::TimerBase::SharedPtr timer_;
