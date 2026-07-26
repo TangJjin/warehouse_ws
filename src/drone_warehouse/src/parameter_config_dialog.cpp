@@ -656,14 +656,16 @@ void ParameterConfigDialog::buildUi()
         "QPushButton:checked, QPushButton:pressed { color: #071018; background: #5bc0be; border-color: #76d4d1; }"
         "QListWidget { background: #111b27; border: 1px solid #30465c; font-size: 18px; }"
         "QListWidget::item:selected { background: #24485b; }"
-        "QLabel { font-size: 17px; }"
+        // 主窗口给 QWidget 设置了深色背景。这里显式把 QLabel 设为透明，
+        // 避免参数说明、修改值和默认值文字后面出现一块黑色矩形。
+        "QLabel { background: transparent; border: none; font-size: 17px; }"
         "#parameterEditor { background: #172332; border-left: 1px solid #40566d; }"
         "#parameterEditorTitle { font-size: 21px; font-weight: 600; color: #f1f6fb; }"
         "#parameterDescription { color: #b9c7d5; line-height: 1.4; }"
         "#parameterDefaultValue { color: #8fa3b7; padding-top: 8px; }"
         "#modifiedParameterValue { color: #ff6b6b; font-weight: 600; }"
         "#parameterEditorClose { padding: 0; font-size: 24px; }"
-        "QLineEdit, QComboBox { min-height: 42px; padding: 0 10px; font-size: 17px;"
+        "QLineEdit, QComboBox { min-height: 42px; padding: 0 10px; font-size: 22px;"
         "  color: #eef5fb; background: #0d1620; border: 1px solid #526d87; border-radius: 4px; }"
         "QLineEdit:disabled, QComboBox:disabled { color: #6f8294; background: #151d26; }"
     );
@@ -844,10 +846,12 @@ void ParameterConfigDialog::buildParameterPage()
 
     auto *value_title = new QLabel("修改值", parameter_editor_);
     editor_input_stack_ = new QStackedWidget(parameter_editor_);
+    // QStackedWidget 默认会沿纵向扩展。固定输入区域高度，避免它占满右侧编辑器中部。
+    editor_input_stack_->setFixedHeight(48);
     editor_line_edit_ = new QLineEdit(editor_input_stack_);
-    editor_line_edit_->setMinimumHeight(44);
+    editor_line_edit_->setFixedHeight(46);
     editor_combo_box_ = new QComboBox(editor_input_stack_);
-    editor_combo_box_->setMinimumHeight(44);
+    editor_combo_box_->setFixedHeight(46);
     editor_input_stack_->addWidget(editor_line_edit_);
     editor_input_stack_->addWidget(editor_combo_box_);
 

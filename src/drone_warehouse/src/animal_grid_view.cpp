@@ -16,7 +16,7 @@
 AnimalGridView::AnimalGridView(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumSize(640, 480);
+    setMinimumSize(420, 360);
     setCursor(Qt::PointingHandCursor);
 
     // 初次进入 Animal 项目时就显示完整路线，不必先点击一个格子。
@@ -72,8 +72,8 @@ QRectF AnimalGridView::gridRect() const
                  available_height / kRows));
     const qreal grid_width = cell_side * kColumns;
     const qreal grid_height = cell_side * kRows;
-    const qreal left =
-        left_margin + (available_width - grid_width) / 2.0;
+    // Animal 主画板占左侧区域，网格本身也靠左排列，右侧留给信息栏。
+    const qreal left = left_margin;
     const qreal top =
         top_margin + (available_height - grid_height) / 2.0;
     return QRectF(left, top, grid_width, grid_height);

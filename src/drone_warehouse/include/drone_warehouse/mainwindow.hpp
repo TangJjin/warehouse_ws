@@ -101,7 +101,12 @@ private:
 
     void updatePathReadyState(bool ready);
 
-    void updateWorldGroupState(const QVector<WorldCoord> &points);
+    // 把控制程序回传的路线按 x/y 写入运行日志；空路线返回 false。
+    bool updateWorldGroupState(const QVector<WorldCoord> &points);
+
+    // Animal 必须同时满足“Offboard 已成功”和“已收到有效路线”才允许启动任务。
+    // 两个 ROS 回调的到达顺序不固定，因此统一在这里检查并只启动一次。
+    void tryStartAnimalTask();
 
     // 上传路线统一入口。按钮触发和时间触发都先汇总到这里，避免后面维护两套上传逻辑。
     void triggerMissionUpload(const QString &trigger_source);
@@ -128,6 +133,11 @@ private:
     int mission_trigger_time_text_flag_ = 1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
+
+    // Animal 点击执行后保持为 true，直到成功调用一次 startTask() 或前置步骤失败。
+    bool animal_route_start_pending_ = false;
+    bool animal_offboard_ready_ = false;//本轮 Animal 执行的 Offboard 服务是否已成功
+    QVector<WorldCoord> animal_returned_route_;//暂存本轮控制程序回传的路线
 
     QVector<WorldCoord> path_points_;
     QVector<QString> waypoint_labels_;

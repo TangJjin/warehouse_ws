@@ -529,11 +529,30 @@ void MainWindow::setupConnections()
             this,
             [this](bool success, const QString &message)
             {
-                if(success){
-                    //push_button_->setEnabled(false);
-                    //waiting_task_result_ = false;
-                    run_log_view_->appendPlainText(QString("%1").arg(message));
-                    //clock_timer_->start(5000);
+                if (success)
+                {
+                    // Animal 不在这里直接调用 startTask()。控制程序返回的有效路线
+                    // 也到达后，tryStartAnimalTask() 才会按顺序打印路线并启动。
+                    if (animal_route_start_pending_)
+                    {
+                        animal_offboard_ready_ = true;
+                        run_log_view_->appendPlainText(
+                            message.isEmpty() ? "Offboard 启动成功" : message);
+                        tryStartAnimalTask();
+                    }
+                    else
+                    {
+                        run_log_view_->appendPlainText(QString("%1").arg(message));
+                    }
+                }
+                else if (animal_route_start_pending_)
+                {
+                    // Offboard 失败后结束本轮等待，后续残留路线消息不能误启动任务。
+                    animal_route_start_pending_ = false;
+                    animal_offboard_ready_ = false;
+                    animal_returned_route_.clear();
+                    run_log_view_->appendPlainText(
+                        message.isEmpty() ? "Offboard 启动失败，任务未启动" : message);
                 }
             },
             Qt::QueuedConnection);
@@ -629,12 +648,34 @@ void MainWindow::setupConnections()
             },
             Qt::QueuedConnection);
 
-        //连接rosmanager发出的会传路线数据信号
+        // 接收控制程序回传路线。Animal 要等 Offboard 和路线都成功后再启动；
+        // Cargo 保留原有的“收到路线后启动任务”流程。
         connect(ros_manager_, &RosManager::returnWorldGroupUpdated,
             this,
             [this](const QVector<WorldCoord> &points)
             {
-                updateWorldGroupState(points);
+                if (config_.inspection_project == InspectionProject::Animal)
+                {
+                    // 只有点击“执行”建立了本轮等待状态，Animal 路线才有效。
+                    // 成功启动后 pending 会被清除，重复发布的路线将在这里被忽略。
+                    if (!animal_route_start_pending_)
+                    {
+                        return;
+                    }
+
+                    if (points.isEmpty())
+                    {
+                        run_log_view_->appendPlainText(
+                            "控制程序回传路线为空，继续等待有效路线");
+                        return;
+                    }
+
+                    // 路线可能早于 Offboard 服务结果到达，所以先缓存，再统一检查。
+                    animal_returned_route_ = points;
+                    tryStartAnimalTask();
+                    return;
+                }
+
                 ros_manager_->startTask();
                 //run_log_view_->appendPlainText("初始化成功，准备巡检");
                 //clock_timer_->start(5000);
@@ -658,6 +699,15 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     {
         run_log_view_->appendPlainText("无法初始化");
         //clock_timer_->start(5000);
+        return;
+    }
+
+    // 上传服务返回后 mission_upload_in_progress_ 会先清除，但 Animal 还可能在等待
+    // Offboard 或回传路线。此时再次点击执行会造成两轮状态交叉，所以直接拦截。
+    if (trigger_source == "animal" && animal_route_start_pending_)
+    {
+        run_log_view_->appendPlainText(
+            "动物巡检正在等待 Offboard 和回传路线，请勿重复执行");
         return;
     }
 
@@ -724,10 +774,20 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
 
         summary.compress_straight_segments =
             mission.compress_waypoint_segments;
+
+        // 从点击执行开始建立一轮新的 Animal 等待状态。旧路线必须清空，
+        // 防止上一轮回传数据被当成本轮结果使用。
+        animal_route_start_pending_ = true;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
         mission_upload_in_progress_ = true;
         ros_manager_->uploadMissionSummary(animal_points, summary);
     }
     else if(trigger_source == "waypoint"){
+        // 切回 Cargo 流程时取消尚未完成的 Animal 等待状态。
+        animal_route_start_pending_ = false;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
         summary.compress_straight_segments =
             mission.compress_waypoint_segments;
 
@@ -739,6 +799,9 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         ros_manager_->uploadMissionSummary(path_points_, summary);
     }
     else{
+        animal_route_start_pending_ = false;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
         summary.compress_straight_segments =
             mission.compress_non_waypoint_segments;
         QVector<WorldCoord> empty_points;
@@ -825,11 +888,17 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
     }
     else if (!message.isEmpty())
     {
+        animal_route_start_pending_ = false;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
         run_log_view_->appendPlainText(QString("初始化失败：%1").arg(message));
         //clock_timer_->start(5000);
     }
     else
     {
+        animal_route_start_pending_ = false;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
         run_log_view_->appendPlainText("初始化失败");
         //clock_timer_->start(5000);
     }
@@ -1358,9 +1427,48 @@ void MainWindow::updatePathReadyState(bool ready)
     
 }
 
-void MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
+bool MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
 {
-    
+    if (points.isEmpty())
+    {
+        return false;
+    }
+
+    // 参考 drone_qt 的显示方式，但这里只输出用户关心的 x、y。
+    QString text = QString("收到控制程序回传路线，共 %1 个点").arg(points.size());
+    for (const WorldCoord &point : points)
+    {
+        text += QString(" -> (%1, %2)")
+                    .arg(point.x, 0, 'f', 1)
+                    .arg(point.y, 0, 'f', 1);
+    }
+
+    run_log_view_->appendPlainText(text);
+    return true;
+}
+
+void MainWindow::tryStartAnimalTask()
+{
+    // ROS 的路线话题和 Offboard 服务结果来自不同回调，不能假定谁先到。
+    if (!animal_route_start_pending_ ||
+        !animal_offboard_ready_ ||
+        animal_returned_route_.isEmpty())
+    {
+        return;
+    }
+
+    if (!updateWorldGroupState(animal_returned_route_))
+    {
+        return;
+    }
+
+    // 必须在调用 startTask() 前清除 pending。即使控制程序重复发布路线，
+    // 后续回调也不会让同一轮 Animal 执行再次调用 start 服务。
+    animal_route_start_pending_ = false;
+    animal_offboard_ready_ = false;
+    animal_returned_route_.clear();
+    run_log_view_->appendPlainText("回传路线确认成功，开始动物巡检任务");
+    ros_manager_->startTask();
 }
 
 /******************************************************/
@@ -1373,6 +1481,12 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     // 两套画板始终保留各自状态，只切换可见性，不在切换时重新创建。
     scene_view_->setVisible(!animal);
     animal_grid_view_->setVisible(animal);
+
+    // Animal 只保留运行日志和姿态状态；Cargo 继续显示原来的三个日志区域。
+    log_panel_->show();
+    attitude_panel_->show();
+    logwaypoint_panel_->setVisible(!animal);
+    ai_log_panel_->setVisible(!animal);
 
     // Animal 是固定二维视角，不显示 Cargo 的 2D/3D 和观察角度滑块。
     view_mode_widget_->setVisible(!animal);
@@ -1399,6 +1513,9 @@ void MainWindow::applyInspectionProject(InspectionProject project)
                 ? "已切换到动物巡检二维画板"
                 : "已切换到货物巡检仓库画板");
     }
+
+    // 项目切换后立即应用对应布局，不必等待下一次窗口缩放。
+    updateOverlayGeometry();
 }
 
 void MainWindow::applyWindowStyle()
@@ -1570,19 +1687,73 @@ void MainWindow::updateOverlayGeometry()
 
     const QRect area = central_container_->rect();
 
-    const QPoint top_left = top_status_bar_->shelfButtonBottomLeftGlobal();
-
-    scene_view_->setGeometry(area);//Cargo 主场景占满整个主容器
-    animal_grid_view_->setGeometry(area);//Animal 画板与 Cargo 使用相同区域
-    //左边距；上边距；宽度；高度
+    // 顶部状态栏属于两个项目共用区域，先确定它的位置。
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
-    log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
-    logwaypoint_panel_->setGeometry(250, area.height() - 90, 600, 200);
-    ai_log_panel_->setGeometry(area.width() - 320, 260, 330, 280);
-    attitude_panel_->setGeometry(area.width() - 220, 84, 220, 160);
-    view_mode_widget_->setGeometry(100, area.height() - 70, 160, 40);
-    view_Perspective_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
-    view_2D_widget_->setGeometry(area.width() - 220, area.height() - 70, 160, 40);
+    scene_view_->setGeometry(area);//Cargo 主场景占满整个主容器
+
+    if (config_.inspection_project == InspectionProject::Animal)
+    {
+        // Animal 使用左侧地图、右侧信息栏。右栏顶部暂时留给动物识别数量。
+        const int outer_margin = 20;
+        const int panel_gap = 16;
+        const int max_sidebar_width =
+            std::max(0, area.width() - 2 * outer_margin - panel_gap);
+        const int sidebar_width =
+            std::min(
+                std::clamp(area.width() / 4, 280, 360),
+                max_sidebar_width);
+        const int sidebar_x =
+            std::max(0, area.width() - outer_margin - sidebar_width);
+        const int map_width =
+            std::max(0, sidebar_x - panel_gap);
+
+        const int content_top = 84;
+        const int content_bottom =
+            std::max(content_top, area.height() - outer_margin);
+        const int usable_height =
+            std::max(0, content_bottom - content_top);
+        const int status_height =
+            std::min(160, usable_height);
+        const int status_y =
+            content_bottom - status_height;
+        const int available_log_height =
+            std::max(0, status_y - panel_gap - content_top);
+        const int log_height =
+            std::min(
+                std::clamp(area.height() / 3, 160, 240),
+                available_log_height);
+        const int log_y =
+            std::max(
+                content_top,
+                status_y - panel_gap - log_height);
+
+        animal_grid_view_->setGeometry(
+            0, 0, map_width, area.height());
+        log_panel_->setGeometry(
+            sidebar_x, log_y, sidebar_width, log_height);
+        attitude_panel_->setGeometry(
+            sidebar_x, status_y, sidebar_width, status_height);
+    }
+    else
+    {
+        // Cargo 完全保留原来的仓库画板和三个日志区域布局。
+        animal_grid_view_->setGeometry(area);
+        const QPoint top_left =
+            top_status_bar_->shelfButtonBottomLeftGlobal();
+        log_panel_->setGeometry(5, top_left.y() + 10, 310, 200);
+        logwaypoint_panel_->setGeometry(
+            250, area.height() - 90, 600, 200);
+        ai_log_panel_->setGeometry(
+            area.width() - 320, 260, 330, 280);
+        attitude_panel_->setGeometry(
+            area.width() - 220, 84, 220, 160);
+        view_mode_widget_->setGeometry(
+            100, area.height() - 70, 160, 40);
+        view_Perspective_widget_->setGeometry(
+            area.width() - 220, area.height() - 70, 160, 40);
+        view_2D_widget_->setGeometry(
+            area.width() - 220, area.height() - 70, 160, 40);
+    }
 }
 
 
