@@ -97,6 +97,13 @@ enum class ConnectionMode
     Telemetry  // 通过 ground_link_bridge 数传串口转发。
 };
 
+// 当前启用的巡检项目。该选择会写入 warehouse_config.json，重启后仍然生效。
+enum class InspectionProject
+{
+    Cargo,  // 货物巡检：使用现有仓库 SceneView。
+    Animal  // 动物巡检：使用固定二维栅格画板。
+};
+
 // 连接方式和数传串口放在同一个结构中，方便界面整体保存。
 struct ConnectionConfig
 {
@@ -181,6 +188,7 @@ struct MissionConfig
 // 地面站全部仓库配置。
 struct WarehouseConfig
 {
+    InspectionProject inspection_project = InspectionProject::Cargo; // 当前巡检项目。
     QVector<ShelfConfig> shelves; // 所有货架配置。
     SlotGridConfig slot_grid;     // 共用槽位结构和航点映射。
     RosTopicConfig ros;           // warehouse_gcs 直连 WiFi 时使用的 ROS 接口。

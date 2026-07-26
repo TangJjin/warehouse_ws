@@ -514,6 +514,31 @@ bool readBool(const QJsonObject &object,
     return true;
 }
 
+// JSON 使用稳定的英文值，避免界面中文名称变化后旧配置无法读取。
+QString inspectionProjectToString(InspectionProject project)
+{
+    return project == InspectionProject::Animal ? "animal" : "cargo";
+}
+
+bool inspectionProjectFromString(const QString &value,
+                                 InspectionProject &project,
+                                 QString *error_message)
+{
+    if (value == "cargo")
+    {
+        project = InspectionProject::Cargo;
+        return true;
+    }
+    if (value == "animal")
+    {
+        project = InspectionProject::Animal;
+        return true;
+    }
+    return jsonError(
+        error_message,
+        "inspection_project 必须是 cargo 或 animal");
+}
+
 QJsonArray doubleVectorToJson(const QVector<double> &values)
 {
     QJsonArray array;
@@ -1068,7 +1093,9 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
     slot_grid_object.insert("pose_z_max", config.slot_grid.pose_z_max);
 
     QJsonObject root;
-    root.insert("version", 4);
+    root.insert("version", 5);
+    root.insert("inspection_project",
+                inspectionProjectToString(config.inspection_project));
     root.insert("shelves", shelves);
     root.insert("slots", slot_grid_object);
     root.insert("ros", rosConfigToJson(config.ros));
@@ -1089,7 +1116,8 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     {
         return false;
     }
-    if (version != 1 && version != 2 && version != 3 && version != 4)
+    if (version != 1 && version != 2 && version != 3 &&
+        version != 4 && version != 5)
     {
         return jsonError(
             error_message,
@@ -1103,6 +1131,13 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     QJsonObject mission_object;
     QJsonObject visual_servo_object;
     QJsonObject industrial_camera_object;
+    QString inspection_project_text;
+    if (version >= 5 &&
+        !readString(root, "inspection_project",
+                    inspection_project_text, error_message))
+    {
+        return false;
+    }
     if (!readArray(root, "shelves", shelves_array, error_message) ||
         !readObject(root, "slots", slots_object, error_message) ||
         !readObject(root, "ros", ros_object, error_message) ||
@@ -1249,6 +1284,15 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     loaded_config.shelves = shelves;
     loaded_config.slot_grid = slot_grid;
     loaded_config.connection = connection;
+    // 版本 1-4 没有项目字段，沿用代码默认的 Cargo。
+    if (version >= 5 &&
+        !inspectionProjectFromString(
+            inspection_project_text,
+            loaded_config.inspection_project,
+            error_message))
+    {
+        return false;
+    }
     if (!rosConfigFromJson(ros_object, loaded_config.ros, error_message) ||
         !rosConfigFromJson(bridge_ros_object, loaded_config.bridge_ros, error_message) ||
         !missionConfigFromJson(mission_object, loaded_config.mission, error_message) ||

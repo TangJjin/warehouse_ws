@@ -13,6 +13,7 @@ class QLabel;
 class QSlider;
 class QWidget;
 class SceneView;
+class AnimalGridView;
 class ShelfInfoDialog;
 class TopStatusBar;
 class RosManager;
@@ -40,6 +41,7 @@ private:
     void setupDemoData();//设置一些演示用的假数据
     void updateOverlayGeometry();//调整悬浮控件的位置和大小
     void applyWindowStyle();//设置整体的窗口和控件样式
+    void applyInspectionProject(InspectionProject project);//切换 Cargo/Animal 主画板
 
     SlotLocation resolveSlotFromPose(const Pose3D &pose) const;//槽位判断函数
     SlotLocation resolveSlotFromCode(const QString &slot_code) const;//根据位置码直接解析槽位
@@ -114,7 +116,8 @@ private:
     WarehouseConfig config_;//当前仓库配置，包含货架、槽位、任务、串口和 ROS 接口
 
     QWidget *central_container_ = nullptr;//主容器，所有内容都放在这里面，方便统一管理布局和坐标
-    SceneView *scene_view_ = nullptr;//主场景视图，负责绘制仓库、无人机和轨迹
+    SceneView *scene_view_ = nullptr;//Cargo 主场景，负责绘制仓库、无人机和轨迹
+    AnimalGridView *animal_grid_view_ = nullptr;//Animal 固定 7x9 二维栅格画板
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
 
