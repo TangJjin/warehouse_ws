@@ -10,15 +10,12 @@
 #include "drone_msgs/msg/mission_summary.hpp"
 
 class QLabel;
-class QSlider;
 class QWidget;
-class SceneView;
-class AnimalGridView;
+class CargoInspectionPage;
+class AnimalInspectionPage;
 class ShelfInfoDialog;
 class TopStatusBar;
 class RosManager;
-class QPlainTextEdit;
-class QListWidget;
 class QTimer;
 
 class QDialog;
@@ -43,6 +40,8 @@ private:
     void updateOverlayGeometry();//调整悬浮控件的位置和大小
     void applyWindowStyle();//设置整体的窗口和控件样式
     void applyInspectionProject(InspectionProject project);//切换 Cargo/Animal 主画板
+    void appendRunLog(const QString &text);//把运行日志写入当前项目页面
+    void clearRunLogs();//清除两个项目页面的运行日志
 
     SlotLocation resolveSlotFromPose(const Pose3D &pose) const;//槽位判断函数
     SlotLocation resolveSlotFromCode(const QString &slot_code) const;//根据位置码直接解析槽位
@@ -129,8 +128,8 @@ private:
     WarehouseConfig config_;//当前仓库配置，包含货架、槽位、任务、串口和 ROS 接口
 
     QWidget *central_container_ = nullptr;//主容器，所有内容都放在这里面，方便统一管理布局和坐标
-    SceneView *scene_view_ = nullptr;//Cargo 主场景，负责绘制仓库、无人机和轨迹
-    AnimalGridView *animal_grid_view_ = nullptr;//Animal 固定 7x9 二维栅格画板
+    CargoInspectionPage *cargo_page_ = nullptr;//Cargo 页面，管理仓库画板、日志和视角控件
+    AnimalInspectionPage *animal_page_ = nullptr;//Animal 页面，管理二维栅格、运行日志和识别记录
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
 
@@ -155,16 +154,8 @@ private:
     QVector<QString> waypoint_labels_;
     /******************************************************/
 
-    QWidget *log_panel_ = nullptr;//日志面板
-    QPlainTextEdit *run_log_view_{nullptr};
-    QWidget *logwaypoint_panel_ = nullptr;//航点日志面板
-    QPlainTextEdit *waypoint_log_view_{nullptr};
-    QWidget *ai_log_panel_ = nullptr;//AI分析日志面板
-    QPlainTextEdit *ai_log_view_{nullptr};
     QTimer *clock_timer_ = nullptr;//用于每秒刷新一次顶部时间
 
-    QWidget *animal_result_panel_ = nullptr;//Animal 右上角的视觉伺服成功目标列表
-    QListWidget *animal_result_list_ = nullptr;
 
     QWidget *attitude_panel_ = nullptr;//姿态面板
     QLabel *altitude_value_label_ = nullptr;//高度数值
@@ -173,20 +164,6 @@ private:
     QLabel *battery_value_label_ = nullptr;//电池电量数值
     QLabel *mode_value_label_ = nullptr;//模式显示
 
-    QWidget *view_mode_widget_ = nullptr;//视图模式控件
-    QLabel *view_mode_left_label_ = nullptr;//2D标签
-    QLabel *view_mode_right_label_ = nullptr;//3D标签
-
-    QWidget *view_Perspective_widget_ = nullptr;//视角切换控件
-    QLabel *view_Perspective_left_label_ = nullptr;//左视图标签
-    QLabel *view_Perspective_center_label_ = nullptr;//中视图标签
-    QLabel *view_Perspective_right_label_ = nullptr;//右视图标签
-
-    QWidget *view_2D_widget_ = nullptr;//2D视角切换控件
-
-    QSlider *view_mode_slider_ = nullptr;//视图模式滑动条
-    QSlider *view_Perspective_slider_ = nullptr;//视角切换滑动条
-    QSlider *view_2D_slider_ = nullptr;//2D视角切换滑动条
 
     QVector<ShelfPanelData> shelf_panel_data_;//主窗口持有的货架弹窗数据，后续图片和槽位更新都改这份
     QDialog *image_preview_dialog_{nullptr};//槽位图片预览弹窗

@@ -1,8 +1,8 @@
 #include "drone_warehouse/mainwindow.hpp"
 
 #include "drone_warehouse/models.hpp"
-#include "drone_warehouse/scene_view.hpp"
-#include "drone_warehouse/animal_grid_view.hpp"
+#include "drone_warehouse/cargo_inspection_page.hpp"
+#include "drone_warehouse/animal_inspection_page.hpp"
 #include "drone_warehouse/shelf_info_dialog.hpp"
 #include "drone_warehouse/connection_info_dialog.hpp"
 #include "drone_warehouse/title_info_dialog.hpp"
@@ -99,13 +99,13 @@ void MainWindow::setupUi()
     setCentralWidget(central_container_);
 
     //创建主场景视图和顶部状态栏，并把它们放在主容器里，方便统一管理布局和坐标
-    scene_view_ = new SceneView(central_container_);
-    animal_grid_view_ = new AnimalGridView(central_container_);
-
     // 两套画板使用同一块主区域；项目切换时只显示其中一套。
-    scene_view_->setGeometry(central_container_->rect());
-    animal_grid_view_->setGeometry(central_container_->rect());
-    animal_grid_view_->hide();
+    // 每个页面在构造时创建自己的画板、日志和局部控件，MainWindow 不再逐个持有。
+    cargo_page_ = new CargoInspectionPage(central_container_);
+    animal_page_ = new AnimalInspectionPage(central_container_);
+    cargo_page_->setGeometry(central_container_->rect());
+    animal_page_->setGeometry(central_container_->rect());
+    animal_page_->hide();
 
     top_status_bar_ = new TopStatusBar(central_container_);
 
@@ -122,76 +122,10 @@ void MainWindow::setupFloatingWidgets()
 {
     /***********************日志控件*************************/
 
-    log_panel_ = new QWidget(central_container_);
-    auto *log_layout = new QVBoxLayout(log_panel_);
-    log_panel_->setObjectName("logSwitchPanel");
-    log_panel_->setContentsMargins(5, 5, 5, 5);//姿态面板内部边框留白
-
-    run_log_view_ = new QPlainTextEdit(log_panel_);
-    run_log_view_->setReadOnly(true);
-    run_log_view_->setMaximumBlockCount(1000);
-
-    log_layout->addWidget(run_log_view_);
-
+    // 日志面板已经随原有注释一起移动到 CargoInspectionPage 和 AnimalInspectionPage。
+    // 定时器仍属于 MainWindow，因为它控制的是跨项目的临时运行提示。
     clock_timer_ = new QTimer(this);//新建定时器
-    run_log_view_->appendPlainText("日志初始化成功");
     clock_timer_->start(5000);
-
-
-    logwaypoint_panel_ = new QWidget(central_container_);
-    auto *logwaypoint_layout = new QVBoxLayout(logwaypoint_panel_);
-    logwaypoint_panel_->setObjectName("logwaypointSwitchPanel");
-    logwaypoint_panel_->setContentsMargins(5, 5, 5, 5);//姿态面板内部边框留白
-
-    waypoint_log_view_ = new QPlainTextEdit(logwaypoint_panel_);
-    waypoint_log_view_->setReadOnly(true);
-    waypoint_log_view_->setMaximumBlockCount(1000);
-
-    logwaypoint_layout->addWidget(waypoint_log_view_);
-
-    //waypoint_log_view_->appendPlainText("航点日志初始化成功");
-
-    ai_log_panel_ = new QWidget(central_container_);
-    auto *ai_log_layout = new QVBoxLayout(ai_log_panel_);
-    ai_log_panel_->setObjectName("aiLogPanel");
-    ai_log_panel_->setContentsMargins(5, 5, 5, 5);
-
-    // auto *ai_log_title = new QLabel("AI分析", ai_log_panel_);
-    // ai_log_title->setObjectName("aiLogTitle");
-    ai_log_view_ = new QPlainTextEdit(ai_log_panel_);
-    ai_log_view_->setReadOnly(true);
-    ai_log_view_->setMaximumBlockCount(1000);
-
-    // ai_log_layout->addWidget(ai_log_title);
-    ai_log_layout->addWidget(ai_log_view_);
-    // ai_log_view_->appendPlainText("AI分析日志初始化成功");
-    animal_result_panel_ = new QWidget(central_container_);
-    animal_result_panel_->setObjectName("animalResultPanel");
-    auto *animal_result_layout = new QVBoxLayout(animal_result_panel_);
-    animal_result_layout->setContentsMargins(12, 10, 12, 10);
-    animal_result_layout->setSpacing(8);
-
-    auto *animal_result_title = new QLabel("动物识别记录", animal_result_panel_);
-    animal_result_title->setObjectName("animalResultTitle");
-    animal_result_list_ = new QListWidget(animal_result_panel_);
-    animal_result_list_->setSelectionMode(QAbstractItemView::NoSelection);
-    animal_result_list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    animal_result_list_->setWordWrap(true);
-    animal_result_layout->addWidget(animal_result_title);
-    animal_result_layout->addWidget(animal_result_list_, 1);
-
-    // Keep the Animal result area visually consistent with the existing quiet
-    // status and log panels. Records are text-only and never open an image.
-    animal_result_panel_->setStyleSheet(
-        "#animalResultPanel { background: rgba(18, 24, 34, 185);"
-        " border: 1px solid rgba(90, 130, 180, 110); border-radius: 8px; }"
-        "#animalResultTitle { background: transparent; border: none;"
-        " color: #8fe7ff; font-size: 18px; font-weight: 600; }"
-        "QListWidget { background: transparent; border: none; color: #d7e3f4;"
-        " font-size: 16px; outline: none; }"
-        "QListWidget::item { border-bottom: 1px solid rgba(90, 130, 180, 90);"
-        " padding: 8px 2px; }");
-
 
     /*******************************************************/
 
@@ -223,69 +157,13 @@ void MainWindow::setupFloatingWidgets()
 
     /*********************模式切换滑块***********************/
 
-    view_mode_widget_ = new QWidget(central_container_);
-    auto *slider_layout = new QHBoxLayout(view_mode_widget_);
-    slider_layout->setContentsMargins(1, 1, 1, 1);//滑块模块内部留白
-    slider_layout->setSpacing(1);//滑块中各元素间距
-
-    view_mode_left_label_ = new QLabel("2D", view_mode_widget_);
-    view_mode_right_label_ = new QLabel("3D", view_mode_widget_);
-    view_mode_slider_ = new QSlider(Qt::Horizontal, view_mode_widget_);//水平滑动条
-    view_mode_slider_->setRange(0, 1);//滑块取值范围0-1，0表示2D模式，1表示3D模式
-    view_mode_slider_->setValue(1);//默认3D模式
-    view_mode_slider_->setFixedHeight(35);
-
-    slider_layout->addWidget(view_mode_left_label_);
-    slider_layout->addWidget(view_mode_slider_);
-    slider_layout->addWidget(view_mode_right_label_);
-
-    /*******************************************************/
-
-    /*********************视角切换滑块***********************/
-
-    view_Perspective_widget_ = new QWidget(central_container_);
-    auto *slider_Perspective_layout = new QHBoxLayout(view_Perspective_widget_);
-
-    view_2D_widget_ = new QWidget(central_container_);
-    auto *slider_2D_layout = new QHBoxLayout(view_2D_widget_);
-
-    slider_Perspective_layout->setContentsMargins(1, 1, 1, 1);//滑块模块内部留白
-    slider_Perspective_layout->setSpacing(1);//滑块中各元素间距
-
-    slider_2D_layout->setContentsMargins(1, 1, 1, 1);//滑块模块内部留白
-    slider_2D_layout->setSpacing(1);//滑块中各元素间距
-
-    view_Perspective_slider_ = new QSlider(Qt::Horizontal, view_Perspective_widget_);//水平滑动条
-    view_Perspective_slider_->setRange(0, 3);//滑块取值范围0-3
-    view_Perspective_slider_->setValue(0);
-    view_Perspective_slider_->setFixedHeight(35);
-
-    view_2D_slider_ = new QSlider(Qt::Horizontal, view_2D_widget_);//水平滑动条
-    view_2D_slider_->setRange(0, 2);//滑块取值范围0-2，0表示上视图，1表示左视图，2表示右视图
-    view_2D_slider_->setValue(0);
-    view_2D_slider_->setFixedHeight(35);
-
-    //slider_Perspective_layout->addWidget(view_Perspective_left_label_);
-    slider_Perspective_layout->addWidget(view_Perspective_slider_);
-    //slider_Perspective_layout->addWidget(view_Perspective_right_label_);
-
-    slider_2D_layout->addWidget(view_2D_slider_);
+    // 模式和视角滑块已移动到 CargoInspectionPage，信号连接也由该页面管理。
 
     /*******************************************************/
 
     top_status_bar_->raise();//确保悬浮控件在主场景视图上面
-    log_panel_->raise();//确保日志区主场景视图上面
-    logwaypoint_panel_->raise();//确保日志区主场景视图上面
-    ai_log_panel_->raise();//确保AI分析日志区在主场景视图上面
     attitude_panel_->raise();//确保姿态面板在主场景视图上面
-    view_mode_widget_->raise();//确保视图模式控件在主场景视图上面
-    view_Perspective_widget_->raise();//确保视角切换控件在主场景视图上面
-    view_2D_widget_->raise();//确保2D视角切换控件在主场景视图上面
-
-    view_Perspective_widget_->show();
-    view_2D_widget_->hide();
-
-    }
+}
 
 void MainWindow::setupConnections()
 {
@@ -294,61 +172,11 @@ void MainWindow::setupConnections()
     });
 
     connect(clock_timer_, &QTimer::timeout, this, [this]() {//每秒触发刷新一次日志文本
-        run_log_view_->clear();
+        clearRunLogs();
         clock_timer_->stop();
     });
 
-    //连接视图模式滑动条的值改变信号，根据值切换视图模式
-    connect(view_mode_slider_, &QSlider::valueChanged, this, [this](int value) {
-        if (value == 0)
-        {
-            scene_view_->setViewMode(ViewMode::Top2D);
-            view_Perspective_widget_->hide();
-            view_2D_widget_->show();
-        }
-        else
-        {
-            scene_view_->setViewMode(ViewMode::Pseudo3D);
-            view_Perspective_widget_->show();
-            view_2D_widget_->hide();
-        }
-    });
-
-    //连接3D切换视角滑动条的值改变信号，根据值切换视图模式
-    connect(view_Perspective_slider_, &QSlider::valueChanged, this, [this](int value) {
-        if (value == 0)
-        {
-            scene_view_->setViewPerspectiveMode(ViewPerspectiveMode::Perspective225);
-        }
-        else if(value == 1)
-        {
-            scene_view_->setViewPerspectiveMode(ViewPerspectiveMode::Perspective315);
-        }
-        else if(value == 2)
-        {
-            scene_view_->setViewPerspectiveMode(ViewPerspectiveMode::Perspective45);
-        }
-        else if(value == 3)
-        {
-            scene_view_->setViewPerspectiveMode(ViewPerspectiveMode::Perspective135);
-        }
-    });
-
-    //连接2D切换视角滑动条的值改变信号，根据值切换视图模式
-    connect(view_2D_slider_, &QSlider::valueChanged, this, [this](int value) {
-        if (value == 0)
-        {
-            scene_view_->setView2DMode(View2DMode::Perspectivetop);
-        }
-        else if(value == 1)
-        {
-            scene_view_->setView2DMode(View2DMode::Perspective90);
-        }
-        else if(value == 2)
-        {
-            scene_view_->setView2DMode(View2DMode::Perspective0);
-        }
-    });
+    // 视图模式、3D 视角和 2D 视角的滑块连接已移动到 CargoInspectionPage。
 
     // 点击连接状态按钮后，打开连接方式和数传串口配置窗口。
     connect(top_status_bar_, &TopStatusBar::connectionButtonClicked, this, [this]() {
@@ -367,7 +195,7 @@ void MainWindow::setupConnections()
             // 弹窗已经完成 JSON 保存，这里同步主窗口内存中的配置。
             // RosManager 和数传串口均在启动时创建，因此新连接方式重启后生效。
             config_ = dialog.savedConfig();
-            run_log_view_->appendPlainText(
+            appendRunLog(
                 "连接配置已保存，重启地面站后生效");
         }
     });
@@ -465,7 +293,7 @@ void MainWindow::setupConnections()
             if(mission_trigger_time_text_flag_ == 1)
             {
                 mission_trigger_time_text_ = mission_trigger_time_text;
-                run_log_view_->appendPlainText(QString("已设置定时巡检：%1").arg(mission_trigger_time_text_));
+                appendRunLog(QString("已设置定时巡检：%1").arg(mission_trigger_time_text_));
                 mission_trigger_time_text_flag_ = 0;
                 top_status_bar_->setTriggerTime(mission_trigger_time_text_);
                 triggerMissionUpload("time");
@@ -474,7 +302,7 @@ void MainWindow::setupConnections()
             else
             {
                 mission_trigger_time_text_ = "";
-                run_log_view_->appendPlainText(QString("已关闭定时巡检"));
+                appendRunLog(QString("已关闭定时巡检"));
                 mission_trigger_time_text_flag_ = 1;
                 top_status_bar_->setTriggerTime(mission_trigger_time_text_);
                 clock_timer_->start(5000);
@@ -530,7 +358,7 @@ void MainWindow::setupConnections()
             {
                 //根据命令执行结果的成功与否，更新界面上的结果标签文本，显示相关消息
                 updateCommandResult(success, message);
-                run_log_view_->appendPlainText(QString("%1").arg(message));
+                appendRunLog(QString("%1").arg(message));
                 //clock_timer_->start(5000);
             },
             Qt::QueuedConnection);
@@ -546,7 +374,7 @@ void MainWindow::setupConnections()
                     // start_button_->setEnabled(false);
                     // delta_result_ = true;
                     //push_button_->setEnabled(true);
-                    run_log_view_->appendPlainText(QString("%1").arg(message));
+                    appendRunLog(QString("%1").arg(message));
                     clock_timer_->start(5000);
                 }
             },
@@ -564,13 +392,13 @@ void MainWindow::setupConnections()
                     if (animal_route_start_pending_)
                     {
                         animal_offboard_ready_ = true;
-                        run_log_view_->appendPlainText(
+                        appendRunLog(
                             message.isEmpty() ? "Offboard 启动成功" : message);
                         tryStartAnimalTask();
                     }
                     else
                     {
-                        run_log_view_->appendPlainText(QString("%1").arg(message));
+                        appendRunLog(QString("%1").arg(message));
                     }
                 }
                 else if (animal_route_start_pending_)
@@ -579,7 +407,7 @@ void MainWindow::setupConnections()
                     animal_route_start_pending_ = false;
                     animal_offboard_ready_ = false;
                     animal_returned_route_.clear();
-                    run_log_view_->appendPlainText(
+                    appendRunLog(
                         message.isEmpty() ? "Offboard 启动失败，任务未启动" : message);
                 }
             },
@@ -666,11 +494,11 @@ void MainWindow::setupConnections()
                 const double yaw_deg = yaw * 180.0 / M_PI;                    // 角度
 
                 scene_data_.drone_state.pose.yaw = yaw_deg;
-                animal_grid_view_->setPosition(x, y, z);
+                animal_page_->setPosition(x, y, z);
 
                 altitude_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
                 yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
-                scene_view_->setSceneData(scene_data_);
+                cargo_page_->setSceneData(scene_data_);
             },
             Qt::QueuedConnection);
 
@@ -709,7 +537,7 @@ void MainWindow::setupConnections()
 
                     if (points.isEmpty())
                     {
-                        run_log_view_->appendPlainText(
+                        appendRunLog(
                             "控制程序回传路线为空，继续等待有效路线");
                         return;
                     }
@@ -734,14 +562,14 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
 {
     if (!ros_manager_)
     {
-        run_log_view_->appendPlainText("初始化失败,rosmanager未就绪");
+        appendRunLog("初始化失败,rosmanager未就绪");
         //clock_timer_->start(5000);
         return;
     }
 
     if (mission_upload_in_progress_)
     {
-        run_log_view_->appendPlainText("无法初始化");
+        appendRunLog("无法初始化");
         //clock_timer_->start(5000);
         return;
     }
@@ -750,7 +578,7 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     // Offboard 或回传路线。此时再次点击执行会造成两轮状态交叉，所以直接拦截。
     if (trigger_source == "animal" && animal_route_start_pending_)
     {
-        run_log_view_->appendPlainText(
+        appendRunLog(
             "动物巡检正在等待 Offboard 和回传路线，请勿重复执行");
         return;
     }
@@ -806,12 +634,12 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     {
         // Animal 直接使用画板当前路线，不依赖货架航点或机载端静态路线。
         const QVector<WorldCoord> animal_points =
-            animal_grid_view_->plannedWorldPoints(
+            animal_page_->plannedWorldPoints(
                 mission.move_altitude,
                 mission.yaw);
         if (animal_points.isEmpty())
         {
-            run_log_view_->appendPlainText(
+            appendRunLog(
                 "动物巡检路线为空，请至少保留一个可通行格");
             return;
         }
@@ -836,7 +664,7 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
             mission.compress_waypoint_segments;
 
         if(path_points_.isEmpty()){
-            run_log_view_->appendPlainText("航点为空，不允许航点飞行");
+            appendRunLog("航点为空，不允许航点飞行");
             return;
         }
         mission_upload_in_progress_ = true;
@@ -856,10 +684,10 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
 
 void MainWindow::refreshWaypointLog()
 {
-    waypoint_log_view_->clear();
+    cargo_page_->setWaypointLogText("");
 
     if (waypoint_labels_.isEmpty()) {
-        run_log_view_->appendPlainText("已清空航点");
+        appendRunLog("已清空航点");
         clock_timer_->start(5000);
         return;
     }
@@ -869,7 +697,7 @@ void MainWindow::refreshWaypointLog()
         labels.append(label);
     }
 
-    waypoint_log_view_->appendPlainText(labels.join("->"));
+    cargo_page_->setWaypointLogText(labels.join("->"));
 }
 
 void MainWindow::clearWaypointRequest()
@@ -883,22 +711,22 @@ void MainWindow::setWaypointRequest(int shelf_index, const QString &side, int ro
 {
     if (shelf_index < 0 || shelf_index >= config_.shelves.size())
     {
-        run_log_view_->appendPlainText("添加航点失败：货架索引非法");
+        appendRunLog("添加航点失败：货架索引非法");
         return;
     }
     if (side != "front" && side != "back")
     {
-        run_log_view_->appendPlainText(QString("添加航点失败：side 非法：%1").arg(side));
+        appendRunLog(QString("添加航点失败：side 非法：%1").arg(side));
         return;
     }
     if (row < 0 || row >= config_.slot_grid.rows)
     {
-        run_log_view_->appendPlainText(QString("添加航点失败：row 非法：%1").arg(row));
+        appendRunLog(QString("添加航点失败：row 非法：%1").arg(row));
         return;
     }
     if (col < 0 || col >= config_.slot_grid.columns)
     {
-        run_log_view_->appendPlainText(QString("添加航点失败：col 非法：%1").arg(col));
+        appendRunLog(QString("添加航点失败：col 非法：%1").arg(col));
         return;
     }
 
@@ -926,7 +754,7 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
 
     if (success)
     {
-        run_log_view_->appendPlainText(QString("%1").arg(message));
+        appendRunLog(QString("%1").arg(message));
         //clock_timer_->start(5000);
         ros_manager_->requestStartOffboard();
     }
@@ -935,7 +763,7 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
         animal_returned_route_.clear();
-        run_log_view_->appendPlainText(QString("初始化失败：%1").arg(message));
+        appendRunLog(QString("初始化失败：%1").arg(message));
         //clock_timer_->start(5000);
     }
     else
@@ -943,7 +771,7 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
         animal_returned_route_.clear();
-        run_log_view_->appendPlainText("初始化失败");
+        appendRunLog("初始化失败");
         //clock_timer_->start(5000);
     }
 }
@@ -1020,7 +848,7 @@ void MainWindow::updateStatus(
     // 先把它拼进速度/航向旁的任务文本体系里，不额外造新控件。
     Q_UNUSED(flight_mode);
 
-    scene_view_->setSceneData(scene_data_);
+    cargo_page_->setSceneData(scene_data_);
 
 
 
@@ -1103,7 +931,7 @@ void MainWindow::appendBarcodeRecord(
     // 全空保护
     if (package_id.isEmpty() && category_id.isEmpty() && slot_code.isEmpty())
     {
-        run_log_view_->appendPlainText("收到空条码消息，已忽略");
+        appendRunLog("收到空条码消息，已忽略");
         return;
     }
 
@@ -1120,7 +948,7 @@ void MainWindow::appendBarcodeRecord(
              pose_location.row != code_location.row ||
              pose_location.col != code_location.col))
         {
-            run_log_view_->appendPlainText(
+            appendRunLog(
                 QString("位置码%1与位姿映射不一致，采用位置码：货架%2 %3 R%4C%5，位姿映射为货架%6 %7 R%8C%9")
                     .arg(slot_code)
                     .arg(code_location.shelf_index + 1)
@@ -1140,7 +968,7 @@ void MainWindow::appendBarcodeRecord(
 
     if (!target_location.valid)
     {
-        run_log_view_->appendPlainText(slot_code.isEmpty() ? "收到巡检结果，无法映射" : QString("收到巡检结果，位置码 %1 无法解析且位姿映射失败").arg(slot_code));
+        appendRunLog(slot_code.isEmpty() ? "收到巡检结果，无法映射" : QString("收到巡检结果，位置码 %1 无法解析且位姿映射失败").arg(slot_code));
         return;
     }
 
@@ -1148,7 +976,7 @@ void MainWindow::appendBarcodeRecord(
     ShelfSlotItem *slot = findShelfSlot(target_location.shelf_index, target_location.side, target_location.row, target_location.col);
     if (!slot)
     {
-        run_log_view_->appendPlainText("收到巡检结果，目标货架槽位无效");
+        appendRunLog("收到巡检结果，目标货架槽位无效");
         return;
     }
 
@@ -1177,7 +1005,7 @@ void MainWindow::appendBarcodeRecord(
     QString storage_error;
     if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
     {
-        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+        appendRunLog(QString("货架数据保存失败：%1").arg(storage_error));
     }
 }
 
@@ -1202,7 +1030,7 @@ void MainWindow::applyManualStockIn(int shelf_index, const QString &side, int ro
     ShelfSlotItem *slot = findShelfSlot(shelf_index, side, row, col);
     if (!slot)
     {
-        run_log_view_->appendPlainText("手动入库失败：目标槽位无效");
+        appendRunLog("手动入库失败：目标槽位无效");
         return;
     }
 
@@ -1212,7 +1040,7 @@ void MainWindow::applyManualStockIn(int shelf_index, const QString &side, int ro
     QString storage_error;
     if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
     {
-        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+        appendRunLog(QString("货架数据保存失败：%1").arg(storage_error));
     }
 }
 
@@ -1225,7 +1053,7 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
     ShelfSlotItem *slot = findShelfSlot(shelf_index, side, row, col);
     if (!slot)
     {
-        run_log_view_->appendPlainText("手动出库失败：目标槽位无效");
+        appendRunLog("手动出库失败：目标槽位无效");
         return;
     }
 
@@ -1234,13 +1062,13 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
 
     if (slot->category_id.isEmpty() || slot->package_id.isEmpty())
     {
-        run_log_view_->appendPlainText("台帐数据缺失");
+        appendRunLog("台帐数据缺失");
         return;
     }
     if (slot->category_id != scanned_category_id ||
         slot->package_id != scanned_package_id)
     {
-        run_log_view_->appendPlainText("台帐数据不对应");
+        appendRunLog("台帐数据不对应");
         return;
     }
 
@@ -1256,10 +1084,10 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
     QString storage_error;
     if (!ShelfPanelStorage::save(shelf_panel_data_, &storage_error))
     {
-        run_log_view_->appendPlainText(QString("货架数据保存失败：%1").arg(storage_error));
+        appendRunLog(QString("货架数据保存失败：%1").arg(storage_error));
     }
 
-    run_log_view_->appendPlainText(
+    appendRunLog(
     QString("手动出库成功：货架%1 %2 R%3C%4")
         .arg(shelf_index + 1)
         .arg(side)
@@ -1487,7 +1315,7 @@ bool MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
                     .arg(point.y, 0, 'f', 1);
     }
 
-    run_log_view_->appendPlainText(text);
+    appendRunLog(text);
     return true;
 }
 
@@ -1511,7 +1339,7 @@ void MainWindow::tryStartAnimalTask()
     animal_route_start_pending_ = false;
     animal_offboard_ready_ = false;
     animal_returned_route_.clear();
-    run_log_view_->appendPlainText("回传路线确认成功，开始动物巡检任务");
+    appendRunLog("回传路线确认成功，开始动物巡检任务");
     ros_manager_->startTask();
 }
 
@@ -1552,28 +1380,36 @@ void MainWindow::handleVisionServoStatus(
 
     if (state.compare("succeeded", Qt::CaseInsensitive) != 0 ||
         completed_target_id.isEmpty() ||
-        config_.inspection_project != InspectionProject::Animal ||
-        !animal_result_list_) {
+        config_.inspection_project != InspectionProject::Animal) {
         return;
     }
 
     // The old drone_qt record contained image bytes as well. This view keeps
     // only three text fields; empty optional values are simply not appended.
-    QStringList lines;
-    lines << QString("目标：%1").arg(completed_target_id);
-    if (!detail.trimmed().isEmpty()) {
-        lines << QString("结果：%1").arg(detail.trimmed());
-    }
-    if (!time_text.trimmed().isEmpty()) {
-        lines << QString("时间：%1").arg(time_text.trimmed());
-    }
+    // 具体的列表项创建和数量上限由 AnimalInspectionPage 管理。
+    animal_page_->appendRecognitionRecord(
+        completed_target_id, detail, time_text);
+}
 
-    auto *item = new QListWidgetItem(lines.join('\n'));
-    item->setSizeHint(QSize(0, 30 * lines.size() + 12));
-    animal_result_list_->insertItem(0, item);
-    while (animal_result_list_->count() > 100) {
-        delete animal_result_list_->takeItem(animal_result_list_->count() - 1);
+void MainWindow::appendRunLog(const QString &text)
+{
+    // 运行日志属于项目页面；MainWindow 只根据当前项目转发文本，
+    // 不再直接操作页面内部的 QPlainTextEdit。
+    if (config_.inspection_project == InspectionProject::Animal)
+    {
+        animal_page_->appendRunLog(text);
     }
+    else
+    {
+        cargo_page_->appendRunLog(text);
+    }
+}
+
+void MainWindow::clearRunLogs()
+{
+    // 定时清理时同时清除两页，避免切换后看到上一轮短提示。
+    cargo_page_->clearRunLog();
+    animal_page_->clearRunLog();
 }
 
 void MainWindow::applyInspectionProject(InspectionProject project)
@@ -1582,41 +1418,17 @@ void MainWindow::applyInspectionProject(InspectionProject project)
         project == InspectionProject::Animal;
 
     // 两套画板始终保留各自状态，只切换可见性，不在切换时重新创建。
-    scene_view_->setVisible(!animal);
-    animal_grid_view_->setVisible(animal);
+    cargo_page_->setVisible(!animal);
+    animal_page_->setVisible(animal);
 
     // Animal 只保留运行日志和姿态状态；Cargo 继续显示原来的三个日志区域。
-    log_panel_->show();
-    attitude_panel_->show();
-    logwaypoint_panel_->setVisible(!animal);
-    ai_log_panel_->setVisible(!animal);
-    animal_result_panel_->setVisible(animal);
-
     // Animal 是固定二维视角，不显示 Cargo 的 2D/3D 和观察角度滑块。
-    view_mode_widget_->setVisible(!animal);
-    if (animal)
-    {
-        view_Perspective_widget_->hide();
-        view_2D_widget_->hide();
-    }
-    else if (view_mode_slider_->value() == 0)
-    {
-        view_Perspective_widget_->hide();
-        view_2D_widget_->show();
-    }
-    else
-    {
-        view_Perspective_widget_->show();
-        view_2D_widget_->hide();
-    }
-
-    if (run_log_view_)
-    {
-        run_log_view_->appendPlainText(
-            animal
-                ? "已切换到动物巡检二维画板"
-                : "已切换到货物巡检仓库画板");
-    }
+    // Animal 是固定二维视角；Cargo 的 2D/3D、航点日志和 AI 日志
+    // 都已经封装在 CargoInspectionPage 内，切换页面时会一起显示或隐藏。
+    appendRunLog(
+        animal
+            ? "已切换到动物巡检二维画板"
+            : "已切换到货物巡检仓库画板");
 
     // 项目切换后立即应用对应布局，不必等待下一次窗口缩放。
     updateOverlayGeometry();
@@ -1643,58 +1455,8 @@ void MainWindow::applyWindowStyle()
         "}"
     );
 
-    log_panel_->setStyleSheet(
-        "background: rgba(18, 24, 34, 0);"//透明深色背景
-        "border: none;"//标签无边框
-        "border-radius: 10px;"
-
-        "border: none;"//无边框
-        "padding: 6px 10px;"//内边距
-        "}"
-    );
-
-    logwaypoint_panel_->setStyleSheet(
-        "background: rgba(18, 24, 34, 0);"//透明深色背景
-        "font-size: 16px;"
-        "border: none;"//标签无边框
-        "border-radius: 10px;"
-
-        "border: none;"//无边框
-        "padding: 6px 10px;"//内边距
-        "}"
-    );
-
-    ai_log_panel_->setStyleSheet(
-        // "#aiLogPanel {"
-        // "background: rgba(18, 24, 34, 150);"
-        // "border: 1px solid rgba(90, 130, 180, 100);"
-        // "border-radius: 10px;"
-        // "}"
-        // "#aiLogTitle {"
-        // "background: transparent;"
-        // "border: none;"
-        // "font-size: 16px;"
-        // "font-weight: 600;"
-        // "color: #8fe7ff;"
-        // "}"
-        // "QPlainTextEdit {"
-        // "background: rgba(10, 14, 22, 170);"
-        // "border: none;"
-        // "color: #d7e3f4;"
-        // "font-size: 14px;"
-        // "padding: 6px;"
-        // "}"
-
-        "background: rgba(18, 24, 34, 0);"//透明深色背景
-        "font-size: 16px;"
-        "border: none;"//标签无边框
-        "border-radius: 10px;"
-
-        "border: none;"//无边框
-        "padding: 6px 10px;"//内边距
-        "}"
-    );
-
+    // Cargo 日志和视角控件、Animal 日志和识别记录的原样式，
+    // 已分别随控件移动到两个页面类中。
     attitude_panel_->setStyleSheet(
         "background: rgba(18, 24, 34, 100);"//半透明深色背景
         "border: 1px solid rgba(90, 130, 180, 100);"//边框颜色和透明度
@@ -1703,23 +1465,6 @@ void MainWindow::applyWindowStyle()
         "border: none;"//无边框
         "padding: 6px 10px;"//内边距
         "}"
-    );
-
-    view_mode_widget_->setStyleSheet(
-        "background: rgba(18, 24, 34, 170);"
-        //"border: 1px solid rgba(90, 130, 180, 120);"
-        "border: none;"
-        "border-radius: 10px;"
-    );
-
-    view_mode_left_label_->setStyleSheet(
-        "border: none;"//标签无边框
-        "font-size: 18px;"
-    );
-
-    view_mode_right_label_->setStyleSheet(
-        "border: none;"
-        "font-size: 18px;"
     );
 }
 
@@ -1750,7 +1495,7 @@ void MainWindow::setupDemoData()
     }
 
     scene_data_ = data;
-    scene_view_->setSceneData(scene_data_);
+    cargo_page_->setSceneData(scene_data_);
     top_status_bar_->setConnected(data.drone_state.connected);
     top_status_bar_->setTaskText("任务待命");
 
@@ -1760,14 +1505,14 @@ void MainWindow::setupDemoData()
             shelf_panel_data_,
             &storage_error))
     {
-        run_log_view_->appendPlainText(
+        appendRunLog(
             QString("已加载货架持久化数据：%1，文件：%2")
                 .arg(shelf_panel_data_.size())
                 .arg(ShelfPanelStorage::defaultFilePath()));
     }
     else
     {
-        run_log_view_->appendPlainText(
+        appendRunLog(
             QString("未加载历史货架数据：%1，文件：%2")
                 .arg(storage_error)
                 .arg(ShelfPanelStorage::defaultFilePath()));
@@ -1793,96 +1538,22 @@ void MainWindow::updateOverlayGeometry()
 
     // 顶部状态栏属于两个项目共用区域，先确定它的位置。
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
-    scene_view_->setGeometry(area);//Cargo 主场景占满整个主容器
 
-    if (config_.inspection_project == InspectionProject::Animal)
-    {
-        // Animal 使用左侧地图、右侧信息栏。右栏顶部暂时留给动物识别数量。
-        const int outer_margin = 20;
-        const int panel_gap = 16;
-        const int max_sidebar_width =
-            std::max(0, area.width() - 2 * outer_margin - panel_gap);
-        const int sidebar_width =
-            std::min(
-                std::clamp(area.width() / 4, 280, 360),
-                max_sidebar_width);
-        const int sidebar_x =
-            std::max(0, area.width() - outer_margin - sidebar_width);
-        const int map_width =
-            std::max(0, sidebar_x - panel_gap);
+    // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
+    // 安排画板、日志、识别记录和 Cargo 视角控件。
+    cargo_page_->setGeometry(area);
+    animal_page_->setGeometry(area);
 
-        const int content_top = 84;
-        const int content_bottom =
-            std::max(content_top, area.height() - outer_margin);
-        const int usable_height =
-            std::max(0, content_bottom - content_top);
-        const int status_height = std::min(150, usable_height / 3);
-        const int status_y = content_bottom - status_height;
-        const int upper_height =
-            std::max(0, status_y - content_top - 2 * panel_gap);
-        const int result_height = upper_height / 2;
-        const int log_height = upper_height - result_height;
-        const int log_y = content_top + result_height + panel_gap;
+    // 姿态面板是共享控件，但不同项目需要不同位置。
+    attitude_panel_->setGeometry(
+        config_.inspection_project == InspectionProject::Animal
+            ? animal_page_->attitudePanelGeometry()
+            : cargo_page_->attitudePanelGeometry());
 
-        animal_result_panel_->setGeometry(
-            sidebar_x, content_top, sidebar_width, result_height);
-        animal_grid_view_->setGeometry(
-            0, 0, map_width, area.height());
-        log_panel_->setGeometry(
-            sidebar_x, log_y, sidebar_width, log_height);
-        attitude_panel_->setGeometry(
-            sidebar_x, status_y, sidebar_width, status_height);
-    }
-    else
-    {
-        // Cargo 完全保留原来的仓库画板和三个日志区域布局。
-        animal_grid_view_->setGeometry(area);
-        const QPoint top_left =
-            top_status_bar_->shelfButtonBottomLeftGlobal();
-        log_panel_->setGeometry(5, top_left.y() + 10, 310, 200);
-        logwaypoint_panel_->setGeometry(
-            250, area.height() - 90, 600, 200);
-        ai_log_panel_->setGeometry(
-            area.width() - 320, 260, 330, 280);
-        attitude_panel_->setGeometry(
-            area.width() - 220, 84, 220, 160);
-        view_mode_widget_->setGeometry(
-            100, area.height() - 70, 160, 40);
-        view_Perspective_widget_->setGeometry(
-            area.width() - 220, area.height() - 70, 160, 40);
-        view_2D_widget_->setGeometry(
-            area.width() - 220, area.height() - 70, 160, 40);
-    }
+    // 页面铺满主容器后，共享状态控件必须保持在最上层。
+    top_status_bar_->raise();
+    attitude_panel_->raise();
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
 {
@@ -1990,11 +1661,7 @@ void MainWindow::runAiDiffAnalysis()
 {
     const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
     const QString report = buildRuleAnalysisReport(results);
-    if (ai_log_view_)
-    {
-        ai_log_view_->clear();
-        ai_log_view_->appendPlainText(report);
-    }
+    cargo_page_->setAiLogText(report);
 }
 
 QString MainWindow::buildAiPrompt(const SlotRuleAnalysis &result) const
@@ -2046,12 +1713,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
 {
     const QVector<SlotRuleAnalysis> results = buildRuleAnalysisResults();
 
-    if (!ai_log_view_)
-    {
-        return;
-    }
-
-    ai_log_view_->clear();
+    cargo_page_->clearAiLog();
     // ai_log_view_->appendPlainText("AI分析开始...");
 
     auto slot_label = [](const SlotRuleAnalysis &result) {
@@ -2224,7 +1886,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     //              .arg(high_count);
     // lines << QString("问题槽位：%1").arg(problem_lines.join("；"));
     lines << "AI正在生成简短建议...";
-    ai_log_view_->appendPlainText(lines.join('\n'));
+    cargo_page_->appendAiLog(lines.join('\n'));
 
     QStringList prompt_lines;
     prompt_lines << "你是仓储巡检值班助手。";
@@ -2260,7 +1922,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     QFile prompt_file(prompt_path);
     if (!prompt_file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
-        ai_log_view_->appendPlainText("AI总结失败：无法写入 prompt 文件");
+        cargo_page_->appendAiLog("AI总结失败：无法写入 prompt 文件");
         return;
     }
     prompt_file.write(prompt_lines.join('\n').toUtf8());
@@ -2272,7 +1934,7 @@ void MainWindow::runClaudeApiDiffAnalysis()
     QFile image_meta_file(image_meta_path);
     if (!image_meta_file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
-        ai_log_view_->appendPlainText("AI总结失败：无法写入输入元数据文件");
+        cargo_page_->appendAiLog("AI总结失败：无法写入输入元数据文件");
         return;
     }
     image_meta_file.write(QJsonDocument(image_meta).toJson(QJsonDocument::Compact));
@@ -2287,9 +1949,9 @@ void MainWindow::runClaudeApiDiffAnalysis()
 
         if (exit_code != 0)
         {
-            ai_log_view_->appendPlainText("AI总结失败：调用脚本退出异常，已显示规则保底结果。");
-            ai_log_view_->appendPlainText(QString::fromUtf8(process->readAllStandardError()));
-            ai_log_view_->appendPlainText(fallback_text);
+            cargo_page_->appendAiLog("AI总结失败：调用脚本退出异常，已显示规则保底结果。");
+            cargo_page_->appendAiLog(QString::fromUtf8(process->readAllStandardError()));
+            cargo_page_->appendAiLog(fallback_text);
             process->deleteLater();
             return;
         }
@@ -2297,8 +1959,8 @@ void MainWindow::runClaudeApiDiffAnalysis()
         QFile output_file(output_path);
         if (!output_file.open(QIODevice::ReadOnly | QIODevice::Text))
         {
-            ai_log_view_->appendPlainText("AI总结失败：无法读取输出结果，已显示规则保底结果。");
-            ai_log_view_->appendPlainText(fallback_text);
+            cargo_page_->appendAiLog("AI总结失败：无法读取输出结果，已显示规则保底结果。");
+            cargo_page_->appendAiLog(fallback_text);
             process->deleteLater();
             return;
         }
@@ -2371,19 +2033,19 @@ void MainWindow::runClaudeApiDiffAnalysis()
             && has_correct_counts
             && !has_unknown_slot;
 
-        ai_log_view_->appendPlainText("");
+        cargo_page_->appendAiLog("");
         if (output_is_valid)
         {
-            ai_log_view_->appendPlainText(output_text);
+            cargo_page_->appendAiLog(output_text);
         }
         else
         {
-            ai_log_view_->appendPlainText("AI输出无效，已显示规则保底结果。");
-            ai_log_view_->appendPlainText("AI原始输出：");
-            ai_log_view_->appendPlainText(
+            cargo_page_->appendAiLog("AI输出无效，已显示规则保底结果。");
+            cargo_page_->appendAiLog("AI原始输出：");
+            cargo_page_->appendAiLog(
                 output_text.isEmpty() ? "（空输出）" : output_text);
-            ai_log_view_->appendPlainText("规则保底结果：");
-            ai_log_view_->appendPlainText(fallback_text);
+            cargo_page_->appendAiLog("规则保底结果：");
+            cargo_page_->appendAiLog(fallback_text);
         }
 
         process->deleteLater();
