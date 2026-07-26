@@ -3,6 +3,7 @@
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -13,6 +14,7 @@
 #include <QAbstractButton>
 #include <QListWidgetItem>
 #include <QMessageBox>
+#include <QStyle>
 
 #include <cmath>
 #include <functional>
@@ -557,6 +559,14 @@ void ParameterConfigDialog::buildUi()
     top_layout->addWidget(apply_button_);
 
     auto *body_layout = new QHBoxLayout;
+    auto *navigation_panel = new QWidget(this);
+    auto *navigation_layout = new QVBoxLayout(navigation_panel);
+    navigation_layout->setContentsMargins(0, 0, 0, 0);
+    navigation_layout->setSpacing(8);
+    auto *navigation_top_layout = new QHBoxLayout;
+    navigation_top_layout->setContentsMargins(0, 0, 0, 0);
+    navigation_top_layout->setSpacing(8);
+
 
     auto *left_panel = new QWidget(this);
     auto *left_layout = new QVBoxLayout(left_panel);
@@ -592,13 +602,18 @@ void ParameterConfigDialog::buildUi()
     parameter_filter_panel_->setObjectName("parameterFilterPanel");
     buildParameterFilterPanel();
 
+    navigation_top_layout->addWidget(left_panel);
+    navigation_top_layout->addWidget(parameter_filter_panel_);
+    navigation_layout->addLayout(navigation_top_layout, 1);
+    buildNumericKeypad(navigation_panel);
+    navigation_layout->addWidget(numeric_keypad_);
+
     //主界面堆叠窗口，用于切换项目选择和参数编辑页面
     page_stack_ = new QStackedWidget(this);
     buildProjectPage();//构建项目选择界面
     buildParameterPage();//构建参数修改界面
 
-    body_layout->addWidget(left_panel);
-    body_layout->addWidget(parameter_filter_panel_);
+    body_layout->addWidget(navigation_panel);
     body_layout->addWidget(page_stack_, 1);
 
     root_layout->addLayout(top_layout);
@@ -632,6 +647,7 @@ void ParameterConfigDialog::buildUi()
             selectProject(working_config_.inspection_project);
             editing_parameter_id_.clear();
             parameter_editor_->hide();
+            setNumericKeypadEnabled(false);
             rebuildParameterList();
         });
 
@@ -650,6 +666,7 @@ void ParameterConfigDialog::buildUi()
         "QDialog { background: #101722; color: #d7e3f4; }"
         "#parameterPageTitle { font-size: 24px; font-weight: 600; color: #f1f6fb; }"
         "#leftPanel, #parameterFilterPanel { background: #1b2736; border: 1px solid #34485e; border-radius: 6px; }"
+        "#numericKeypad { background: #1b2736; border: 1px solid #34485e; border-radius: 6px; }"
         "QPushButton { min-height: 40px; padding: 0 16px; font-size: 17px;"
         "  color: #dce8f4; background: #26384b; border: 1px solid #47627d; border-radius: 6px; }"
         "QPushButton:hover { background: #31485f; }"
@@ -677,6 +694,83 @@ ParameterConfigDialog::savedConfig() const
     return working_config_;
 }
 
+void ParameterConfigDialog::buildNumericKeypad(QWidget *parent)
+{
+    numeric_keypad_ = new QWidget(parent);
+    numeric_keypad_->setObjectName("numericKeypad");
+    numeric_keypad_->setFixedHeight(236);
+    auto *layout = new QGridLayout(numeric_keypad_);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setHorizontalSpacing(8);
+    layout->setVerticalSpacing(8);
+
+    for (int digit = 1; digit <= 9; ++digit)
+    {
+        const QString text = QString::number(digit);
+        auto *button = new QPushButton(text, numeric_keypad_);
+        button->setMinimumSize(0, 48);
+        connect(button, &QPushButton::clicked, this,
+                [this, text]() { appendNumericDigit(text); });
+        layout->addWidget(button, (digit - 1) / 3, (digit - 1) % 3);
+    }
+
+    auto *backspace_button = new QPushButton(numeric_keypad_);
+    backspace_button->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    backspace_button->setIconSize(QSize(24, 24));
+    backspace_button->setToolTip("回退");
+    connect(backspace_button, &QPushButton::clicked,
+            this, &ParameterConfigDialog::backspaceNumericInput);
+
+    auto *zero_button = new QPushButton("0", numeric_keypad_);
+    connect(zero_button, &QPushButton::clicked, this,
+            [this]() { appendNumericDigit("0"); });
+
+    auto *confirm_button = new QPushButton("确定", numeric_keypad_);
+    connect(confirm_button, &QPushButton::clicked,
+            this, &ParameterConfigDialog::commitParameterEdit);
+
+    for (QPushButton *button :
+         {backspace_button, zero_button, confirm_button})
+    {
+        button->setMinimumSize(0, 48);
+    }
+    layout->addWidget(backspace_button, 3, 0);
+    layout->addWidget(zero_button, 3, 1);
+    layout->addWidget(confirm_button, 3, 2);
+    setNumericKeypadEnabled(false);
+}
+
+void ParameterConfigDialog::setNumericKeypadEnabled(bool enabled)
+{
+    numeric_editor_active_ = enabled;
+    if (numeric_keypad_)
+    {
+        numeric_keypad_->setEnabled(enabled);
+    }
+}
+
+void ParameterConfigDialog::appendNumericDigit(const QString &digit)
+{
+    if (!numeric_editor_active_ || !editor_line_edit_ ||
+        !editor_line_edit_->isEnabled())
+    {
+        return;
+    }
+    editor_line_edit_->insert(digit);
+    editor_line_edit_->setFocus();
+}
+
+void ParameterConfigDialog::backspaceNumericInput()
+{
+    if (!numeric_editor_active_ || !editor_line_edit_ ||
+        !editor_line_edit_->isEnabled())
+    {
+        return;
+    }
+    editor_line_edit_->backspace();
+    editor_line_edit_->setFocus();
+}
+
 void ParameterConfigDialog::selectMainPage(int page_index)
 {
     project_page_button_->setChecked(page_index == 0);//设置按钮选中状态
@@ -685,6 +779,9 @@ void ParameterConfigDialog::selectMainPage(int page_index)
 
     // 项目选择页面不需要参数筛选，进入参数页面后再显示第二列。
     parameter_filter_panel_->setVisible(page_index == 1);
+    if (numeric_keypad_) {
+        numeric_keypad_->setVisible(page_index == 1);
+    }
 }
 
 void ParameterConfigDialog::buildParameterFilterPanel()
@@ -730,6 +827,7 @@ void ParameterConfigDialog::selectParameterGroup(ParameterGroup group)
     {
         parameter_editor_->hide();
     }
+    setNumericKeypadEnabled(false);
 
     // QButtonGroup 使用枚举值作为按钮 ID，保证当前筛选按钮保持高亮。
     QAbstractButton *button = parameter_filter_button_group_->button(
@@ -885,6 +983,7 @@ void ParameterConfigDialog::buildParameterPage()
                 editing_parameter_id_.clear();
                 parameter_list_->clearSelection();
                 parameter_editor_->hide();
+                setNumericKeypadEnabled(false);
             });
     connect(editor_confirm_button_, &QPushButton::clicked,
             this, &ParameterConfigDialog::commitParameterEdit);
@@ -998,9 +1097,13 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     {
         editing_parameter_id_.clear();
         parameter_editor_->hide();
+        setNumericKeypadEnabled(false);
         return;
     }
 
+    const bool numeric_editor =
+        definition->editor_type == ParameterEditorType::Number ||
+        definition->editor_type == ParameterEditorType::Integer;
     // 第二步：分别读取临时配置中的当前值和程序默认值。
     // 这里使用 rawValue，因此不会把 m、s 等显示单位写进输入框。
     const QString current_value = definition->rawValue(working_config_);
@@ -1036,7 +1139,14 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
         editor_line_edit_->setText(current_value);
         editor_line_edit_->setPlaceholderText(definition->placeholder);
         editor_input_stack_->setCurrentWidget(editor_line_edit_);
-        editor_line_edit_->selectAll();
+        if (numeric_editor) {
+            // Preserve the existing decimal point and sign so the requested
+            // digit-only keypad can edit floating-point and negative values.
+            editor_line_edit_->deselect();
+            editor_line_edit_->setCursorPosition(current_value.size());
+        } else {
+            editor_line_edit_->selectAll();
+        }
         editor_line_edit_->setFocus();
     }
 
@@ -1053,6 +1163,7 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
             definition->description + " " + definition->disabled_reason);
     }
 
+    setNumericKeypadEnabled(numeric_editor && editable);
     parameter_editor_->show();
 }
 
@@ -1113,6 +1224,7 @@ void ParameterConfigDialog::commitParameterEdit()
     // 提交成功后关闭右侧编辑器，并重建列表显示新值。
     editing_parameter_id_.clear();
     parameter_editor_->hide();
+    setNumericKeypadEnabled(false);
     rebuildParameterList();
 }
 

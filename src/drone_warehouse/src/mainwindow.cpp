@@ -21,6 +21,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QListWidget>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSlider>
@@ -164,6 +165,33 @@ void MainWindow::setupFloatingWidgets()
     // ai_log_layout->addWidget(ai_log_title);
     ai_log_layout->addWidget(ai_log_view_);
     // ai_log_view_->appendPlainText("AI分析日志初始化成功");
+    animal_result_panel_ = new QWidget(central_container_);
+    animal_result_panel_->setObjectName("animalResultPanel");
+    auto *animal_result_layout = new QVBoxLayout(animal_result_panel_);
+    animal_result_layout->setContentsMargins(12, 10, 12, 10);
+    animal_result_layout->setSpacing(8);
+
+    auto *animal_result_title = new QLabel("动物识别记录", animal_result_panel_);
+    animal_result_title->setObjectName("animalResultTitle");
+    animal_result_list_ = new QListWidget(animal_result_panel_);
+    animal_result_list_->setSelectionMode(QAbstractItemView::NoSelection);
+    animal_result_list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    animal_result_list_->setWordWrap(true);
+    animal_result_layout->addWidget(animal_result_title);
+    animal_result_layout->addWidget(animal_result_list_, 1);
+
+    // Keep the Animal result area visually consistent with the existing quiet
+    // status and log panels. Records are text-only and never open an image.
+    animal_result_panel_->setStyleSheet(
+        "#animalResultPanel { background: rgba(18, 24, 34, 185);"
+        " border: 1px solid rgba(90, 130, 180, 110); border-radius: 8px; }"
+        "#animalResultTitle { background: transparent; border: none;"
+        " color: #8fe7ff; font-size: 18px; font-weight: 600; }"
+        "QListWidget { background: transparent; border: none; color: #d7e3f4;"
+        " font-size: 16px; outline: none; }"
+        "QListWidget::item { border-bottom: 1px solid rgba(90, 130, 180, 90);"
+        " padding: 8px 2px; }");
+
 
     /*******************************************************/
 
@@ -603,6 +631,22 @@ void MainWindow::setupConnections()
             [this](const QString &barcode, const QString &time_text)
             {
                 appendVisionBarcodeCount(barcode, time_text);
+            },
+            Qt::QueuedConnection);
+
+        // 视觉伺服动作结束后，把成功跟踪的目标记录到 Animal 结果区。
+        connect(ros_manager_, &RosManager::visionServoStatusUpdated,
+            this,
+            [this](bool active,
+                   const QString &state,
+                   const QString &requested_target_id,
+                   const QString &tracked_target_id,
+                   const QString &detail,
+                   const QString &time_text)
+            {
+                handleVisionServoStatus(
+                    active, state, requested_target_id,
+                    tracked_target_id, detail, time_text);
             },
             Qt::QueuedConnection);
 
@@ -1473,6 +1517,65 @@ void MainWindow::tryStartAnimalTask()
 
 /******************************************************/
 
+void MainWindow::handleVisionServoStatus(
+    bool active,
+    const QString &state,
+    const QString &requested_target_id,
+    const QString &tracked_target_id,
+    const QString &detail,
+    const QString &time_text)
+{
+    Q_UNUSED(requested_target_id);
+
+    if (!tracked_target_id.trimmed().isEmpty()) {
+        current_tracked_target_id_ = tracked_target_id.trimmed();
+    }
+
+    if (active) {
+        vision_servo_active_seen_ = true;
+        last_vision_servo_active_ = true;
+        return;
+    }
+
+    // A retained active=false sample received after startup is not an edge. Only
+    // finish a record after this process has observed the matching active=true.
+    const bool action_finished =
+        vision_servo_active_seen_ && last_vision_servo_active_;
+    last_vision_servo_active_ = false;
+    if (!action_finished) {
+        return;
+    }
+
+    vision_servo_active_seen_ = false;
+    const QString completed_target_id = current_tracked_target_id_;
+    current_tracked_target_id_.clear();
+
+    if (state.compare("succeeded", Qt::CaseInsensitive) != 0 ||
+        completed_target_id.isEmpty() ||
+        config_.inspection_project != InspectionProject::Animal ||
+        !animal_result_list_) {
+        return;
+    }
+
+    // The old drone_qt record contained image bytes as well. This view keeps
+    // only three text fields; empty optional values are simply not appended.
+    QStringList lines;
+    lines << QString("目标：%1").arg(completed_target_id);
+    if (!detail.trimmed().isEmpty()) {
+        lines << QString("结果：%1").arg(detail.trimmed());
+    }
+    if (!time_text.trimmed().isEmpty()) {
+        lines << QString("时间：%1").arg(time_text.trimmed());
+    }
+
+    auto *item = new QListWidgetItem(lines.join('\n'));
+    item->setSizeHint(QSize(0, 30 * lines.size() + 12));
+    animal_result_list_->insertItem(0, item);
+    while (animal_result_list_->count() > 100) {
+        delete animal_result_list_->takeItem(animal_result_list_->count() - 1);
+    }
+}
+
 void MainWindow::applyInspectionProject(InspectionProject project)
 {
     const bool animal =
@@ -1487,6 +1590,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     attitude_panel_->show();
     logwaypoint_panel_->setVisible(!animal);
     ai_log_panel_->setVisible(!animal);
+    animal_result_panel_->setVisible(animal);
 
     // Animal 是固定二维视角，不显示 Cargo 的 2D/3D 和观察角度滑块。
     view_mode_widget_->setVisible(!animal);
@@ -1712,21 +1816,16 @@ void MainWindow::updateOverlayGeometry()
             std::max(content_top, area.height() - outer_margin);
         const int usable_height =
             std::max(0, content_bottom - content_top);
-        const int status_height =
-            std::min(160, usable_height);
-        const int status_y =
-            content_bottom - status_height;
-        const int available_log_height =
-            std::max(0, status_y - panel_gap - content_top);
-        const int log_height =
-            std::min(
-                std::clamp(area.height() / 3, 160, 240),
-                available_log_height);
-        const int log_y =
-            std::max(
-                content_top,
-                status_y - panel_gap - log_height);
+        const int status_height = std::min(150, usable_height / 3);
+        const int status_y = content_bottom - status_height;
+        const int upper_height =
+            std::max(0, status_y - content_top - 2 * panel_gap);
+        const int result_height = upper_height / 2;
+        const int log_height = upper_height - result_height;
+        const int log_y = content_top + result_height + panel_gap;
 
+        animal_result_panel_->setGeometry(
+            sidebar_x, content_top, sidebar_width, result_height);
         animal_grid_view_->setGeometry(
             0, 0, map_width, area.height());
         log_panel_->setGeometry(

@@ -18,6 +18,7 @@ class ShelfInfoDialog;
 class TopStatusBar;
 class RosManager;
 class QPlainTextEdit;
+class QListWidget;
 class QTimer;
 
 class QDialog;
@@ -98,6 +99,13 @@ private:
 
     // 当前仓储界面里还没有单独的 delta 可视化控件，先保留这个入口，后面如有需要再扩展显示位置。
     void updateDelta(double dx, double dy, double dyaw, bool valid);
+    void handleVisionServoStatus(
+        bool active,
+        const QString &state,
+        const QString &requested_target_id,
+        const QString &tracked_target_id,
+        const QString &detail,
+        const QString &time_text);
 
     void updatePathReadyState(bool ready);
 
@@ -139,6 +147,10 @@ private:
     bool animal_offboard_ready_ = false;//本轮 Animal 执行的 Offboard 服务是否已成功
     QVector<WorldCoord> animal_returned_route_;//暂存本轮控制程序回传的路线
 
+    bool vision_servo_active_seen_ = false;
+    bool last_vision_servo_active_ = false;
+    QString current_tracked_target_id_;
+
     QVector<WorldCoord> path_points_;
     QVector<QString> waypoint_labels_;
     /******************************************************/
@@ -150,6 +162,9 @@ private:
     QWidget *ai_log_panel_ = nullptr;//AI分析日志面板
     QPlainTextEdit *ai_log_view_{nullptr};
     QTimer *clock_timer_ = nullptr;//用于每秒刷新一次顶部时间
+
+    QWidget *animal_result_panel_ = nullptr;//Animal 右上角的视觉伺服成功目标列表
+    QListWidget *animal_result_list_ = nullptr;
 
     QWidget *attitude_panel_ = nullptr;//姿态面板
     QLabel *altitude_value_label_ = nullptr;//高度数值

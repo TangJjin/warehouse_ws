@@ -135,6 +135,11 @@ void GroundLinkBridge::setupRosInterfaces()
     vision_barcode_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
         topic_config_.vision_barcode.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
+    vision_servo_status_pub_ =
+        this->create_publisher<drone_msgs::msg::VisionServoStatus>(
+            topic_config_.vision_servo_status.toStdString(),
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local());
+
     delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
         topic_config_.pose_delta.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
@@ -426,6 +431,9 @@ void GroundLinkBridge::handlePacket(const Packet &packet)
         break;
     case lp::kTypeVisionBarcode:
         handleVisionBarcodeReport(packet.payload);
+        break;
+    case lp::kTypeVisionServoStatus:
+        handleVisionServoStatusReport(packet.payload);
         break;
     case lp::kTypeDelta:
         handleDeltaReport(packet.payload);
@@ -793,6 +801,62 @@ void GroundLinkBridge::handleVisionBarcodeReport(const QByteArray &payload)
     msg.image_format = image_format.toStdString();
 
     vision_barcode_pub_->publish(msg);
+}
+
+// Rebuild the ROS status message sent by the airborne bridge. No image payload
+// is part of this frame; it contains only controller state and target metadata.
+void GroundLinkBridge::handleVisionServoStatusReport(const QByteArray &payload)
+{
+    QDataStream stream(payload);
+    configureStream(stream);
+    useDoublePrecision(stream);
+
+    qint32 sec = 0;
+    quint32 nanosec = 0;
+    quint8 active = 0;
+    QByteArray state;
+    QByteArray requested_target_id;
+    QByteArray tracked_target_id;
+    quint32 target_sequence = 0;
+    quint8 target_visible = 0;
+    quint8 aligned = 0;
+    double filtered_error_x = 0.0;
+    double filtered_error_y = 0.0;
+    QByteArray detail;
+
+    stream >> sec;
+    stream >> nanosec;
+    stream >> active;
+    if (!readSizedBytes(stream, state) ||
+        !readSizedBytes(stream, requested_target_id) ||
+        !readSizedBytes(stream, tracked_target_id)) {
+        RCLCPP_ERROR(this->get_logger(), "invalid VisionServoStatus payload");
+        return;
+    }
+    stream >> target_sequence;
+    stream >> target_visible;
+    stream >> aligned;
+    stream >> filtered_error_x;
+    stream >> filtered_error_y;
+    if (!readSizedBytes(stream, detail) || !streamFullyConsumed(stream)) {
+        RCLCPP_ERROR(this->get_logger(), "invalid VisionServoStatus payload");
+        return;
+    }
+
+    drone_msgs::msg::VisionServoStatus msg;
+    msg.stamp.sec = sec;
+    msg.stamp.nanosec = nanosec;
+    msg.active = (active != 0);
+    msg.state = state.toStdString();
+    msg.requested_target_id = requested_target_id.toStdString();
+    msg.tracked_target_id = tracked_target_id.toStdString();
+    msg.target_sequence = target_sequence;
+    msg.target_visible = (target_visible != 0);
+    msg.aligned = (aligned != 0);
+    msg.filtered_error_x = filtered_error_x;
+    msg.filtered_error_y = filtered_error_y;
+    msg.detail = detail.toStdString();
+    vision_servo_status_pub_->publish(msg);
 }
 
 // 对应机载端 publishDelta()，依次读取三个 float32：x、y、z。
