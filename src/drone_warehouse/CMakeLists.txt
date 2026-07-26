@@ -28,6 +28,7 @@ add_executable(warehouse_gcs
   src/main.cpp
   src/mainwindow.cpp
   src/scene_view.cpp
+  src/animal_grid_view.cpp
   src/ros_manager.cpp
   src/gpio_output.cpp
   src/top_status_bar.cpp
@@ -41,6 +42,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
   include/drone_warehouse/scene_view.hpp
+  include/drone_warehouse/animal_grid_view.hpp
   include/drone_warehouse/ros_manager.hpp
   include/drone_warehouse/gpio_output.hpp
   include/drone_warehouse/top_status_bar.hpp

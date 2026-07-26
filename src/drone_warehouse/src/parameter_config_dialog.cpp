@@ -521,7 +521,8 @@ ParameterConfigDialog::ParameterConfigDialog(
     QWidget *parent)
     : QDialog(parent),
       original_config_(config), // 永远代表打开窗口时的配置。
-      working_config_(config)   // 页面内的所有修改先写入这份副本。
+      working_config_(config),  // 页面内的所有修改先写入这份副本。
+      selected_project_(config.inspection_project)
 {
     setWindowTitle("参数设置");
     setWindowFlag(Qt::FramelessWindowHint, true);
@@ -623,9 +624,12 @@ void ParameterConfigDialog::buildUi()
             const WarehouseConfig defaults =
                 createDefaultWarehouseConfig();
 
+            working_config_.inspection_project =
+                defaults.inspection_project;
             working_config_.mission = defaults.mission;
             working_config_.visual_servo = defaults.visual_servo;
             working_config_.industrial_camera = defaults.industrial_camera;
+            selectProject(working_config_.inspection_project);
             editing_parameter_id_.clear();
             parameter_editor_->hide();
             rebuildParameterList();
@@ -777,14 +781,16 @@ void ParameterConfigDialog::buildProjectPage()
     layout->addStretch();
     page_stack_->addWidget(project_page_);
 
-    // 首次打开时默认高亮货物巡检。
-    selectProject(InspectionProject::Cargo);
+    // 高亮 JSON 中保存的项目；旧配置由加载器默认迁移为 Cargo。
+    selectProject(selected_project_);
 }
 
 void ParameterConfigDialog::selectProject(
     InspectionProject project)
 {
     selected_project_ = project;
+    // 项目选择和其他参数一样先写临时配置，点击“启用”后再保存到 JSON。
+    working_config_.inspection_project = project;
 
     //按照当前选择的巡检项目高亮对应按钮
     QAbstractButton *button =

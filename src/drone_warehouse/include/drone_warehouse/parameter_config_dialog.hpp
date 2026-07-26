@@ -14,11 +14,6 @@ class QPushButton;
 class QStackedWidget;
 class QWidget;
 
-enum class InspectionProject
-{
-    Cargo,
-    Animal
-};
 
 // 参数页面第二列的筛选类别。
 enum class ParameterGroup

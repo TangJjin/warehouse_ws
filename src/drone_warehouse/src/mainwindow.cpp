@@ -2,6 +2,7 @@
 
 #include "drone_warehouse/models.hpp"
 #include "drone_warehouse/scene_view.hpp"
+#include "drone_warehouse/animal_grid_view.hpp"
 #include "drone_warehouse/shelf_info_dialog.hpp"
 #include "drone_warehouse/connection_info_dialog.hpp"
 #include "drone_warehouse/title_info_dialog.hpp"
@@ -63,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupUi();
     setupFloatingWidgets();
+    applyInspectionProject(config_.inspection_project);
     setupConnections();
     applyWindowStyle();
     setupDemoData();
@@ -97,10 +99,13 @@ void MainWindow::setupUi()
 
     //创建主场景视图和顶部状态栏，并把它们放在主容器里，方便统一管理布局和坐标
     scene_view_ = new SceneView(central_container_);
+    animal_grid_view_ = new AnimalGridView(central_container_);
 
-    //主场景视图占满整个主容器，悬浮控件会在上面调整位置
+    // 两套画板使用同一块主区域；项目切换时只显示其中一套。
     scene_view_->setGeometry(central_container_->rect());
-    
+    animal_grid_view_->setGeometry(central_container_->rect());
+    animal_grid_view_->hide();
+
     top_status_bar_ = new TopStatusBar(central_container_);
 
     //这里传入 config_.slot_grid，确保弹窗里能正确显示当前仓库的槽位结构和航点映射。
@@ -368,6 +373,7 @@ void MainWindow::setupConnections()
             {
                 //
                 config_ = parameter_dialog.savedConfig();
+                applyInspectionProject(config_.inspection_project);
                 ros_manager_->publishIndustrialCameraParams(config_.industrial_camera);
 
                 // run_log_view_->appendPlainText(
@@ -452,7 +458,11 @@ void MainWindow::setupConnections()
         });
 
         connect(top_status_bar_, &TopStatusBar::executeButtonClicked, this, [this]() {
-            triggerMissionUpload("button");
+            // Animal 的执行按钮直接上传当前栅格路线；Cargo 保持原来的执行逻辑。
+            triggerMissionUpload(
+                config_.inspection_project == InspectionProject::Animal
+                    ? "animal"
+                    : "button");
         });
 
         connect(top_status_bar_, &TopStatusBar::triggerTimeReached, this, [this](const QString &) {
@@ -593,6 +603,7 @@ void MainWindow::setupConnections()
                 const double yaw_deg = yaw * 180.0 / M_PI;                    // 角度
 
                 scene_data_.drone_state.pose.yaw = yaw_deg;
+                animal_grid_view_->setPosition(x, y, z);
 
                 altitude_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
                 yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
@@ -697,7 +708,26 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
     summary.visual_servo.max_body_speed_mps = visual.max_body_speed_mps;
     summary.visual_servo.continue_on_timeout = visual.continue_on_timeout;
 
-    if(trigger_source == "waypoint"){
+    if (trigger_source == "animal")
+    {
+        // Animal 直接使用画板当前路线，不依赖货架航点或机载端静态路线。
+        const QVector<WorldCoord> animal_points =
+            animal_grid_view_->plannedWorldPoints(
+                mission.move_altitude,
+                mission.yaw);
+        if (animal_points.isEmpty())
+        {
+            run_log_view_->appendPlainText(
+                "动物巡检路线为空，请至少保留一个可通行格");
+            return;
+        }
+
+        summary.compress_straight_segments =
+            mission.compress_waypoint_segments;
+        mission_upload_in_progress_ = true;
+        ros_manager_->uploadMissionSummary(animal_points, summary);
+    }
+    else if(trigger_source == "waypoint"){
         summary.compress_straight_segments =
             mission.compress_waypoint_segments;
 
@@ -1335,6 +1365,42 @@ void MainWindow::updateWorldGroupState(const QVector<WorldCoord> &points)
 
 /******************************************************/
 
+void MainWindow::applyInspectionProject(InspectionProject project)
+{
+    const bool animal =
+        project == InspectionProject::Animal;
+
+    // 两套画板始终保留各自状态，只切换可见性，不在切换时重新创建。
+    scene_view_->setVisible(!animal);
+    animal_grid_view_->setVisible(animal);
+
+    // Animal 是固定二维视角，不显示 Cargo 的 2D/3D 和观察角度滑块。
+    view_mode_widget_->setVisible(!animal);
+    if (animal)
+    {
+        view_Perspective_widget_->hide();
+        view_2D_widget_->hide();
+    }
+    else if (view_mode_slider_->value() == 0)
+    {
+        view_Perspective_widget_->hide();
+        view_2D_widget_->show();
+    }
+    else
+    {
+        view_Perspective_widget_->show();
+        view_2D_widget_->hide();
+    }
+
+    if (run_log_view_)
+    {
+        run_log_view_->appendPlainText(
+            animal
+                ? "已切换到动物巡检二维画板"
+                : "已切换到货物巡检仓库画板");
+    }
+}
+
 void MainWindow::applyWindowStyle()
 {
     setStyleSheet(
@@ -1506,7 +1572,8 @@ void MainWindow::updateOverlayGeometry()
 
     const QPoint top_left = top_status_bar_->shelfButtonBottomLeftGlobal();
 
-    scene_view_->setGeometry(area);//主场景视图占满整个主容器
+    scene_view_->setGeometry(area);//Cargo 主场景占满整个主容器
+    animal_grid_view_->setGeometry(area);//Animal 画板与 Cargo 使用相同区域
     //左边距；上边距；宽度；高度
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     log_panel_->setGeometry(5, top_left.y()+10, 310, 200);
