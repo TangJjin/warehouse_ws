@@ -105,53 +105,55 @@ struct ConnectionConfig
 };
 
 // 地面站保存并整组发布的工业相机参数；数值范围与当前相机驱动一致。
+// 这里只做安全的零值初始化；真正的代码默认值统一写在 createDefaultWarehouseConfig()。
 struct IndustrialCameraConfig
 {
-    bool auto_exposure = true; // 是否启用自动曝光；关闭后使用手动曝光时间。
-    int exposure_absolute = 40; // 手动曝光时间，范围：1..10000。
+    bool auto_exposure = false; // 是否启用自动曝光；关闭后使用手动曝光时间。
+    int exposure_absolute = 0; // 手动曝光时间，范围：1..10000。
     bool auto_exposure_priority = false; // 自动曝光时是否允许降低帧率。
-    int gain = 190; // 图像增益，范围：0..190。
-    int brightness = 128; // 图像亮度，范围：0..255。
-    int contrast = 65; // 图像对比度，范围：0..128。
-    int saturation = 90; // 图像饱和度，范围：0..128。
-    int gamma = 130; // 图像 Gamma 校正值，范围：0..255。
-    int sharpness = 128; // 图像锐度，范围：0..255。
-    int backlight_compensation = 16; // 逆光补偿，范围：16..160。
-    bool auto_white_balance = true; // 是否启用自动白平衡；关闭后使用手动色温。
-    int white_balance_temperature = 4650; // 手动白平衡色温，范围：2800..6500 K。
-    quint8 power_line_frequency = 1; // 防闪烁频率：0=关闭，1=50 Hz，2=60 Hz。
-    bool auto_focus = true; // 是否启用自动对焦；关闭后使用手动焦点。
+    int gain = 0; // 图像增益，范围：0..190。
+    int brightness = 0; // 图像亮度，范围：0..255。
+    int contrast = 0; // 图像对比度，范围：0..128。
+    int saturation = 0; // 图像饱和度，范围：0..128。
+    int gamma = 0; // 图像 Gamma 校正值，范围：0..255。
+    int sharpness = 0; // 图像锐度，范围：0..255。
+    int backlight_compensation = 0; // 逆光补偿，范围：16..160。
+    bool auto_white_balance = false; // 是否启用自动白平衡；关闭后使用手动色温。
+    int white_balance_temperature = 0; // 手动白平衡色温，范围：2800..6500 K。
+    quint8 power_line_frequency = 0; // 防闪烁频率：0=关闭，1=50 Hz，2=60 Hz。
+    bool auto_focus = false; // 是否启用自动对焦；关闭后使用手动焦点。
     int focus_absolute = 0; // 手动焦点位置，范围：0..1023。
-    int zoom_absolute = 120; // 相机变焦值，范围：100..200。
+    int zoom_absolute = 0; // 相机变焦值，范围：100..200。
 };
 
-// 视觉伺服全局默认参数；只有任务明确包含 visual_servo 动作时才会使用。
+// 视觉伺服全局参数。
+// 这里只做安全的零值初始化；真正的代码默认值统一写在 createDefaultWarehouseConfig()。
 struct VisualServoConfig
 {
     QString target_id; // 目标 ID；留空表示锁定第一个符合条件的目标。
-    bool require_confirmed = true; // 是否要求视觉端将目标标记为稳定确认。
-    QString image_x_axis = "y"; // 图像水平误差映射到的机体系轴：x、y 或 z。
-    QString image_y_axis = "z"; // 图像垂直误差映射到的机体系轴，不能与 X 映射轴相同。
-    double image_x_sign = -1.0; // 图像水平误差到机体运动方向的符号，只能为 -1 或 1。
-    double image_y_sign = -1.0; // 图像垂直误差到机体运动方向的符号，只能为 -1 或 1。
-    double kp_x = 0.35; // 图像 X 误差的 PID 比例增益。
+    bool require_confirmed = false; // 是否要求视觉端将目标标记为稳定确认。
+    QString image_x_axis; // 图像水平误差映射到的机体系轴：x、y 或 z。
+    QString image_y_axis; // 图像垂直误差映射到的机体系轴，不能与 X 映射轴相同。
+    double image_x_sign = 0.0; // 图像水平误差到机体运动方向的符号，只能为 -1 或 1。
+    double image_y_sign = 0.0; // 图像垂直误差到机体运动方向的符号，只能为 -1 或 1。
+    double kp_x = 0.0; // 图像 X 误差的 PID 比例增益。
     double ki_x = 0.0; // 图像 X 误差的 PID 积分增益。
-    double kd_x = 0.02; // 图像 X 误差的 PID 微分增益。
-    double kp_y = 0.35; // 图像 Y 误差的 PID 比例增益。
+    double kd_x = 0.0; // 图像 X 误差的 PID 微分增益。
+    double kp_y = 0.0; // 图像 Y 误差的 PID 比例增益。
     double ki_y = 0.0; // 图像 Y 误差的 PID 积分增益。
-    double kd_y = 0.02; // 图像 Y 误差的 PID 微分增益。
-    double integral_limit = 0.5; // 积分累计量的绝对值上限。
-    double filter_alpha = 0.35; // 低通滤波系数，范围：0..1。
-    double enter_tolerance_x = 0.04; // X 误差进入对准状态的阈值。
-    double enter_tolerance_y = 0.04; // Y 误差进入对准状态的阈值。
-    double exit_tolerance_x = 0.07; // X 误差退出对准状态的阈值。
-    double exit_tolerance_y = 0.07; // Y 误差退出对准状态的阈值。
-    double settle_time_s = 0.6; // 连续保持对准后判定成功的时间，单位：秒。
-    double acquire_timeout_s = 5.0; // 等待首个有效目标的超时，单位：秒。
-    double lost_timeout_s = 1.0; // 允许目标连续丢失的时间，单位：秒。
-    double overall_timeout_s = 20.0; // 单次视觉伺服动作总超时，单位：秒。
-    double max_body_speed_mps = 0.20; // PID 输出的单轴机体系速度上限，单位：米/秒。
-    bool continue_on_timeout = true; // 超时后是否继续执行后续任务动作。
+    double kd_y = 0.0; // 图像 Y 误差的 PID 微分增益。
+    double integral_limit = 0.0; // 积分累计量的绝对值上限。
+    double filter_alpha = 0.0; // 低通滤波系数，范围：0..1。
+    double enter_tolerance_x = 0.0; // X 误差进入对准状态的阈值。
+    double enter_tolerance_y = 0.0; // Y 误差进入对准状态的阈值。
+    double exit_tolerance_x = 0.0; // X 误差退出对准状态的阈值。
+    double exit_tolerance_y = 0.0; // Y 误差退出对准状态的阈值。
+    double settle_time_s = 0.0; // 连续保持对准后判定成功的时间，单位：秒。
+    double acquire_timeout_s = 0.0; // 等待首个有效目标的超时，单位：秒。
+    double lost_timeout_s = 0.0; // 允许目标连续丢失的时间，单位：秒。
+    double overall_timeout_s = 0.0; // 单次视觉伺服动作总超时，单位：秒。
+    double max_body_speed_mps = 0.0; // PID 输出的单轴机体系速度上限，单位：米/秒。
+    bool continue_on_timeout = false; // 超时后是否继续执行后续任务动作。
 };
 struct MissionConfig
 {
@@ -188,7 +190,7 @@ struct WarehouseConfig
     VisualServoConfig visual_servo; // 视觉伺服全局默认参数。
     IndustrialCameraConfig industrial_camera; // 保存并发布的完整工业相机参数。
 };
-// 创建首次运行使用的默认仓库配置；warehouse_config.json 不存在时以此生成文件。
+// 返回编译进程序的固定默认值；不读取 JSON，恢复默认值和首次创建配置文件都使用它。
 WarehouseConfig createDefaultWarehouseConfig();
 
 // 校验货架、槽位、ROS、通信串口和任务参数；配置有效时返回空字符串。

@@ -2,11 +2,8 @@
 
 #include <QButtonGroup>
 #include <QComboBox>
-#include <QDoubleValidator>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QHash>
-#include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -18,121 +15,504 @@
 #include <QMessageBox>
 
 #include <cmath>
+#include <functional>
+#include <utility>
 
 namespace
 {
+// 参数页面的数据流：
+// 1. 构造函数复制传入配置，original_config_ 用于丢弃，working_config_ 用于临时编辑。
+// 2. parameterDefinitions() 集中描述所有参数，列表和编辑器都不再自己判断参数 ID。
+// 3. rebuildParameterList() 遍历参数表，从 working_config_ 读取当前值并创建列表行。
+// 4. 用户点击一行后，showParameterEditor() 根据参数表决定使用输入框还是下拉框。
+// 5. 单项“确定”只更新 working_config_；页面顶部“启用”才校验并写入 JSON。
+// 6. “丢弃”恢复打开窗口前的配置，“恢复默认值”只修改临时配置，仍需点击“启用”。
 struct ProjectDefinition
 {
-    InspectionProject type;
-    QString name;
+    InspectionProject type; // 程序内部使用的项目枚举。
+    QString name;           // 项目按钮显示文字。
 };
 
 const QVector<ProjectDefinition> projects = {
-    //按钮为动态创建，添加列表即可
+    // 项目按钮动态创建；以后增加巡检项目，只需要在这里增加一项。
     {InspectionProject::Cargo, "货物巡检"},
     {InspectionProject::Animal, "动物巡检"}
 };
 
-QString boolDisplayText(bool value)
+struct ParameterFilterDefinition
 {
-    return value ? "启用" : "关闭";
+    ParameterGroup group; // 筛选类别。
+    QString name;         // 第二列按钮显示的英文名称。
+};
+
+const QVector<ParameterFilterDefinition> parameter_filters = {
+    // 筛选按钮同样动态创建；显示顺序就是这里的排列顺序。
+    {ParameterGroup::All, "ALL"},
+    {ParameterGroup::Flight, "FLIGHT"},
+    {ParameterGroup::Servo, "SERVO"},
+    {ParameterGroup::Camera, "CAMERA"}
+};
+
+// 决定右侧编辑器使用哪一种控件，以及如何格式化列表中的值。
+enum class ParameterEditorType
+{
+    Text,    // 普通字符串，使用 QLineEdit。
+    Number,  // 浮点数，使用 QLineEdit，列表中按小数位格式化。
+    Integer, // 整数，使用 QLineEdit。
+    Choice   // 布尔值或枚举，使用 QComboBox。
+};
+
+struct ParameterChoice
+{
+    QString text;  // 界面显示文字。
+    QString value; // 实际写入配置的值。
+};
+
+// 一项 ParameterDefinition 对应参数列表中的一行。
+// 它把原来分散在多个函数中的名称、说明、类型、读写方式集中到一起。
+struct ParameterDefinition
+{
+    QString id;          // 唯一 ID，同时保存到 QListWidgetItem::UserRole。
+    ParameterGroup group = ParameterGroup::All; // 所属筛选类别，与 ID 字符串无关。
+    // id 只是参数页面内部使用的唯一查找键，不会靠拆分字符串来定位字段。
+    // 真正的字段对应关系由下方 read/write 中保存的结构体成员指针决定。
+    QString name;        // 参数列表和右侧编辑器显示的中文名称。
+    QString description; // 参数用途、范围和单位说明。
+    ParameterEditorType editor_type = ParameterEditorType::Text; // 编辑控件类型。
+    QString unit;        // 只用于列表显示，例如 m、m/s、K。
+    int display_decimals = 3; // 浮点数在列表中保留的小数位数。
+    QString empty_display;    // 原始值为空时列表显示的替代文字。
+    QString placeholder;      // 文本输入框没有内容时显示的提示。
+    QVector<ParameterChoice> choices; // 下拉框的显示文字和实际值。
+
+    // read 负责从 WarehouseConfig 中找到对应成员，并转换成不带单位的字符串。
+    std::function<QString(const WarehouseConfig &)> read;
+    // write 负责解析输入并写入候选配置；整体范围校验稍后统一进行。
+    std::function<bool(WarehouseConfig &, const QString &, QString *)> write;
+    // editable 为空表示始终可编辑；否则根据当前配置决定是否允许编辑。
+    std::function<bool(const WarehouseConfig &)> editable;
+    QString disabled_reason; // 不可编辑时追加到参数说明后的原因。
+
+    // 右侧输入框和保存逻辑使用原始值，不包含单位和中文选项名称。
+    QString rawValue(const WarehouseConfig &config) const
+    {
+        return read ? read(config) : QString();
+    }
+
+    // 参数列表使用显示值：枚举转换为中文，数字补齐小数位，并追加单位。
+    QString displayValue(const WarehouseConfig &config) const
+    {
+        const QString raw = rawValue(config);
+        if (raw.isEmpty() && !empty_display.isEmpty())
+        {
+            return empty_display;
+        }
+
+        for (const ParameterChoice &choice : choices)
+        {
+            if (choice.value == raw)
+            {
+                return choice.text;
+            }
+        }
+
+        QString value = raw;
+        if (editor_type == ParameterEditorType::Number)
+        {
+            bool ok = false;
+            const double number = raw.toDouble(&ok);
+            if (ok)
+            {
+                value = QString::number(number, 'f', display_decimals);
+            }
+        }
+        return unit.isEmpty() ? value : value + " " + unit;
+    }
+};
+
+QVector<ParameterChoice> boolChoices()
+{
+    return {{"启用", "true"}, {"关闭", "false"}};
 }
 
-bool isBooleanParameter(const QString &id)
+QVector<ParameterChoice> frameChoices()
 {
-    static const QStringList ids = {
-        "add_hover_between_takeoff", "add_hover_between_landing",
-        "add_hover_between_moves", "auto_start_mission",
-        "compress_waypoint_segments", "compress_non_waypoint_segments",
-        "visual_servo.require_confirmed", "visual_servo.continue_on_timeout",
-        "industrial_camera.auto_exposure",
-        "industrial_camera.auto_exposure_priority",
-        "industrial_camera.auto_white_balance",
-        "industrial_camera.auto_focus"
+    return {{"world_body", "world_body"}, {"body", "body"}, {"world_enu", "world_enu"}};
+}
+
+QVector<ParameterChoice> axisChoices()
+{
+    return {{"X 轴", "x"}, {"Y 轴", "y"}, {"Z 轴", "z"}};
+}
+
+QVector<ParameterChoice> signChoices()
+{
+    return {{"正向 (+1)", "1"}, {"反向 (-1)", "-1"}};
+}
+
+QVector<ParameterChoice> powerLineChoices()
+{
+    return {{"关闭", "0"}, {"50 Hz", "1"}, {"60 Hz", "2"}};
+}
+
+void setError(QString *error_message, const QString &message)
+{
+    if (error_message)
+    {
+        *error_message = message;
+    }
+}
+
+// 参数类别根据 WarehouseConfig 中的实际结构体类型确定，而不是解析 ID 字符串。
+template <typename Section>
+ParameterGroup parameterGroupForSection()
+{
+    return ParameterGroup::All;
+}
+
+template <>
+ParameterGroup parameterGroupForSection<MissionConfig>()
+{
+    return ParameterGroup::Flight;
+}
+
+template <>
+ParameterGroup parameterGroupForSection<VisualServoConfig>()
+{
+    return ParameterGroup::Servo;
+}
+
+template <>
+ParameterGroup parameterGroupForSection<IndustrialCameraConfig>()
+{
+    return ParameterGroup::Camera;
+}
+
+// 以下工厂函数用于生成不同数据类型的参数定义。
+// section 指向 WarehouseConfig 中的分组，例如 mission；member 指向分组内的具体字段。
+// 因此参数表可以直接写成员地址，不再为每个 ID 编写一套 if/else 读写代码。
+template <typename Section>
+ParameterDefinition doubleParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    const QString &unit,
+    Section WarehouseConfig::*section,
+    double Section::*member,
+    int display_decimals = 3)
+{
+    ParameterDefinition definition;
+    definition.id = id;
+    definition.group = parameterGroupForSection<Section>();
+    definition.name = name;
+    definition.description = description;
+    definition.editor_type = ParameterEditorType::Number;
+    definition.unit = unit;
+    definition.display_decimals = display_decimals;
+    definition.read = [section, member](const WarehouseConfig &config) {
+        return QString::number((config.*section).*member, 'g', 15);
     };
-    return ids.contains(id);
-}
-
-bool isIntegerParameter(const QString &id)
-{
-    return id.startsWith("industrial_camera.") &&
-           !isBooleanParameter(id);
-}
-
-bool isChoiceParameter(const QString &id)
-{
-    return isBooleanParameter(id) || id == "frame" ||
-           id == "visual_servo.image_x_axis" ||
-           id == "visual_servo.image_y_axis" ||
-           id == "visual_servo.image_x_sign" ||
-           id == "visual_servo.image_y_sign" ||
-           id == "industrial_camera.power_line_frequency";
-}
-
-QString parameterDescription(const QString &id, const QString &fallback_name)
-{
-    static const QHash<QString, QString> descriptions = {
-        {"takeoff_altitude", "任务文件中的起飞高度，单位为米。"},
-        {"move_altitude", "生成货架巡检航点时使用的默认飞行高度，单位为米。"},
-        {"start_altitude", "takeoff 动作的目标高度，单位为米。"},
-        {"yaw", "生成任务时使用的默认航向角，单位为弧度。"},
-        {"tolerance", "move 动作判定位置到达时允许的距离误差，单位为米。"},
-        {"yaw_tolerance_deg", "move 动作判定航向到达时允许的角度误差。"},
-        {"max_xy_speed_mps", "move 动作在水平 X/Y 方向的最大速度。"},
-        {"max_z_speed_mps", "move 动作在竖直 Z 方向的最大速度。"},
-        {"max_yaw_rate_deg_s", "move 动作允许的最大航向角速度。"},
-        {"takeoff_hover_duration", "起飞后插入悬停动作时的持续时间。"},
-        {"landing_hover_duration", "降落前插入悬停动作时的持续时间。"},
-        {"move_hover_duration", "每个移动动作后插入悬停时的持续时间。"},
-        {"add_hover_between_takeoff", "决定是否在起飞动作后加入悬停。"},
-        {"add_hover_between_landing", "决定是否在降落动作前加入悬停。"},
-        {"add_hover_between_moves", "决定是否在移动动作之间加入悬停。"},
-        {"auto_start_mission", "任务上传成功后是否自动开始执行。"},
-        {"compress_waypoint_segments", "是否压缩货架航点中的连续共线段。"},
-        {"compress_non_waypoint_segments", "是否压缩非货架航点中的连续共线段。"},
-        {"frame", "任务航点使用的参考坐标系。"},
-        {"visual_servo.target_id", "指定需要跟踪的视觉目标 ID；留空时锁定首个符合条件的目标。"},
-        {"visual_servo.require_confirmed", "启用后只接受视觉端已稳定确认的目标。"},
-        {"visual_servo.image_x_axis", "图像水平误差映射到无人机机体系的哪个轴。"},
-        {"visual_servo.image_y_axis", "图像垂直误差映射到无人机机体系的哪个轴，不能与图像 X 映射轴相同。"},
-        {"visual_servo.image_x_sign", "图像水平误差映射到机体运动方向时使用的正负号。"},
-        {"visual_servo.image_y_sign", "图像垂直误差映射到机体运动方向时使用的正负号。"},
-        {"visual_servo.kp_x", "图像 X 误差的 PID 比例增益。"},
-        {"visual_servo.ki_x", "图像 X 误差的 PID 积分增益。"},
-        {"visual_servo.kd_x", "图像 X 误差的 PID 微分增益。"},
-        {"visual_servo.kp_y", "图像 Y 误差的 PID 比例增益。"},
-        {"visual_servo.ki_y", "图像 Y 误差的 PID 积分增益。"},
-        {"visual_servo.kd_y", "图像 Y 误差的 PID 微分增益。"},
-        {"visual_servo.integral_limit", "两轴积分累计量的绝对值上限，用于防止积分饱和。"},
-        {"visual_servo.filter_alpha", "误差低通滤波系数，范围 0 到 1；越大响应越快。"},
-        {"visual_servo.enter_tolerance_x", "图像 X 误差进入对准状态的阈值。"},
-        {"visual_servo.enter_tolerance_y", "图像 Y 误差进入对准状态的阈值。"},
-        {"visual_servo.exit_tolerance_x", "已对准后图像 X 误差退出对准状态的阈值。"},
-        {"visual_servo.exit_tolerance_y", "已对准后图像 Y 误差退出对准状态的阈值。"},
-        {"visual_servo.settle_time_s", "误差持续位于对准范围内多久后判定成功。"},
-        {"visual_servo.acquire_timeout_s", "动作开始后等待首个有效目标的最长时间。"},
-        {"visual_servo.lost_timeout_s", "跟踪过程中允许目标连续丢失的最长时间。"},
-        {"visual_servo.overall_timeout_s", "单次视觉伺服动作允许执行的总时长。"},
-        {"visual_servo.max_body_speed_mps", "视觉 PID 输出的单轴机体系速度上限。"},
-        {"visual_servo.continue_on_timeout", "视觉伺服超时后是否继续执行后续任务动作。"},
-        {"industrial_camera.auto_exposure", "自动曝光开关；启用时手动曝光时间不会写入相机。"},
-        {"industrial_camera.exposure_absolute", "手动曝光时间，范围 1 到 10000。"},
-        {"industrial_camera.auto_exposure_priority", "自动曝光时是否允许降低帧率来提高画面亮度。"},
-        {"industrial_camera.gain", "图像增益，范围 0 到 190；过高会增加噪点。"},
-        {"industrial_camera.brightness", "图像亮度处理值，范围 0 到 255。"},
-        {"industrial_camera.contrast", "图像对比度，范围 0 到 128。"},
-        {"industrial_camera.saturation", "图像色彩饱和度，范围 0 到 128。"},
-        {"industrial_camera.gamma", "图像中间亮度校正值，范围 0 到 255。"},
-        {"industrial_camera.sharpness", "图像锐化强度，范围 0 到 255。"},
-        {"industrial_camera.backlight_compensation", "逆光补偿值，范围 16 到 160。"},
-        {"industrial_camera.auto_white_balance", "自动白平衡开关；启用时手动色温不会写入相机。"},
-        {"industrial_camera.white_balance_temperature", "手动白平衡色温，范围 2800 到 6500 K。"},
-        {"industrial_camera.power_line_frequency", "防止灯光引起画面闪烁：关闭、50 Hz 或 60 Hz。"},
-        {"industrial_camera.auto_focus", "自动对焦开关；启用时手动焦点不会写入相机。"},
-        {"industrial_camera.focus_absolute", "手动焦点位置，范围 0 到 1023。"},
-        {"industrial_camera.zoom_absolute", "相机变焦值，范围 100 到 200。"}
+    definition.write = [section, member](WarehouseConfig &config,
+                                         const QString &raw,
+                                         QString *error_message) {
+        bool ok = false;
+        const double value = raw.toDouble(&ok);
+        if (!ok || !std::isfinite(value))
+        {
+            setError(error_message, "请输入有效有限数值");
+            return false;
+        }
+        (config.*section).*member = value;
+        return true;
     };
-    return descriptions.value(id, fallback_name + " 的配置值。");
+    return definition;
+}
+
+template <typename Section>
+ParameterDefinition boolParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    Section WarehouseConfig::*section,
+    bool Section::*member)
+{
+    ParameterDefinition definition;
+    definition.id = id;
+    definition.group = parameterGroupForSection<Section>();
+    definition.name = name;
+    definition.description = description;
+    definition.editor_type = ParameterEditorType::Choice;
+    definition.choices = boolChoices();
+    definition.read = [section, member](const WarehouseConfig &config) {
+        return (config.*section).*member ? QString("true") : QString("false");
+    };
+    definition.write = [section, member](WarehouseConfig &config,
+                                         const QString &raw,
+                                         QString *error_message) {
+        if (raw != "true" && raw != "false")
+        {
+            setError(error_message, "布尔选项无效");
+            return false;
+        }
+        (config.*section).*member = raw == "true";
+        return true;
+    };
+    return definition;
+}
+
+template <typename Section>
+ParameterDefinition textParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    Section WarehouseConfig::*section,
+    QString Section::*member,
+    const QString &empty_display = {},
+    const QString &placeholder = {})
+{
+    ParameterDefinition definition;
+    definition.id = id;
+    definition.group = parameterGroupForSection<Section>();
+    definition.name = name;
+    definition.description = description;
+    definition.editor_type = ParameterEditorType::Text;
+    definition.empty_display = empty_display;
+    definition.placeholder = placeholder;
+    definition.read = [section, member](const WarehouseConfig &config) {
+        return (config.*section).*member;
+    };
+    definition.write = [section, member](WarehouseConfig &config,
+                                         const QString &raw,
+                                         QString *) {
+        (config.*section).*member = raw;
+        return true;
+    };
+    return definition;
+}
+
+template <typename Section>
+ParameterDefinition stringChoiceParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    Section WarehouseConfig::*section,
+    QString Section::*member,
+    const QVector<ParameterChoice> &choices)
+{
+    ParameterDefinition definition =
+        textParameter(id, name, description, section, member);
+    definition.editor_type = ParameterEditorType::Choice;
+    definition.choices = choices;
+    definition.write = [section, member, choices](WarehouseConfig &config,
+                                                  const QString &raw,
+                                                  QString *error_message) {
+        for (const ParameterChoice &choice : choices)
+        {
+            if (choice.value == raw)
+            {
+                (config.*section).*member = raw;
+                return true;
+            }
+        }
+        setError(error_message, "选项无效");
+        return false;
+    };
+    return definition;
+}
+
+template <typename Section>
+ParameterDefinition integerParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    const QString &unit,
+    Section WarehouseConfig::*section,
+    int Section::*member)
+{
+    ParameterDefinition definition;
+    definition.id = id;
+    definition.group = parameterGroupForSection<Section>();
+    definition.name = name;
+    definition.description = description;
+    definition.editor_type = ParameterEditorType::Integer;
+    definition.unit = unit;
+    definition.read = [section, member](const WarehouseConfig &config) {
+        return QString::number((config.*section).*member);
+    };
+    definition.write = [section, member](WarehouseConfig &config,
+                                         const QString &raw,
+                                         QString *error_message) {
+        bool ok = false;
+        const int value = raw.toInt(&ok);
+        if (!ok)
+        {
+            setError(error_message, "请输入有效整数");
+            return false;
+        }
+        (config.*section).*member = value;
+        return true;
+    };
+    return definition;
+}
+
+template <typename Section>
+ParameterDefinition doubleChoiceParameter(
+    const QString &id,
+    const QString &name,
+    const QString &description,
+    Section WarehouseConfig::*section,
+    double Section::*member,
+    const QVector<ParameterChoice> &choices)
+{
+    ParameterDefinition definition =
+        doubleParameter(id, name, description, {}, section, member);
+    definition.editor_type = ParameterEditorType::Choice;
+    definition.choices = choices;
+    definition.write = [section, member, choices](WarehouseConfig &config,
+                                                  const QString &raw,
+                                                  QString *error_message) {
+        for (const ParameterChoice &choice : choices)
+        {
+            if (choice.value == raw)
+            {
+                (config.*section).*member = raw.toDouble();
+                return true;
+            }
+        }
+        setError(error_message, "方向选项无效");
+        return false;
+    };
+    return definition;
+}
+
+ParameterDefinition powerLineParameter()
+{
+    ParameterDefinition definition;
+    definition.id = "industrial_camera_power_line_frequency";
+    definition.group = ParameterGroup::Camera;
+    definition.name = "防闪烁";
+    definition.description = "防止灯光引起画面闪烁：关闭、50 Hz 或 60 Hz。";
+    definition.editor_type = ParameterEditorType::Choice;
+    definition.choices = powerLineChoices();
+    definition.read = [](const WarehouseConfig &config) {
+        return QString::number(config.industrial_camera.power_line_frequency);
+    };
+    definition.write = [](WarehouseConfig &config,
+                           const QString &raw,
+                           QString *error_message) {
+        bool ok = false;
+        const int value = raw.toInt(&ok);
+        if (!ok || value < 0 || value > 2)
+        {
+            setError(error_message, "防闪烁频率无效");
+            return false;
+        }
+        config.industrial_camera.power_line_frequency = static_cast<quint8>(value);
+        return true;
+    };
+    return definition;
+}
+
+// 给手动相机参数附加可编辑条件，例如自动曝光开启时禁止修改手动曝光。
+ParameterDefinition disableWhileAutomatic(
+    ParameterDefinition definition,
+    std::function<bool(const WarehouseConfig &)> editable)
+{
+    definition.editable = std::move(editable);
+    definition.disabled_reason = "当前对应的自动模式已启用，请先关闭自动模式。";
+    return definition;
+}
+
+const QVector<ParameterDefinition> &parameterDefinitions()
+{
+    // 所有参数只在这里登记。列表、编辑器、默认值和写回逻辑都会读取此表。
+    //
+    // 新增参数时的步骤：
+    // 1. 先在 warehouse_config.hpp 的对应结构体中增加字段，并设置默认值。
+    // 2. 根据字段类型，在下面选择 doubleParameter、integerParameter、
+    //    boolParameter、textParameter 或 stringChoiceParameter 登记一次。
+    // 3. 在 validateWarehouseConfig() 中补充取值范围检查，并在 JSON 读写处加入字段。
+    // ParameterConfigDialog 的其他函数不需要再修改。
+    static const QVector<ParameterDefinition> definitions = {
+        // 任务飞行参数。
+        doubleParameter("takeoff_altitude", "起飞高度", "任务文件中的起飞高度，单位为米。", "m", &WarehouseConfig::mission, &MissionConfig::takeoff_altitude, 2),
+        doubleParameter("move_altitude", "移动高度", "生成货架巡检航点时使用的默认飞行高度，单位为米。", "m", &WarehouseConfig::mission, &MissionConfig::move_altitude, 2),
+        doubleParameter("start_altitude", "任务起始高度", "takeoff 动作的目标高度，单位为米。", "m", &WarehouseConfig::mission, &MissionConfig::start_altitude, 2),
+        doubleParameter("yaw", "任务航向", "生成任务时使用的默认航向角，单位为弧度。", "rad", &WarehouseConfig::mission, &MissionConfig::yaw, 2),
+        doubleParameter("tolerance", "航点容差", "move 动作判定位置到达时允许的距离误差，单位为米。", "m", &WarehouseConfig::mission, &MissionConfig::tolerance, 2),
+        doubleParameter("yaw_tolerance_deg", "航向容差", "move 动作判定航向到达时允许的角度误差。", "deg", &WarehouseConfig::mission, &MissionConfig::yaw_tolerance_deg, 2),
+        doubleParameter("max_xy_speed_mps", "最大水平速度", "move 动作在水平 X/Y 方向的最大速度。", "m/s", &WarehouseConfig::mission, &MissionConfig::max_xy_speed_mps, 2),
+        doubleParameter("max_z_speed_mps", "最大垂直速度", "move 动作在竖直 Z 方向的最大速度。", "m/s", &WarehouseConfig::mission, &MissionConfig::max_z_speed_mps, 2),
+        doubleParameter("max_yaw_rate_deg_s", "最大航向速度", "move 动作允许的最大航向角速度。", "deg/s", &WarehouseConfig::mission, &MissionConfig::max_yaw_rate_deg_s, 2),
+        doubleParameter("takeoff_hover_duration", "起飞悬停", "起飞后插入悬停动作时的持续时间。", "s", &WarehouseConfig::mission, &MissionConfig::takeoff_hover_duration, 2),
+        doubleParameter("landing_hover_duration", "降落悬停", "降落前插入悬停动作时的持续时间。", "s", &WarehouseConfig::mission, &MissionConfig::landing_hover_duration, 2),
+        doubleParameter("move_hover_duration", "移动悬停", "每个移动动作后插入悬停时的持续时间。", "s", &WarehouseConfig::mission, &MissionConfig::move_hover_duration, 2),
+        boolParameter("add_hover_between_takeoff", "起飞悬停开关", "决定是否在起飞动作后加入悬停。", &WarehouseConfig::mission, &MissionConfig::add_hover_between_takeoff),
+        boolParameter("add_hover_between_landing", "降落悬停开关", "决定是否在降落动作前加入悬停。", &WarehouseConfig::mission, &MissionConfig::add_hover_between_landing),
+        boolParameter("add_hover_between_moves", "移动悬停开关", "决定是否在移动动作之间加入悬停。", &WarehouseConfig::mission, &MissionConfig::add_hover_between_moves),
+        boolParameter("auto_start_mission", "自动启动", "任务上传成功后是否自动开始执行。", &WarehouseConfig::mission, &MissionConfig::auto_start_mission),
+        boolParameter("compress_waypoint_segments", "压缩货架航点", "是否压缩货架航点中的连续共线段。", &WarehouseConfig::mission, &MissionConfig::compress_waypoint_segments),
+        boolParameter("compress_non_waypoint_segments", "压缩其他航点", "是否压缩非货架航点中的连续共线段。", &WarehouseConfig::mission, &MissionConfig::compress_non_waypoint_segments),
+        stringChoiceParameter("frame", "任务坐标系", "任务航点使用的参考坐标系。", &WarehouseConfig::mission, &MissionConfig::frame, frameChoices()),
+
+        // 视觉伺服参数。
+        textParameter("visual_servo_target_id", "视觉目标 ID", "指定需要跟踪的视觉目标 ID；留空时锁定首个符合条件的目标。", &WarehouseConfig::visual_servo, &VisualServoConfig::target_id, "自动锁定", "留空时自动锁定首个目标"),
+        boolParameter("visual_servo_require_confirmed", "稳定确认", "启用后只接受视觉端已稳定确认的目标。", &WarehouseConfig::visual_servo, &VisualServoConfig::require_confirmed),
+        stringChoiceParameter("visual_servo_image_x_axis", "X 映射轴", "图像水平误差映射到无人机机体系的哪个轴。", &WarehouseConfig::visual_servo, &VisualServoConfig::image_x_axis, axisChoices()),
+        stringChoiceParameter("visual_servo_image_y_axis", "Y 映射轴", "图像垂直误差映射到无人机机体系的哪个轴，不能与图像 X 映射轴相同。", &WarehouseConfig::visual_servo, &VisualServoConfig::image_y_axis, axisChoices()),
+        doubleChoiceParameter("visual_servo_image_x_sign", "X 方向", "图像水平误差映射到机体运动方向时使用的正负号。", &WarehouseConfig::visual_servo, &VisualServoConfig::image_x_sign, signChoices()),
+        doubleChoiceParameter("visual_servo_image_y_sign", "Y 方向", "图像垂直误差映射到机体运动方向时使用的正负号。", &WarehouseConfig::visual_servo, &VisualServoConfig::image_y_sign, signChoices()),
+        doubleParameter("visual_servo_kp_x", "X 比例", "图像 X 误差的 PID 比例增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::kp_x),
+        doubleParameter("visual_servo_ki_x", "X 积分", "图像 X 误差的 PID 积分增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::ki_x),
+        doubleParameter("visual_servo_kd_x", "X 微分", "图像 X 误差的 PID 微分增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::kd_x),
+        doubleParameter("visual_servo_kp_y", "Y 比例", "图像 Y 误差的 PID 比例增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::kp_y),
+        doubleParameter("visual_servo_ki_y", "Y 积分", "图像 Y 误差的 PID 积分增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::ki_y),
+        doubleParameter("visual_servo_kd_y", "Y 微分", "图像 Y 误差的 PID 微分增益。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::kd_y),
+        doubleParameter("visual_servo_integral_limit", "积分上限", "两轴积分累计量的绝对值上限，用于防止积分饱和。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::integral_limit),
+        doubleParameter("visual_servo_filter_alpha", "滤波系数", "误差低通滤波系数，范围 0 到 1；越大响应越快。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::filter_alpha),
+        doubleParameter("visual_servo_enter_tolerance_x", "X 进入容差", "图像 X 误差进入对准状态的阈值。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::enter_tolerance_x),
+        doubleParameter("visual_servo_enter_tolerance_y", "Y 进入容差", "图像 Y 误差进入对准状态的阈值。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::enter_tolerance_y),
+        doubleParameter("visual_servo_exit_tolerance_x", "X 退出容差", "已对准后图像 X 误差退出对准状态的阈值。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::exit_tolerance_x),
+        doubleParameter("visual_servo_exit_tolerance_y", "Y 退出容差", "已对准后图像 Y 误差退出对准状态的阈值。", {}, &WarehouseConfig::visual_servo, &VisualServoConfig::exit_tolerance_y),
+        doubleParameter("visual_servo_settle_time_s", "稳定时间", "误差持续位于对准范围内多久后判定成功。", "s", &WarehouseConfig::visual_servo, &VisualServoConfig::settle_time_s),
+        doubleParameter("visual_servo_acquire_timeout_s", "获取超时", "动作开始后等待首个有效目标的最长时间。", "s", &WarehouseConfig::visual_servo, &VisualServoConfig::acquire_timeout_s),
+        doubleParameter("visual_servo_lost_timeout_s", "丢失超时", "跟踪过程中允许目标连续丢失的最长时间。", "s", &WarehouseConfig::visual_servo, &VisualServoConfig::lost_timeout_s),
+        doubleParameter("visual_servo_overall_timeout_s", "总超时", "单次视觉伺服动作允许执行的总时长。", "s", &WarehouseConfig::visual_servo, &VisualServoConfig::overall_timeout_s),
+        doubleParameter("visual_servo_max_body_speed_mps", "最大机体速度", "视觉 PID 输出的单轴机体系速度上限。", "m/s", &WarehouseConfig::visual_servo, &VisualServoConfig::max_body_speed_mps),
+        boolParameter("visual_servo_continue_on_timeout", "超时继续", "视觉伺服超时后是否继续执行后续任务动作。", &WarehouseConfig::visual_servo, &VisualServoConfig::continue_on_timeout),
+
+        // 工业相机参数。
+        boolParameter("industrial_camera_auto_exposure", "自动曝光", "自动曝光开关；启用时手动曝光时间不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_exposure),
+        disableWhileAutomatic(integerParameter("industrial_camera_exposure_absolute", "曝光时间", "手动曝光时间，范围 1 到 10000。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::exposure_absolute), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_exposure; }),
+        boolParameter("industrial_camera_auto_exposure_priority", "曝光优先", "自动曝光时是否允许降低帧率来提高画面亮度。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_exposure_priority),
+        integerParameter("industrial_camera_gain", "增益", "图像增益，范围 0 到 190；过高会增加噪点。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gain),
+        integerParameter("industrial_camera_brightness", "亮度", "图像亮度处理值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::brightness),
+        integerParameter("industrial_camera_contrast", "对比度", "图像对比度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::contrast),
+        integerParameter("industrial_camera_saturation", "饱和度", "图像色彩饱和度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::saturation),
+        integerParameter("industrial_camera_gamma", "Gamma", "图像中间亮度校正值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gamma),
+        integerParameter("industrial_camera_sharpness", "锐度", "图像锐化强度，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::sharpness),
+        integerParameter("industrial_camera_backlight_compensation", "逆光补偿", "逆光补偿值，范围 16 到 160。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::backlight_compensation),
+        boolParameter("industrial_camera_auto_white_balance", "自动白平衡", "自动白平衡开关；启用时手动色温不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_white_balance),
+        disableWhileAutomatic(integerParameter("industrial_camera_white_balance_temperature", "白平衡色温", "手动白平衡色温，范围 2800 到 6500 K。", "K", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::white_balance_temperature), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_white_balance; }),
+        powerLineParameter(),
+        boolParameter("industrial_camera_auto_focus", "自动对焦", "自动对焦开关；启用时手动焦点不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_focus),
+        disableWhileAutomatic(integerParameter("industrial_camera_focus_absolute", "焦点", "手动焦点位置，范围 0 到 1023。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::focus_absolute), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_focus; }),
+        integerParameter("industrial_camera_zoom_absolute", "变焦", "相机变焦值，范围 100 到 200。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::zoom_absolute)
+    };
+    return definitions;
+}
+
+// QListWidgetItem 只保存参数 ID；点击后通过此函数找到完整定义。
+const ParameterDefinition *findParameterDefinition(const QString &id)
+{
+    for (const ParameterDefinition &definition : parameterDefinitions())
+    {
+        if (definition.id == id)
+        {
+            return &definition;
+        }
+    }
+    return nullptr;
 }
 }
 
@@ -140,8 +520,8 @@ ParameterConfigDialog::ParameterConfigDialog(
     const WarehouseConfig &config,
     QWidget *parent)
     : QDialog(parent),
-      original_config_(config),
-      working_config_(config)
+      original_config_(config), // 永远代表打开窗口时的配置。
+      working_config_(config)   // 页面内的所有修改先写入这份副本。
 {
     setWindowTitle("参数设置");
     setWindowFlag(Qt::FramelessWindowHint, true);
@@ -154,6 +534,7 @@ ParameterConfigDialog::ParameterConfigDialog(
 
 void ParameterConfigDialog::buildUi()
 {
+    // buildUi 只负责页面骨架和信号连接，参数内容由统一参数表负责。
     auto *root_layout = new QVBoxLayout(this);
 
     auto *top_layout = new QHBoxLayout;
@@ -205,12 +586,18 @@ void ParameterConfigDialog::buildUi()
     left_layout->addWidget(close_page_button_);
     left_layout->addStretch();
 
+    // 第二列是参数类别筛选栏，按钮由 parameter_filters 动态创建。
+    parameter_filter_panel_ = new QWidget(this);
+    parameter_filter_panel_->setObjectName("parameterFilterPanel");
+    buildParameterFilterPanel();
+
     //主界面堆叠窗口，用于切换项目选择和参数编辑页面
     page_stack_ = new QStackedWidget(this);
     buildProjectPage();//构建项目选择界面
     buildParameterPage();//构建参数修改界面
 
     body_layout->addWidget(left_panel);
+    body_layout->addWidget(parameter_filter_panel_);
     body_layout->addWidget(page_stack_, 1);
 
     root_layout->addLayout(top_layout);
@@ -228,6 +615,9 @@ void ParameterConfigDialog::buildUi()
     // connect(parameter_page_button_, &QPushButton::clicked,
     //         this, [this]() {dialog.exec()});
 
+    // 恢复默认值调用 createDefaultWarehouseConfig()，得到代码内固定默认值。
+    // 它不是打开窗口前的值；打开窗口前的值只由丢弃按钮恢复。
+    // 此操作只更新 working_config_，仍需点击启用才会写入 JSON。
     connect(restore_button_, &QPushButton::clicked,
         this, [this]() {
             const WarehouseConfig defaults =
@@ -236,23 +626,26 @@ void ParameterConfigDialog::buildUi()
             working_config_.mission = defaults.mission;
             working_config_.visual_servo = defaults.visual_servo;
             working_config_.industrial_camera = defaults.industrial_camera;
+            editing_parameter_id_.clear();
             parameter_editor_->hide();
             rebuildParameterList();
         });
 
+    // 丢弃时恢复原配置并直接关闭窗口。
     connect(discard_button_, &QPushButton::clicked,
             this, [this]() {
                 working_config_ = original_config_;
                 reject();
             });
 
+    // 启用时才执行最终校验和 JSON 保存。
     connect(apply_button_, &QPushButton::clicked,
             this, &ParameterConfigDialog::handleApply);
 
     setStyleSheet(
         "QDialog { background: #101722; color: #d7e3f4; }"
         "#parameterPageTitle { font-size: 24px; font-weight: 600; color: #f1f6fb; }"
-        "#leftPanel { background: #1b2736; border: 1px solid #34485e; border-radius: 6px; }"
+        "#leftPanel, #parameterFilterPanel { background: #1b2736; border: 1px solid #34485e; border-radius: 6px; }"
         "QPushButton { min-height: 40px; padding: 0 16px; font-size: 17px;"
         "  color: #dce8f4; background: #26384b; border: 1px solid #47627d; border-radius: 6px; }"
         "QPushButton:hover { background: #31485f; }"
@@ -263,7 +656,8 @@ void ParameterConfigDialog::buildUi()
         "#parameterEditor { background: #172332; border-left: 1px solid #40566d; }"
         "#parameterEditorTitle { font-size: 21px; font-weight: 600; color: #f1f6fb; }"
         "#parameterDescription { color: #b9c7d5; line-height: 1.4; }"
-        "#parameterDefaultValue { color: #8fa3b7; }"
+        "#parameterDefaultValue { color: #8fa3b7; padding-top: 8px; }"
+        "#modifiedParameterValue { color: #ff6b6b; font-weight: 600; }"
         "#parameterEditorClose { padding: 0; font-size: 24px; }"
         "QLineEdit, QComboBox { min-height: 42px; padding: 0 10px; font-size: 17px;"
         "  color: #eef5fb; background: #0d1620; border: 1px solid #526d87; border-radius: 4px; }"
@@ -282,6 +676,65 @@ void ParameterConfigDialog::selectMainPage(int page_index)
     project_page_button_->setChecked(page_index == 0);//设置按钮选中状态
     parameter_page_button_->setChecked(page_index == 1);
     page_stack_->setCurrentIndex(page_index);//切换堆叠窗口页面
+
+    // 项目选择页面不需要参数筛选，进入参数页面后再显示第二列。
+    parameter_filter_panel_->setVisible(page_index == 1);
+}
+
+void ParameterConfigDialog::buildParameterFilterPanel()
+{
+    auto *layout = new QVBoxLayout(parameter_filter_panel_);
+    layout->setContentsMargins(10, 10, 10, 10);
+    layout->setSpacing(10);
+
+    parameter_filter_button_group_ = new QButtonGroup(this);
+    parameter_filter_button_group_->setExclusive(true);
+
+    // 根据 parameter_filters 的内容和数量动态创建筛选按钮。
+    for (const ParameterFilterDefinition &filter : parameter_filters)
+    {
+        auto *button = new QPushButton(filter.name, parameter_filter_panel_);
+        button->setCheckable(true);
+        button->setMinimumSize(128, 48);
+        parameter_filter_button_group_->addButton(
+            button, static_cast<int>(filter.group));
+
+        connect(button, &QPushButton::clicked, this,
+                [this, group = filter.group]() {
+                    selectParameterGroup(group);
+                });
+        layout->addWidget(button);
+    }
+
+    layout->addStretch();
+    selectParameterGroup(ParameterGroup::All);
+}
+
+void ParameterConfigDialog::selectParameterGroup(ParameterGroup group)
+{
+    selected_parameter_group_ = group;
+    // 切换类别后，旧列表行已经不再有效，同时关闭旧参数的右侧编辑器。
+    // 构建筛选栏时参数列表和编辑器尚未创建，因此这里需要先判断指针。
+    editing_parameter_id_.clear();
+    if (parameter_list_)
+    {
+        parameter_list_->clearSelection();
+    }
+    if (parameter_editor_)
+    {
+        parameter_editor_->hide();
+    }
+
+    // QButtonGroup 使用枚举值作为按钮 ID，保证当前筛选按钮保持高亮。
+    QAbstractButton *button = parameter_filter_button_group_->button(
+        static_cast<int>(group));
+    if (button)
+    {
+        button->setChecked(true);
+    }
+
+    // parameter_list_ 尚未创建时，此函数会安全返回；创建完成后会再次重建。
+    rebuildParameterList();
 }
 
 void ParameterConfigDialog::buildProjectPage()
@@ -404,8 +857,9 @@ void ParameterConfigDialog::buildParameterPage()
     editor_layout->addSpacing(8);
     editor_layout->addWidget(value_title);
     editor_layout->addWidget(editor_input_stack_);
-    editor_layout->addWidget(editor_default_label_);
     editor_layout->addStretch();
+    // 默认值固定显示在右侧底部区域，便于修改前随时对照。
+    editor_layout->addWidget(editor_default_label_);
     editor_layout->addWidget(editor_confirm_button_);
     parameter_editor_->hide();//选择参数前不显示右侧编辑区域
 
@@ -437,152 +891,42 @@ void ParameterConfigDialog::rebuildParameterList()
         return;
     }
 
+    // 每次确认单项、恢复默认值或切换项目后都重建列表，确保右侧数值是最新的。
     parameter_list_->clear();
 
-    const MissionConfig &mission =
-        working_config_.mission;
+    // 代码默认值每次都重新由 createDefaultWarehouseConfig() 构造，
+    // 不读取 JSON，也不使用 original_config_，因此不会被用户保存的值覆盖。
+    const WarehouseConfig defaults = createDefaultWarehouseConfig();
 
-    addParameterRow(
-        "takeoff_altitude",
-        "起飞高度",
-        QString("%1 m").arg(
-            mission.takeoff_altitude, 0, 'f', 2));
+    // 参数顺序、名称和显示格式全部来自统一参数表。
+    for (const ParameterDefinition &definition : parameterDefinitions())
+    {
+        if (selected_parameter_group_ != ParameterGroup::All &&
+            definition.group != selected_parameter_group_)
+        {
+            continue;
+        }
 
-    addParameterRow(
-        "move_altitude",
-        "移动高度",
-        QString("%1 m").arg(
-            mission.move_altitude, 0, 'f', 2));
+        const bool differs_from_default =
+            definition.rawValue(working_config_) !=
+            definition.rawValue(defaults);
 
-    addParameterRow(
-        "start_altitude",
-        "任务起始高度",
-        QString("%1 m").arg(
-            mission.start_altitude, 0, 'f', 2));
-
-    addParameterRow(
-        "yaw",
-        "默认任务航向",
-        QString("%1 rad").arg(
-            mission.yaw, 0, 'f', 2));
-
-    addParameterRow(
-        "tolerance",
-        "航点容差",
-        QString("%1 m").arg(
-            mission.tolerance, 0, 'f', 2));
-    addParameterRow(
-        "yaw_tolerance_deg",
-        "航向到达容差",
-        QString("%1 deg").arg(mission.yaw_tolerance_deg, 0, 'f', 2));
-
-    addParameterRow(
-        "max_xy_speed_mps",
-        "最大水平速度",
-        QString("%1 m/s").arg(mission.max_xy_speed_mps, 0, 'f', 2));
-
-    addParameterRow(
-        "max_z_speed_mps",
-        "最大垂直速度",
-        QString("%1 m/s").arg(mission.max_z_speed_mps, 0, 'f', 2));
-
-    addParameterRow(
-        "max_yaw_rate_deg_s",
-        "最大航向角速度",
-        QString("%1 deg/s").arg(mission.max_yaw_rate_deg_s, 0, 'f', 2));
-
-    addParameterRow("takeoff_hover_duration", "起飞后悬停时间",
-                    QString("%1 s").arg(mission.takeoff_hover_duration, 0, 'f', 2));
-    addParameterRow("landing_hover_duration", "降落前悬停时间",
-                    QString("%1 s").arg(mission.landing_hover_duration, 0, 'f', 2));
-    addParameterRow("move_hover_duration", "移动后悬停时间",
-                    QString("%1 s").arg(mission.move_hover_duration, 0, 'f', 2));
-    addParameterRow("add_hover_between_takeoff", "起飞后加入悬停",
-                    boolDisplayText(mission.add_hover_between_takeoff));
-    addParameterRow("add_hover_between_landing", "降落前加入悬停",
-                    boolDisplayText(mission.add_hover_between_landing));
-    addParameterRow("add_hover_between_moves", "移动之间加入悬停",
-                    boolDisplayText(mission.add_hover_between_moves));
-    addParameterRow("auto_start_mission", "上传后自动启动",
-                    boolDisplayText(mission.auto_start_mission));
-    addParameterRow("compress_waypoint_segments", "压缩货架航点直线段",
-                    boolDisplayText(mission.compress_waypoint_segments));
-    addParameterRow("compress_non_waypoint_segments", "压缩其他航点直线段",
-                    boolDisplayText(mission.compress_non_waypoint_segments));
-    addParameterRow("frame", "任务坐标系", mission.frame);
-
-    // Visual-servo defaults used only when a visual_servo action is present.
-    const VisualServoConfig &visual = working_config_.visual_servo;
-    auto addNumber = [this](const QString &id, const QString &name,
-                            double value, const QString &unit = QString()) {
-        const QString suffix = unit.isEmpty() ? QString() : " " + unit;
-        addParameterRow(id, name, QString::number(value, 'f', 3) + suffix);
-    };
-    addParameterRow("visual_servo.target_id", "视觉目标 ID",
-                    visual.target_id.isEmpty() ? "自动锁定" : visual.target_id);
-    addParameterRow("visual_servo.require_confirmed", "要求稳定确认",
-                    boolDisplayText(visual.require_confirmed));
-    addParameterRow("visual_servo.image_x_axis", "图像 X 映射轴", visual.image_x_axis);
-    addParameterRow("visual_servo.image_y_axis", "图像 Y 映射轴", visual.image_y_axis);
-    addNumber("visual_servo.image_x_sign", "图像 X 方向", visual.image_x_sign);
-    addNumber("visual_servo.image_y_sign", "图像 Y 方向", visual.image_y_sign);
-    addNumber("visual_servo.kp_x", "图像 X 比例增益", visual.kp_x);
-    addNumber("visual_servo.ki_x", "图像 X 积分增益", visual.ki_x);
-    addNumber("visual_servo.kd_x", "图像 X 微分增益", visual.kd_x);
-    addNumber("visual_servo.kp_y", "图像 Y 比例增益", visual.kp_y);
-    addNumber("visual_servo.ki_y", "图像 Y 积分增益", visual.ki_y);
-    addNumber("visual_servo.kd_y", "图像 Y 微分增益", visual.kd_y);
-    addNumber("visual_servo.integral_limit", "积分上限", visual.integral_limit);
-    addNumber("visual_servo.filter_alpha", "低通滤波系数", visual.filter_alpha);
-    addNumber("visual_servo.enter_tolerance_x", "X 进入容差", visual.enter_tolerance_x);
-    addNumber("visual_servo.enter_tolerance_y", "Y 进入容差", visual.enter_tolerance_y);
-    addNumber("visual_servo.exit_tolerance_x", "X 退出容差", visual.exit_tolerance_x);
-    addNumber("visual_servo.exit_tolerance_y", "Y 退出容差", visual.exit_tolerance_y);
-    addNumber("visual_servo.settle_time_s", "稳定持续时间", visual.settle_time_s, "s");
-    addNumber("visual_servo.acquire_timeout_s", "目标获取超时", visual.acquire_timeout_s, "s");
-    addNumber("visual_servo.lost_timeout_s", "目标丢失超时", visual.lost_timeout_s, "s");
-    addNumber("visual_servo.overall_timeout_s", "动作总超时", visual.overall_timeout_s, "s");
-    addNumber("visual_servo.max_body_speed_mps", "机体系最大速度",
-              visual.max_body_speed_mps, "m/s");
-    addParameterRow("visual_servo.continue_on_timeout", "超时后继续任务",
-                    boolDisplayText(visual.continue_on_timeout));
-
-    // Industrial-camera values are always published as one complete message.
-    const IndustrialCameraConfig &camera = working_config_.industrial_camera;
-    addParameterRow("industrial_camera.auto_exposure", "自动曝光",
-                    boolDisplayText(camera.auto_exposure));
-    addParameterRow("industrial_camera.exposure_absolute", "手动曝光时间",
-                    QString::number(camera.exposure_absolute));
-    addParameterRow("industrial_camera.auto_exposure_priority", "自动曝光帧率优先",
-                    boolDisplayText(camera.auto_exposure_priority));
-    addParameterRow("industrial_camera.gain", "相机增益", QString::number(camera.gain));
-    addParameterRow("industrial_camera.brightness", "亮度", QString::number(camera.brightness));
-    addParameterRow("industrial_camera.contrast", "对比度", QString::number(camera.contrast));
-    addParameterRow("industrial_camera.saturation", "饱和度", QString::number(camera.saturation));
-    addParameterRow("industrial_camera.gamma", "Gamma", QString::number(camera.gamma));
-    addParameterRow("industrial_camera.sharpness", "锐度", QString::number(camera.sharpness));
-    addParameterRow("industrial_camera.backlight_compensation", "逆光补偿",
-                    QString::number(camera.backlight_compensation));
-    addParameterRow("industrial_camera.auto_white_balance", "自动白平衡",
-                    boolDisplayText(camera.auto_white_balance));
-    addParameterRow("industrial_camera.white_balance_temperature", "白平衡色温",
-                    QString("%1 K").arg(camera.white_balance_temperature));
-    addParameterRow("industrial_camera.power_line_frequency", "防闪烁频率",
-                    camera.power_line_frequency == 0 ? "关闭" :
-                    QString("%1 Hz").arg(camera.power_line_frequency == 1 ? 50 : 60));
-    addParameterRow("industrial_camera.auto_focus", "自动对焦",
-                    boolDisplayText(camera.auto_focus));
-    addParameterRow("industrial_camera.focus_absolute", "手动焦点",
-                    QString::number(camera.focus_absolute));
-    addParameterRow("industrial_camera.zoom_absolute", "变焦值",
-                    QString::number(camera.zoom_absolute));
+        addParameterRow(
+            definition.id,
+            definition.name,
+            definition.displayValue(working_config_),
+            differs_from_default);
+    }
 }
 
 void ParameterConfigDialog::addParameterRow(
     const QString &parameter_id,
     const QString &display_name,
-    const QString &display_value)
+    const QString &display_value,
+    bool differs_from_default)
 {
+    // QListWidgetItem 保存参数身份，row_widget 只负责显示名称、数值和分割线。
+    // 点击时通过 UserRole 取回 ID，再去统一参数表查询完整定义。
     auto *item = new QListWidgetItem(parameter_list_);
     item->setData(Qt::UserRole, parameter_id);
     item->setData(Qt::UserRole + 1, display_name);
@@ -606,6 +950,11 @@ void ParameterConfigDialog::addParameterRow(
         new QLabel(display_name, row_widget);
     auto *value_label =
         new QLabel(display_value, row_widget);
+    if (differs_from_default)
+    {
+        // 只把右侧数值标红，参数名称保持原颜色，方便快速定位已修改项。
+        value_label->setObjectName("modifiedParameterValue");
+    }
 
     value_label->setAlignment(
         Qt::AlignRight | Qt::AlignVCenter);
@@ -631,287 +980,119 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
         return;
     }
 
+    // 第一步：从列表行中取出参数 ID，并找到唯一的参数定义。
     editing_parameter_id_ = item->data(Qt::UserRole).toString();
-    const QString display_name = item->data(Qt::UserRole + 1).toString();
-    const QString current_value =
-        parameterRawValue(working_config_, editing_parameter_id_);
-    const QString default_value =
-        parameterRawValue(createDefaultWarehouseConfig(), editing_parameter_id_);
+    const ParameterDefinition *definition =
+        findParameterDefinition(editing_parameter_id_);
+    if (!definition)
+    {
+        editing_parameter_id_.clear();
+        parameter_editor_->hide();
+        return;
+    }
 
-    editor_title_label_->setText(display_name);
-    editor_description_label_->setText(
-        parameterDescription(editing_parameter_id_, display_name));
-    editor_default_label_->setText("默认值：" +
-                                   (default_value.isEmpty() ? "空" : default_value));
+    // 第二步：分别读取临时配置中的当前值和程序默认值。
+    // 这里使用 rawValue，因此不会把 m、s 等显示单位写进输入框。
+    const QString current_value = definition->rawValue(working_config_);
+    const WarehouseConfig defaults = createDefaultWarehouseConfig();
+    const QString default_value = definition->displayValue(defaults);
+
+    editor_title_label_->setText(definition->name);
+    editor_description_label_->setText(definition->description);
+    // 默认值使用与参数列表相同的格式，包含单位和中文枚举名称。
+    editor_default_label_->setText(
+        "默认值：" + (default_value.isEmpty() ? "空" : default_value));
     editor_confirm_button_->setEnabled(true);
     editor_line_edit_->setEnabled(true);
     editor_combo_box_->setEnabled(true);
 
-    if (isChoiceParameter(editing_parameter_id_))
+    // 第三步：Choice 使用下拉框，其余类型使用文本输入框。
+    if (definition->editor_type == ParameterEditorType::Choice)
     {
         editor_combo_box_->clear();
-        if (isBooleanParameter(editing_parameter_id_))
+        for (const ParameterChoice &choice : definition->choices)
         {
-            editor_combo_box_->addItem("启用", "true");
-            editor_combo_box_->addItem("关闭", "false");
-        }
-        else if (editing_parameter_id_ == "frame")
-        {
-            editor_combo_box_->addItem("world_body", "world_body");
-            editor_combo_box_->addItem("body", "body");
-            editor_combo_box_->addItem("world_enu", "world_enu");
-        }
-        else if (editing_parameter_id_.endsWith("_axis"))
-        {
-            editor_combo_box_->addItem("X 轴", "x");
-            editor_combo_box_->addItem("Y 轴", "y");
-            editor_combo_box_->addItem("Z 轴", "z");
-        }
-        else if (editing_parameter_id_.endsWith("_sign"))
-        {
-            editor_combo_box_->addItem("正向 (+1)", "1");
-            editor_combo_box_->addItem("反向 (-1)", "-1");
-        }
-        else
-        {
-            editor_combo_box_->addItem("关闭", "0");
-            editor_combo_box_->addItem("50 Hz", "1");
-            editor_combo_box_->addItem("60 Hz", "2");
+            editor_combo_box_->addItem(choice.text, choice.value);
         }
 
-        const int current_index = editor_combo_box_->findData(current_value);
-        editor_combo_box_->setCurrentIndex(current_index >= 0 ? current_index : 0);
+        const int current_index =
+            editor_combo_box_->findData(current_value);
+        editor_combo_box_->setCurrentIndex(
+            current_index >= 0 ? current_index : 0);
         editor_input_stack_->setCurrentWidget(editor_combo_box_);
     }
     else
     {
-        editor_line_edit_->clear();
         editor_line_edit_->setText(current_value);
-        editor_line_edit_->setPlaceholderText(
-            editing_parameter_id_ == "visual_servo.target_id"
-                ? "留空时自动锁定首个目标"
-                : QString());
+        editor_line_edit_->setPlaceholderText(definition->placeholder);
         editor_input_stack_->setCurrentWidget(editor_line_edit_);
         editor_line_edit_->selectAll();
         editor_line_edit_->setFocus();
     }
 
-    // 自动模式开启时保留手动值，但不允许从界面改动它。
-    const bool manual_value_disabled =
-        (editing_parameter_id_ == "industrial_camera.exposure_absolute" &&
-         working_config_.industrial_camera.auto_exposure) ||
-        (editing_parameter_id_ == "industrial_camera.white_balance_temperature" &&
-         working_config_.industrial_camera.auto_white_balance) ||
-        (editing_parameter_id_ == "industrial_camera.focus_absolute" &&
-         working_config_.industrial_camera.auto_focus);
-    if (manual_value_disabled)
+    // 第四步：检查当前状态是否允许修改。
+    // 例如自动曝光开启时，手动曝光值仍会保留，但编辑控件会被禁用。
+    const bool editable =
+        !definition->editable || definition->editable(working_config_);
+    if (!editable)
     {
         editor_line_edit_->setEnabled(false);
+        editor_combo_box_->setEnabled(false);
         editor_confirm_button_->setEnabled(false);
         editor_description_label_->setText(
-            editor_description_label_->text() +
-            " 当前对应的自动模式已启用，请先关闭自动模式。" );
+            definition->description + " " + definition->disabled_reason);
     }
 
     parameter_editor_->show();
 }
-QString ParameterConfigDialog::parameterRawValue(
-    const WarehouseConfig &config,
-    const QString &id) const
-{
-    const MissionConfig &mission = config.mission;
-    if (id == "takeoff_altitude") return QString::number(mission.takeoff_altitude, 'g', 15);
-    if (id == "move_altitude") return QString::number(mission.move_altitude, 'g', 15);
-    if (id == "start_altitude") return QString::number(mission.start_altitude, 'g', 15);
-    if (id == "yaw") return QString::number(mission.yaw, 'g', 15);
-    if (id == "tolerance") return QString::number(mission.tolerance, 'g', 15);
-    if (id == "yaw_tolerance_deg") return QString::number(mission.yaw_tolerance_deg, 'g', 15);
-    if (id == "max_xy_speed_mps") return QString::number(mission.max_xy_speed_mps, 'g', 15);
-    if (id == "max_z_speed_mps") return QString::number(mission.max_z_speed_mps, 'g', 15);
-    if (id == "max_yaw_rate_deg_s") return QString::number(mission.max_yaw_rate_deg_s, 'g', 15);
-    if (id == "takeoff_hover_duration") return QString::number(mission.takeoff_hover_duration, 'g', 15);
-    if (id == "landing_hover_duration") return QString::number(mission.landing_hover_duration, 'g', 15);
-    if (id == "move_hover_duration") return QString::number(mission.move_hover_duration, 'g', 15);
-    if (id == "add_hover_between_takeoff") return mission.add_hover_between_takeoff ? "true" : "false";
-    if (id == "add_hover_between_landing") return mission.add_hover_between_landing ? "true" : "false";
-    if (id == "add_hover_between_moves") return mission.add_hover_between_moves ? "true" : "false";
-    if (id == "auto_start_mission") return mission.auto_start_mission ? "true" : "false";
-    if (id == "compress_waypoint_segments") return mission.compress_waypoint_segments ? "true" : "false";
-    if (id == "compress_non_waypoint_segments") return mission.compress_non_waypoint_segments ? "true" : "false";
-    if (id == "frame") return mission.frame;
 
-    const VisualServoConfig &visual = config.visual_servo;
-    if (id == "visual_servo.target_id") return visual.target_id;
-    if (id == "visual_servo.require_confirmed") return visual.require_confirmed ? "true" : "false";
-    if (id == "visual_servo.image_x_axis") return visual.image_x_axis;
-    if (id == "visual_servo.image_y_axis") return visual.image_y_axis;
-    if (id == "visual_servo.image_x_sign") return QString::number(visual.image_x_sign, 'g', 15);
-    if (id == "visual_servo.image_y_sign") return QString::number(visual.image_y_sign, 'g', 15);
-    if (id == "visual_servo.kp_x") return QString::number(visual.kp_x, 'g', 15);
-    if (id == "visual_servo.ki_x") return QString::number(visual.ki_x, 'g', 15);
-    if (id == "visual_servo.kd_x") return QString::number(visual.kd_x, 'g', 15);
-    if (id == "visual_servo.kp_y") return QString::number(visual.kp_y, 'g', 15);
-    if (id == "visual_servo.ki_y") return QString::number(visual.ki_y, 'g', 15);
-    if (id == "visual_servo.kd_y") return QString::number(visual.kd_y, 'g', 15);
-    if (id == "visual_servo.integral_limit") return QString::number(visual.integral_limit, 'g', 15);
-    if (id == "visual_servo.filter_alpha") return QString::number(visual.filter_alpha, 'g', 15);
-    if (id == "visual_servo.enter_tolerance_x") return QString::number(visual.enter_tolerance_x, 'g', 15);
-    if (id == "visual_servo.enter_tolerance_y") return QString::number(visual.enter_tolerance_y, 'g', 15);
-    if (id == "visual_servo.exit_tolerance_x") return QString::number(visual.exit_tolerance_x, 'g', 15);
-    if (id == "visual_servo.exit_tolerance_y") return QString::number(visual.exit_tolerance_y, 'g', 15);
-    if (id == "visual_servo.settle_time_s") return QString::number(visual.settle_time_s, 'g', 15);
-    if (id == "visual_servo.acquire_timeout_s") return QString::number(visual.acquire_timeout_s, 'g', 15);
-    if (id == "visual_servo.lost_timeout_s") return QString::number(visual.lost_timeout_s, 'g', 15);
-    if (id == "visual_servo.overall_timeout_s") return QString::number(visual.overall_timeout_s, 'g', 15);
-    if (id == "visual_servo.max_body_speed_mps") return QString::number(visual.max_body_speed_mps, 'g', 15);
-    if (id == "visual_servo.continue_on_timeout") return visual.continue_on_timeout ? "true" : "false";
-
-    const IndustrialCameraConfig &camera = config.industrial_camera;
-    if (id == "industrial_camera.auto_exposure") return camera.auto_exposure ? "true" : "false";
-    if (id == "industrial_camera.exposure_absolute") return QString::number(camera.exposure_absolute);
-    if (id == "industrial_camera.auto_exposure_priority") return camera.auto_exposure_priority ? "true" : "false";
-    if (id == "industrial_camera.gain") return QString::number(camera.gain);
-    if (id == "industrial_camera.brightness") return QString::number(camera.brightness);
-    if (id == "industrial_camera.contrast") return QString::number(camera.contrast);
-    if (id == "industrial_camera.saturation") return QString::number(camera.saturation);
-    if (id == "industrial_camera.gamma") return QString::number(camera.gamma);
-    if (id == "industrial_camera.sharpness") return QString::number(camera.sharpness);
-    if (id == "industrial_camera.backlight_compensation") return QString::number(camera.backlight_compensation);
-    if (id == "industrial_camera.auto_white_balance") return camera.auto_white_balance ? "true" : "false";
-    if (id == "industrial_camera.white_balance_temperature") return QString::number(camera.white_balance_temperature);
-    if (id == "industrial_camera.power_line_frequency") return QString::number(camera.power_line_frequency);
-    if (id == "industrial_camera.auto_focus") return camera.auto_focus ? "true" : "false";
-    if (id == "industrial_camera.focus_absolute") return QString::number(camera.focus_absolute);
-    if (id == "industrial_camera.zoom_absolute") return QString::number(camera.zoom_absolute);
-    return {};
-}
 bool ParameterConfigDialog::updateParameterFromEditor(QString *error_message)
 {
     if (editing_parameter_id_.isEmpty())
     {
-        if (error_message) *error_message = "没有选中参数";
+        setError(error_message, "没有选中参数");
         return false;
     }
 
-    const QString id = editing_parameter_id_;
-    const QString raw_value = isChoiceParameter(id)
-        ? editor_combo_box_->currentData().toString()
-        : editor_line_edit_->text().trimmed();
+    // 仍然通过统一参数表查找，避免在保存函数里再次维护参数 ID 列表。
+    const ParameterDefinition *definition =
+        findParameterDefinition(editing_parameter_id_);
+    if (!definition)
+    {
+        setError(error_message, "未知参数：" + editing_parameter_id_);
+        return false;
+    }
+
+    // 从当前可见的编辑控件取值。下拉框读取 itemData，输入框读取用户文字。
+    const QString raw_value =
+        definition->editor_type == ParameterEditorType::Choice
+            ? editor_combo_box_->currentData().toString()
+            : editor_line_edit_->text().trimmed();
+
+    // 先复制候选配置：解析或校验失败时，working_config_ 保持不变。
     WarehouseConfig candidate = working_config_;
-
-    if (isBooleanParameter(id))
+    if (!definition->write ||
+        !definition->write(candidate, raw_value, error_message))
     {
-        const bool value = raw_value == "true";
-        if (id == "add_hover_between_takeoff") candidate.mission.add_hover_between_takeoff = value;
-        else if (id == "add_hover_between_landing") candidate.mission.add_hover_between_landing = value;
-        else if (id == "add_hover_between_moves") candidate.mission.add_hover_between_moves = value;
-        else if (id == "auto_start_mission") candidate.mission.auto_start_mission = value;
-        else if (id == "compress_waypoint_segments") candidate.mission.compress_waypoint_segments = value;
-        else if (id == "compress_non_waypoint_segments") candidate.mission.compress_non_waypoint_segments = value;
-        else if (id == "visual_servo.require_confirmed") candidate.visual_servo.require_confirmed = value;
-        else if (id == "visual_servo.continue_on_timeout") candidate.visual_servo.continue_on_timeout = value;
-        else if (id == "industrial_camera.auto_exposure") candidate.industrial_camera.auto_exposure = value;
-        else if (id == "industrial_camera.auto_exposure_priority") candidate.industrial_camera.auto_exposure_priority = value;
-        else if (id == "industrial_camera.auto_white_balance") candidate.industrial_camera.auto_white_balance = value;
-        else if (id == "industrial_camera.auto_focus") candidate.industrial_camera.auto_focus = value;
-    }
-    else if (id == "frame") candidate.mission.frame = raw_value;
-    else if (id == "visual_servo.target_id") candidate.visual_servo.target_id = raw_value;
-    else if (id == "visual_servo.image_x_axis") candidate.visual_servo.image_x_axis = raw_value;
-    else if (id == "visual_servo.image_y_axis") candidate.visual_servo.image_y_axis = raw_value;
-    else if (id == "industrial_camera.power_line_frequency")
-    {
-        bool ok = false;
-        const int value = raw_value.toInt(&ok);
-        if (!ok || value < 0 || value > 2)
-        {
-            if (error_message) *error_message = "防闪烁频率无效";
-            return false;
-        }
-        candidate.industrial_camera.power_line_frequency = static_cast<quint8>(value);
-    }
-    else if (isIntegerParameter(id))
-    {
-        bool ok = false;
-        const int value = raw_value.toInt(&ok);
-        if (!ok)
-        {
-            if (error_message) *error_message = "请输入有效整数";
-            return false;
-        }
-        if (id == "industrial_camera.exposure_absolute") candidate.industrial_camera.exposure_absolute = value;
-        else if (id == "industrial_camera.gain") candidate.industrial_camera.gain = value;
-        else if (id == "industrial_camera.brightness") candidate.industrial_camera.brightness = value;
-        else if (id == "industrial_camera.contrast") candidate.industrial_camera.contrast = value;
-        else if (id == "industrial_camera.saturation") candidate.industrial_camera.saturation = value;
-        else if (id == "industrial_camera.gamma") candidate.industrial_camera.gamma = value;
-        else if (id == "industrial_camera.sharpness") candidate.industrial_camera.sharpness = value;
-        else if (id == "industrial_camera.backlight_compensation") candidate.industrial_camera.backlight_compensation = value;
-        else if (id == "industrial_camera.white_balance_temperature") candidate.industrial_camera.white_balance_temperature = value;
-        else if (id == "industrial_camera.focus_absolute") candidate.industrial_camera.focus_absolute = value;
-        else if (id == "industrial_camera.zoom_absolute") candidate.industrial_camera.zoom_absolute = value;
-    }
-    else
-    {
-        bool ok = false;
-        const double value = raw_value.toDouble(&ok);
-        if (!ok || !std::isfinite(value))
-        {
-            if (error_message) *error_message = "请输入有效有限数值";
-            return false;
-        }
-
-        if (id == "takeoff_altitude") candidate.mission.takeoff_altitude = value;
-        else if (id == "move_altitude") candidate.mission.move_altitude = value;
-        else if (id == "start_altitude") candidate.mission.start_altitude = value;
-        else if (id == "yaw") candidate.mission.yaw = value;
-        else if (id == "tolerance") candidate.mission.tolerance = value;
-        else if (id == "yaw_tolerance_deg") candidate.mission.yaw_tolerance_deg = value;
-        else if (id == "max_xy_speed_mps") candidate.mission.max_xy_speed_mps = value;
-        else if (id == "max_z_speed_mps") candidate.mission.max_z_speed_mps = value;
-        else if (id == "max_yaw_rate_deg_s") candidate.mission.max_yaw_rate_deg_s = value;
-        else if (id == "takeoff_hover_duration") candidate.mission.takeoff_hover_duration = value;
-        else if (id == "landing_hover_duration") candidate.mission.landing_hover_duration = value;
-        else if (id == "move_hover_duration") candidate.mission.move_hover_duration = value;
-        else if (id == "visual_servo.image_x_sign") candidate.visual_servo.image_x_sign = value;
-        else if (id == "visual_servo.image_y_sign") candidate.visual_servo.image_y_sign = value;
-        else if (id == "visual_servo.kp_x") candidate.visual_servo.kp_x = value;
-        else if (id == "visual_servo.ki_x") candidate.visual_servo.ki_x = value;
-        else if (id == "visual_servo.kd_x") candidate.visual_servo.kd_x = value;
-        else if (id == "visual_servo.kp_y") candidate.visual_servo.kp_y = value;
-        else if (id == "visual_servo.ki_y") candidate.visual_servo.ki_y = value;
-        else if (id == "visual_servo.kd_y") candidate.visual_servo.kd_y = value;
-        else if (id == "visual_servo.integral_limit") candidate.visual_servo.integral_limit = value;
-        else if (id == "visual_servo.filter_alpha") candidate.visual_servo.filter_alpha = value;
-        else if (id == "visual_servo.enter_tolerance_x") candidate.visual_servo.enter_tolerance_x = value;
-        else if (id == "visual_servo.enter_tolerance_y") candidate.visual_servo.enter_tolerance_y = value;
-        else if (id == "visual_servo.exit_tolerance_x") candidate.visual_servo.exit_tolerance_x = value;
-        else if (id == "visual_servo.exit_tolerance_y") candidate.visual_servo.exit_tolerance_y = value;
-        else if (id == "visual_servo.settle_time_s") candidate.visual_servo.settle_time_s = value;
-        else if (id == "visual_servo.acquire_timeout_s") candidate.visual_servo.acquire_timeout_s = value;
-        else if (id == "visual_servo.lost_timeout_s") candidate.visual_servo.lost_timeout_s = value;
-        else if (id == "visual_servo.overall_timeout_s") candidate.visual_servo.overall_timeout_s = value;
-        else if (id == "visual_servo.max_body_speed_mps") candidate.visual_servo.max_body_speed_mps = value;
-        else
-        {
-            if (error_message) *error_message = "未知参数：" + id;
-            return false;
-        }
+        return false;
     }
 
+    // 字符串转数字由参数定义负责；跨参数关系和数值范围由总校验函数负责。
     const QString validation_error = validateWarehouseConfig(candidate);
     if (!validation_error.isEmpty())
     {
-        if (error_message) *error_message = validation_error;
+        setError(error_message, validation_error);
         return false;
     }
 
+    // 只有解析和总校验都成功，才提交这一项到临时配置。
     working_config_ = candidate;
     return true;
 }
 
 void ParameterConfigDialog::commitParameterEdit()
 {
+    // 单项确定按钮只提交到 working_config_，此时还没有写入 warehouse_config.json。
     QString error_message;
     if (!updateParameterFromEditor(&error_message))
     {
@@ -919,13 +1100,15 @@ void ParameterConfigDialog::commitParameterEdit()
         return;
     }
 
+    // 提交成功后关闭右侧编辑器，并重建列表显示新值。
     editing_parameter_id_.clear();
     parameter_editor_->hide();
     rebuildParameterList();
 }
+
 void ParameterConfigDialog::handleApply()
 {
-    //检查参数合法性并保存
+    // 页面顶部启用按钮是最终提交点：先校验整份配置，再原子写入 JSON。
     const QString validation_error =
         validateWarehouseConfig(working_config_);
 
@@ -945,6 +1128,7 @@ void ParameterConfigDialog::handleApply()
         return;
     }
 
+    // 保存成功后更新基准配置并关闭窗口，调用方可通过 savedConfig() 取得结果。
     original_config_ = working_config_;
     accept();
 }

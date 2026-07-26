@@ -48,6 +48,10 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
 
 WarehouseConfig createDefaultWarehouseConfig()
 {
+    // 这里构造的是编译进程序的代码默认值，不读取 warehouse_config.json。
+    // 用户保存配置只会改变 JSON；再次调用本函数仍会得到这套固定值。
+    // 参数页面可编辑的任务、视觉伺服和工业相机默认值都在下方集中赋值。
+    // 结构体成员只保留安全零值，避免出现两套彼此不一致的默认配置。
     WarehouseConfig config;
 
     // 每个货架面的槽位数量等于 rows * columns。
@@ -165,6 +169,50 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.mission.compress_waypoint_segments = true;
     config.mission.compress_non_waypoint_segments = false;
     config.mission.frame = "world_body";
+
+    // 视觉伺服固定默认值。修改这里后需要重新编译，运行时 JSON 不会覆盖这套基准值。
+    config.visual_servo.target_id.clear();
+    config.visual_servo.require_confirmed = true;
+    config.visual_servo.image_x_axis = "y";
+    config.visual_servo.image_y_axis = "z";
+    config.visual_servo.image_x_sign = -1.0;
+    config.visual_servo.image_y_sign = -1.0;
+    config.visual_servo.kp_x = 0.35;
+    config.visual_servo.ki_x = 0.0;
+    config.visual_servo.kd_x = 0.02;
+    config.visual_servo.kp_y = 0.35;
+    config.visual_servo.ki_y = 0.0;
+    config.visual_servo.kd_y = 0.02;
+    config.visual_servo.integral_limit = 0.5;
+    config.visual_servo.filter_alpha = 0.35;
+    config.visual_servo.enter_tolerance_x = 0.04;
+    config.visual_servo.enter_tolerance_y = 0.04;
+    config.visual_servo.exit_tolerance_x = 0.07;
+    config.visual_servo.exit_tolerance_y = 0.07;
+    config.visual_servo.settle_time_s = 0.6;
+    config.visual_servo.acquire_timeout_s = 5.0;
+    config.visual_servo.lost_timeout_s = 1.0;
+    config.visual_servo.overall_timeout_s = 20.0;
+    config.visual_servo.max_body_speed_mps = 0.20;
+    config.visual_servo.continue_on_timeout = true;
+
+    // 工业相机固定默认值；范围必须与相机驱动和 validateWarehouseConfig() 一致。
+    config.industrial_camera.auto_exposure = true;
+    config.industrial_camera.exposure_absolute = 40;
+    config.industrial_camera.auto_exposure_priority = false;
+    config.industrial_camera.gain = 190;
+    config.industrial_camera.brightness = 128;
+    config.industrial_camera.contrast = 65;
+    config.industrial_camera.saturation = 90;
+    config.industrial_camera.gamma = 130;
+    config.industrial_camera.sharpness = 128;
+    config.industrial_camera.backlight_compensation = 16;
+    config.industrial_camera.auto_white_balance = true;
+    config.industrial_camera.white_balance_temperature = 4650;
+    config.industrial_camera.power_line_frequency = 1;
+    config.industrial_camera.auto_focus = true;
+    config.industrial_camera.focus_absolute = 0;
+    config.industrial_camera.zoom_absolute = 120;
 
     return config;
 }
