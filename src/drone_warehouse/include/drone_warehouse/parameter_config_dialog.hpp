@@ -39,6 +39,10 @@ private:
     void buildProjectPage();
     void buildParameterPage();
     void buildParameterFilterPanel();
+    void buildNumericKeypad(QWidget *parent);
+    void setNumericKeypadEnabled(bool enabled);
+    void appendNumericDigit(const QString &digit);
+    void backspaceNumericInput();
     void selectMainPage(int page_index);
     void selectProject(InspectionProject project);
     void selectParameterGroup(ParameterGroup group);
@@ -68,6 +72,8 @@ private:
     QButtonGroup *main_page_button_group_ = nullptr;
     QWidget *parameter_filter_panel_ = nullptr;
     QButtonGroup *parameter_filter_button_group_ = nullptr;
+    QWidget *numeric_keypad_ = nullptr;
+    bool numeric_editor_active_ = false;
     QPushButton *restore_button_ = nullptr;
     QPushButton *discard_button_ = nullptr;
     QPushButton *apply_button_ = nullptr;

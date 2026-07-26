@@ -26,6 +26,7 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
         config.return_world_group,
         config.barcode_capture,
         config.vision_barcode,
+        config.vision_servo_status,
         config.local_position,
         config.pose_delta,
         config.industrial_camera_params,
@@ -115,6 +116,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.ros.return_world_group = "/drone/return/world_group";
     config.ros.barcode_capture = "/drone/barcode_capture";
     config.ros.vision_barcode = "/drone/vision/barcode";
+    config.ros.vision_servo_status = "/control/vision_servo/status";
     config.ros.local_position = "/drone/local_position";
     config.ros.pose_delta = "/drone/pose_yaw_compare/delta";
     config.ros.industrial_camera_params = "/industrial_camera/params";
@@ -131,6 +133,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.bridge_ros.return_world_group = "/serial/drone/return/world_group";
     config.bridge_ros.barcode_capture = "/drone/barcode_capture";
     config.bridge_ros.vision_barcode = "/serial/drone/vision/barcode";
+    config.bridge_ros.vision_servo_status = "/serial/control/vision_servo/status";
     config.bridge_ros.local_position = "/serial/drone/local_position";
     config.bridge_ros.pose_delta = "/serial/drone/pose_yaw_compare/delta";
     config.bridge_ros.industrial_camera_params = "/serial/industrial_camera/params";
@@ -586,6 +589,7 @@ QJsonObject rosConfigToJson(const RosTopicConfig &config)
     object.insert("return_world_group", config.return_world_group);
     object.insert("barcode_capture", config.barcode_capture);
     object.insert("vision_barcode", config.vision_barcode);
+    object.insert("vision_servo_status", config.vision_servo_status);
     object.insert("local_position", config.local_position);
     object.insert("pose_delta", config.pose_delta);
     object.insert("industrial_camera_params", config.industrial_camera_params);
@@ -615,6 +619,13 @@ bool rosConfigFromJson(const QJsonObject &object,
         readString(object, "start_offboard_service", config.start_offboard_service, error_message) &&
         readString(object, "upload_mission_service", config.upload_mission_service, error_message);
     if (!core_valid)
+    {
+        return false;
+    }
+
+    if (object.contains("vision_servo_status") &&
+        !readString(object, "vision_servo_status",
+                    config.vision_servo_status, error_message))
     {
         return false;
     }
@@ -1353,6 +1364,8 @@ void applyConnectionModeToRosConfig(
         remove_serial_prefix(config.ros.barcode_capture);
     config.ros.vision_barcode =
         remove_serial_prefix(config.ros.vision_barcode);
+    config.ros.vision_servo_status =
+        remove_serial_prefix(config.ros.vision_servo_status);
     config.ros.local_position =
         remove_serial_prefix(config.ros.local_position);
     config.ros.pose_delta =

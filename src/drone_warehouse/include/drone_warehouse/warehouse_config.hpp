@@ -62,6 +62,7 @@ struct SlotGridConfig
 // 一组 ROS 节点、话题和服务名称，可分别用于地面站或串口桥接进程。
 struct RosTopicConfig
 {
+    QString vision_servo_status;      // Visual-servo status topic.
     QString node_name;                // 地面站 ROS 节点名。
     QString drone_status;             // 无人机状态话题。
     QString task_status;              // 任务执行状态话题。

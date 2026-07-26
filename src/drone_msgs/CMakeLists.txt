@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WorldGroup.msg"
   "msg/IndustrialCameraParams.msg"
   "msg/VisualServoConfig.msg"
+  "msg/VisionServoStatus.msg"
   "msg/MissionSummary.msg"
   "srv/StartTask.srv"
   "srv/StartOffboard.srv"

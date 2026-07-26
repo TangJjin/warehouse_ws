@@ -18,6 +18,7 @@
 #include "drone_msgs/msg/world_group.hpp"
 #include "drone_msgs/msg/barcode_capture.hpp"
 #include "drone_msgs/msg/industrial_camera_params.hpp"
+#include "drone_msgs/msg/vision_servo_status.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include "drone_msgs/srv/upload_mission_summary.hpp"
 #include "drone_msgs/srv/start_offboard.hpp"
@@ -128,6 +129,7 @@ private:
     void handleVisionBarcodeReport(const QByteArray &payload);
     void handleDeltaReport(const QByteArray &payload);
     void handleLocalPositionReport(const QByteArray &payload);
+    void handleVisionServoStatusReport(const QByteArray &payload);
     void handleUploadMissionSummaryResponse(uint16_t seq, const QByteArray &payload);
     void handleStartOffboardResponse(uint16_t seq, const QByteArray &payload);
     void handleStartTaskResponse(uint16_t seq, const QByteArray &payload);
@@ -150,6 +152,7 @@ private:
     rclcpp::Publisher<drone_msgs::msg::ReadyStatus>::SharedPtr path_ready_pub_;
     rclcpp::Publisher<drone_msgs::msg::WorldGroup>::SharedPtr return_world_group_pub_;
     rclcpp::Publisher<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_pub_;
+    rclcpp::Publisher<drone_msgs::msg::VisionServoStatus>::SharedPtr vision_servo_status_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr delta_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_pub_;
     rclcpp::Subscription<drone_msgs::msg::IndustrialCameraParams>::SharedPtr industrial_camera_params_sub_;

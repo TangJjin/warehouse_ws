@@ -178,6 +178,42 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+    vision_servo_status_sub_ =
+        node_->create_subscription<drone_msgs::msg::VisionServoStatus>(
+            topic_config_.vision_servo_status.toStdString(),
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local(),
+            [this](const drone_msgs::msg::VisionServoStatus::SharedPtr msg)
+            {
+                if (!msg) {
+                    return;
+                }
+
+                const QString state = QString::fromStdString(msg->state);
+                const QString requested_target_id =
+                    QString::fromStdString(msg->requested_target_id);
+                const QString tracked_target_id =
+                    QString::fromStdString(msg->tracked_target_id);
+                const QString detail = QString::fromStdString(msg->detail);
+                QString time_text;
+                if (msg->stamp.sec != 0 || msg->stamp.nanosec != 0) {
+                    const qint64 time_ms =
+                        static_cast<qint64>(msg->stamp.sec) * 1000LL +
+                        static_cast<qint64>(msg->stamp.nanosec) / 1000000LL;
+                    time_text = QDateTime::fromMSecsSinceEpoch(
+                        time_ms, Qt::LocalTime).toString("yyyy-MM-dd hh:mm:ss");
+                }
+
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, active = msg->active, state, requested_target_id,
+                     tracked_target_id, detail, time_text]() {
+                        emit visionServoStatusUpdated(
+                            active, state, requested_target_id,
+                            tracked_target_id, detail, time_text);
+                    },
+                    Qt::QueuedConnection);
+            });
+
     auto local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
     local_position_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
