@@ -201,21 +201,21 @@ WarehouseConfig createDefaultWarehouseConfig()
 
     // 工业相机固定默认值；范围必须与相机驱动和 validateWarehouseConfig() 一致。
     config.industrial_camera.auto_exposure = true;
-    config.industrial_camera.exposure_absolute = 40;
+    config.industrial_camera.exposure_absolute = 156;
     config.industrial_camera.auto_exposure_priority = false;
-    config.industrial_camera.gain = 190;
+    config.industrial_camera.gain = 130;
     config.industrial_camera.brightness = 128;
     config.industrial_camera.contrast = 65;
     config.industrial_camera.saturation = 90;
     config.industrial_camera.gamma = 130;
     config.industrial_camera.sharpness = 128;
-    config.industrial_camera.backlight_compensation = 16;
+    config.industrial_camera.backlight_compensation = 48;
     config.industrial_camera.auto_white_balance = true;
     config.industrial_camera.white_balance_temperature = 4650;
     config.industrial_camera.power_line_frequency = 1;
     config.industrial_camera.auto_focus = true;
     config.industrial_camera.focus_absolute = 0;
-    config.industrial_camera.zoom_absolute = 120;
+    config.industrial_camera.zoom_absolute = 100;
 
     return config;
 }
