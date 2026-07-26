@@ -218,23 +218,26 @@ void MainWindow::setupConnections()
             ParameterConfigDialog parameter_dialog(
                 config_, this);
 
+            // 参数页点击“启用”后保持打开，同时立即更新地面站内存配置和相机参数。
+            connect(&parameter_dialog, &ParameterConfigDialog::configApplied,
+                    this, [this](const WarehouseConfig &applied_config) {
+                        config_ = applied_config;
+                        applyInspectionProject(config_.inspection_project);
+                        ros_manager_->publishIndustrialCameraParams(
+                            config_.industrial_camera);
+                    });
+
             // 让弹窗全屏显示，方便在小屏幕上操作。
             parameter_dialog.setWindowState(
                 parameter_dialog.windowState() |
                 Qt::WindowFullScreen);
 
             //在主窗口上方显示弹窗
-            if (parameter_dialog.exec() ==
-                QDialog::Accepted)
-            {
-                //
-                config_ = parameter_dialog.savedConfig();
-                applyInspectionProject(config_.inspection_project);
-                ros_manager_->publishIndustrialCameraParams(config_.industrial_camera);
-
-                // run_log_view_->appendPlainText(
-                //     "仓储智航参数已启用");
-            }
+            parameter_dialog.exec();
+            // 配置已经由 configApplied 信号即时同步，不再等待 QDialog::Accepted。
+            //
+            // run_log_view_->appendPlainText(
+            //     "仓储智航参数已启用");
         }
     });
 

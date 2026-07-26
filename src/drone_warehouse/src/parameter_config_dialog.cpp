@@ -9,6 +9,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QScrollBar>
+#include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QAbstractButton>
@@ -94,6 +96,9 @@ struct ParameterDefinition
     // editable 为空表示始终可编辑；否则根据当前配置决定是否允许编辑。
     std::function<bool(const WarehouseConfig &)> editable;
     QString disabled_reason; // 不可编辑时追加到参数说明后的原因。
+    bool use_integer_slider = false; // 相机整数参数可同时使用滑块和输入框。
+    int slider_minimum = 0;
+    int slider_maximum = 0;
 
     // 右侧输入框和保存逻辑使用原始值，不包含单位和中文选项名称。
     QString rawValue(const WarehouseConfig &config) const
@@ -425,6 +430,18 @@ ParameterDefinition disableWhileAutomatic(
     return definition;
 }
 
+// 给相机整数参数附加滑块范围；输入框仍然保留，便于输入精确数值。
+ParameterDefinition withIntegerSlider(
+    ParameterDefinition definition,
+    int minimum,
+    int maximum)
+{
+    definition.use_integer_slider = true;
+    definition.slider_minimum = minimum;
+    definition.slider_maximum = maximum;
+    return definition;
+}
+
 const QVector<ParameterDefinition> &parameterDefinitions()
 {
     // 所有参数只在这里登记。列表、编辑器、默认值和写回逻辑都会读取此表。
@@ -485,21 +502,21 @@ const QVector<ParameterDefinition> &parameterDefinitions()
 
         // 工业相机参数。
         boolParameter("industrial_camera_auto_exposure", "自动曝光", "自动曝光开关；启用时手动曝光时间不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_exposure),
-        disableWhileAutomatic(integerParameter("industrial_camera_exposure_absolute", "曝光时间", "手动曝光时间，范围 1 到 10000。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::exposure_absolute), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_exposure; }),
+        disableWhileAutomatic(withIntegerSlider(integerParameter("industrial_camera_exposure_absolute", "曝光时间", "手动曝光时间，范围 1 到 10000。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::exposure_absolute), 1, 10000), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_exposure; }),
         boolParameter("industrial_camera_auto_exposure_priority", "曝光优先", "自动曝光时是否允许降低帧率来提高画面亮度。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_exposure_priority),
-        integerParameter("industrial_camera_gain", "增益", "图像增益，范围 0 到 190；过高会增加噪点。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gain),
-        integerParameter("industrial_camera_brightness", "亮度", "图像亮度处理值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::brightness),
-        integerParameter("industrial_camera_contrast", "对比度", "图像对比度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::contrast),
-        integerParameter("industrial_camera_saturation", "饱和度", "图像色彩饱和度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::saturation),
-        integerParameter("industrial_camera_gamma", "Gamma", "图像中间亮度校正值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gamma),
-        integerParameter("industrial_camera_sharpness", "锐度", "图像锐化强度，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::sharpness),
-        integerParameter("industrial_camera_backlight_compensation", "逆光补偿", "逆光补偿值，范围 16 到 160。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::backlight_compensation),
+        withIntegerSlider(integerParameter("industrial_camera_gain", "增益", "图像增益，范围 0 到 190；过高会增加噪点。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gain), 0, 190),
+        withIntegerSlider(integerParameter("industrial_camera_brightness", "亮度", "图像亮度处理值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::brightness), 0, 255),
+        withIntegerSlider(integerParameter("industrial_camera_contrast", "对比度", "图像对比度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::contrast), 0, 128),
+        withIntegerSlider(integerParameter("industrial_camera_saturation", "饱和度", "图像色彩饱和度，范围 0 到 128。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::saturation), 0, 128),
+        withIntegerSlider(integerParameter("industrial_camera_gamma", "Gamma", "图像中间亮度校正值，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::gamma), 0, 255),
+        withIntegerSlider(integerParameter("industrial_camera_sharpness", "锐度", "图像锐化强度，范围 0 到 255。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::sharpness), 0, 255),
+        withIntegerSlider(integerParameter("industrial_camera_backlight_compensation", "逆光补偿", "逆光补偿值，范围 16 到 160。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::backlight_compensation), 16, 160),
         boolParameter("industrial_camera_auto_white_balance", "自动白平衡", "自动白平衡开关；启用时手动色温不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_white_balance),
-        disableWhileAutomatic(integerParameter("industrial_camera_white_balance_temperature", "白平衡色温", "手动白平衡色温，范围 2800 到 6500 K。", "K", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::white_balance_temperature), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_white_balance; }),
+        disableWhileAutomatic(withIntegerSlider(integerParameter("industrial_camera_white_balance_temperature", "白平衡色温", "手动白平衡色温，范围 2800 到 6500 K。", "K", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::white_balance_temperature), 2800, 6500), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_white_balance; }),
         powerLineParameter(),
         boolParameter("industrial_camera_auto_focus", "自动对焦", "自动对焦开关；启用时手动焦点不会写入相机。", &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::auto_focus),
-        disableWhileAutomatic(integerParameter("industrial_camera_focus_absolute", "焦点", "手动焦点位置，范围 0 到 1023。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::focus_absolute), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_focus; }),
-        integerParameter("industrial_camera_zoom_absolute", "变焦", "相机变焦值，范围 100 到 200。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::zoom_absolute)
+        disableWhileAutomatic(withIntegerSlider(integerParameter("industrial_camera_focus_absolute", "焦点", "手动焦点位置，范围 0 到 1023。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::focus_absolute), 0, 1023), [](const WarehouseConfig &config) { return !config.industrial_camera.auto_focus; }),
+        withIntegerSlider(integerParameter("industrial_camera_zoom_absolute", "变焦", "相机变焦值，范围 100 到 200。", {}, &WarehouseConfig::industrial_camera, &IndustrialCameraConfig::zoom_absolute), 100, 200)
     };
     return definitions;
 }
@@ -639,23 +656,41 @@ void ParameterConfigDialog::buildUi()
             const WarehouseConfig defaults =
                 createDefaultWarehouseConfig();
 
-            working_config_.inspection_project =
-                defaults.inspection_project;
-            working_config_.mission = defaults.mission;
-            working_config_.visual_servo = defaults.visual_servo;
-            working_config_.industrial_camera = defaults.industrial_camera;
-            selectProject(working_config_.inspection_project);
+            // 恢复范围由当前参数筛选类别决定；项目选择是独立设置，不在这里修改。
+            switch (selected_parameter_group_)
+            {
+            case ParameterGroup::Flight:
+                working_config_.mission = defaults.mission;
+                break;
+            case ParameterGroup::Servo:
+                working_config_.visual_servo = defaults.visual_servo;
+                break;
+            case ParameterGroup::Camera:
+                working_config_.industrial_camera = defaults.industrial_camera;
+                break;
+            case ParameterGroup::All:
+                working_config_.mission = defaults.mission;
+                working_config_.visual_servo = defaults.visual_servo;
+                working_config_.industrial_camera = defaults.industrial_camera;
+                break;
+            }
             editing_parameter_id_.clear();
             parameter_editor_->hide();
+            camera_slider_active_ = false;
             setNumericKeypadEnabled(false);
-            rebuildParameterList();
+            rebuildParameterList(true);
         });
 
     // 丢弃时恢复原配置并直接关闭窗口。
+    // 当前交互保留“恢复原配置”，但不再关闭参数窗口。
     connect(discard_button_, &QPushButton::clicked,
             this, [this]() {
                 working_config_ = original_config_;
-                reject();
+                editing_parameter_id_.clear();
+                parameter_editor_->hide();
+                camera_slider_active_ = false;
+                setNumericKeypadEnabled(false);
+                selectProject(working_config_.inspection_project);
             });
 
     // 启用时才执行最终校验和 JSON 保存。
@@ -685,6 +720,12 @@ void ParameterConfigDialog::buildUi()
         "QLineEdit, QComboBox { min-height: 42px; padding: 0 10px; font-size: 22px;"
         "  color: #eef5fb; background: #0d1620; border: 1px solid #526d87; border-radius: 4px; }"
         "QLineEdit:disabled, QComboBox:disabled { color: #6f8294; background: #151d26; }"
+        "QSlider#cameraParameterSlider::groove:horizontal { height: 8px;"
+        "  background: #30465c; border-radius: 4px; }"
+        "QSlider#cameraParameterSlider::sub-page:horizontal { background: #5bc0be; border-radius: 4px; }"
+        "QSlider#cameraParameterSlider::handle:horizontal { width: 26px; height: 26px;"
+        "  margin: -9px 0; background: #eef5fb; border: 2px solid #5bc0be; border-radius: 13px; }"
+        "QSlider#cameraParameterSlider::handle:horizontal:disabled { background: #657789; border-color: #46596b; }"
     );
 }
 
@@ -827,6 +868,7 @@ void ParameterConfigDialog::selectParameterGroup(ParameterGroup group)
     {
         parameter_editor_->hide();
     }
+    camera_slider_active_ = false;
     setNumericKeypadEnabled(false);
 
     // QButtonGroup 使用枚举值作为按钮 ID，保证当前筛选按钮保持高亮。
@@ -946,11 +988,20 @@ void ParameterConfigDialog::buildParameterPage()
     editor_input_stack_ = new QStackedWidget(parameter_editor_);
     // QStackedWidget 默认会沿纵向扩展。固定输入区域高度，避免它占满右侧编辑器中部。
     editor_input_stack_->setFixedHeight(48);
-    editor_line_edit_ = new QLineEdit(editor_input_stack_);
+    editor_line_container_ = new QWidget(editor_input_stack_);
+    auto *line_input_layout = new QHBoxLayout(editor_line_container_);
+    line_input_layout->setContentsMargins(0, 0, 0, 0);
+    line_input_layout->setSpacing(14);
+    editor_camera_slider_ = new QSlider(Qt::Horizontal, editor_line_container_);
+    editor_camera_slider_->setObjectName("cameraParameterSlider");
+    editor_camera_slider_->setMinimumWidth(180);
+    editor_line_edit_ = new QLineEdit(editor_line_container_);
     editor_line_edit_->setFixedHeight(46);
+    line_input_layout->addWidget(editor_camera_slider_, 1);
+    line_input_layout->addWidget(editor_line_edit_);
     editor_combo_box_ = new QComboBox(editor_input_stack_);
     editor_combo_box_->setFixedHeight(46);
-    editor_input_stack_->addWidget(editor_line_edit_);
+    editor_input_stack_->addWidget(editor_line_container_);
     editor_input_stack_->addWidget(editor_combo_box_);
 
     editor_default_label_ = new QLabel(parameter_editor_);
@@ -983,17 +1034,40 @@ void ParameterConfigDialog::buildParameterPage()
                 editing_parameter_id_.clear();
                 parameter_list_->clearSelection();
                 parameter_editor_->hide();
+                camera_slider_active_ = false;
                 setNumericKeypadEnabled(false);
             });
     connect(editor_confirm_button_, &QPushButton::clicked,
             this, &ParameterConfigDialog::commitParameterEdit);
     connect(editor_line_edit_, &QLineEdit::returnPressed,
             this, &ParameterConfigDialog::commitParameterEdit);
+    // 相机滑块和数值输入框双向同步；真正写入临时配置仍由“确定”触发。
+    connect(editor_camera_slider_, &QSlider::valueChanged,
+            this, [this](int value) {
+                if (camera_slider_active_)
+                {
+                    editor_line_edit_->setText(QString::number(value));
+                }
+            });
+    connect(editor_line_edit_, &QLineEdit::textChanged,
+            this, [this](const QString &text) {
+                if (!camera_slider_active_)
+                {
+                    return;
+                }
+                bool ok = false;
+                const int value = text.toInt(&ok);
+                if (ok && value >= editor_camera_slider_->minimum() &&
+                    value <= editor_camera_slider_->maximum())
+                {
+                    editor_camera_slider_->setValue(value);
+                }
+            });
 
     rebuildParameterList();
 }
 
-void ParameterConfigDialog::rebuildParameterList()
+void ParameterConfigDialog::rebuildParameterList(bool preserve_scroll_position)
 {
     if (!parameter_list_)
     {
@@ -1001,6 +1075,10 @@ void ParameterConfigDialog::rebuildParameterList()
     }
 
     // 每次确认单项、恢复默认值或切换项目后都重建列表，确保右侧数值是最新的。
+    // 手动确认单项时保存当前滚动值，避免列表重建后跳回第一行。
+    const int previous_scroll_value = preserve_scroll_position
+        ? parameter_list_->verticalScrollBar()->value()
+        : 0;
     parameter_list_->clear();
 
     // 代码默认值每次都重新由 createDefaultWarehouseConfig() 构造，
@@ -1025,6 +1103,11 @@ void ParameterConfigDialog::rebuildParameterList()
             definition.name,
             definition.displayValue(working_config_),
             differs_from_default);
+    }
+
+    if (preserve_scroll_position)
+    {
+        parameter_list_->verticalScrollBar()->setValue(previous_scroll_value);
     }
 }
 
@@ -1097,6 +1180,7 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     {
         editing_parameter_id_.clear();
         parameter_editor_->hide();
+        camera_slider_active_ = false;
         setNumericKeypadEnabled(false);
         return;
     }
@@ -1104,6 +1188,7 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     const bool numeric_editor =
         definition->editor_type == ParameterEditorType::Number ||
         definition->editor_type == ParameterEditorType::Integer;
+    camera_slider_active_ = false;
     // 第二步：分别读取临时配置中的当前值和程序默认值。
     // 这里使用 rawValue，因此不会把 m、s 等显示单位写进输入框。
     const QString current_value = definition->rawValue(working_config_);
@@ -1118,6 +1203,7 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     editor_confirm_button_->setEnabled(true);
     editor_line_edit_->setEnabled(true);
     editor_combo_box_->setEnabled(true);
+    editor_camera_slider_->setEnabled(true);
 
     // 第三步：Choice 使用下拉框，其余类型使用文本输入框。
     if (definition->editor_type == ParameterEditorType::Choice)
@@ -1138,7 +1224,24 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     {
         editor_line_edit_->setText(current_value);
         editor_line_edit_->setPlaceholderText(definition->placeholder);
-        editor_input_stack_->setCurrentWidget(editor_line_edit_);
+        const bool use_slider = definition->use_integer_slider;
+        editor_camera_slider_->setVisible(use_slider);
+        if (use_slider)
+        {
+            editor_camera_slider_->setRange(
+                definition->slider_minimum,
+                definition->slider_maximum);
+            editor_camera_slider_->setValue(current_value.toInt());
+            editor_line_edit_->setMinimumWidth(100);
+            editor_line_edit_->setMaximumWidth(120);
+        }
+        else
+        {
+            editor_line_edit_->setMinimumWidth(0);
+            editor_line_edit_->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
+        camera_slider_active_ = use_slider;
+        editor_input_stack_->setCurrentWidget(editor_line_container_);
         if (numeric_editor) {
             // Preserve the existing decimal point and sign so the requested
             // digit-only keypad can edit floating-point and negative values.
@@ -1158,6 +1261,7 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     {
         editor_line_edit_->setEnabled(false);
         editor_combo_box_->setEnabled(false);
+        editor_camera_slider_->setEnabled(false);
         editor_confirm_button_->setEnabled(false);
         editor_description_label_->setText(
             definition->description + " " + definition->disabled_reason);
@@ -1224,8 +1328,9 @@ void ParameterConfigDialog::commitParameterEdit()
     // 提交成功后关闭右侧编辑器，并重建列表显示新值。
     editing_parameter_id_.clear();
     parameter_editor_->hide();
+    camera_slider_active_ = false;
     setNumericKeypadEnabled(false);
-    rebuildParameterList();
+    rebuildParameterList(true);
 }
 
 void ParameterConfigDialog::handleApply()
@@ -1251,7 +1356,8 @@ void ParameterConfigDialog::handleApply()
     }
 
     // 保存成功后更新基准配置并关闭窗口，调用方可通过 savedConfig() 取得结果。
+    // 当前流程不再关闭窗口，而是立即通知主窗口应用配置。
     original_config_ = working_config_;
-    accept();
+    emit configApplied(working_config_);
 }
 

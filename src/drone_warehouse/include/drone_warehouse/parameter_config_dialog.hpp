@@ -11,6 +11,7 @@ class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QPushButton;
+class QSlider;
 class QStackedWidget;
 class QWidget;
 
@@ -26,12 +27,18 @@ enum class ParameterGroup
 
 class ParameterConfigDialog : public QDialog
 {
+    Q_OBJECT
+
 public:
     explicit ParameterConfigDialog(
         const WarehouseConfig &config,
         QWidget *parent = nullptr);
 
     const WarehouseConfig &savedConfig() const;
+
+signals:
+    // “启用”保存成功后立即通知主窗口，不需要关闭参数页面。
+    void configApplied(const WarehouseConfig &config);
 
 private:
     // 页面构建与切换。
@@ -48,7 +55,7 @@ private:
     void selectParameterGroup(ParameterGroup group);
 
     // 参数列表和右侧编辑器。
-    void rebuildParameterList();
+    void rebuildParameterList(bool preserve_scroll_position = false);
     void addParameterRow(
         const QString &parameter_id,
         const QString &display_name,
@@ -91,8 +98,11 @@ private:
     QLabel *editor_description_label_ = nullptr;
     QLabel *editor_default_label_ = nullptr;
     QStackedWidget *editor_input_stack_ = nullptr;
+    QWidget *editor_line_container_ = nullptr;
     QLineEdit *editor_line_edit_ = nullptr;
+    QSlider *editor_camera_slider_ = nullptr;
     QComboBox *editor_combo_box_ = nullptr;
     QPushButton *editor_confirm_button_ = nullptr;
     QString editing_parameter_id_;
+    bool camera_slider_active_ = false;
 };
