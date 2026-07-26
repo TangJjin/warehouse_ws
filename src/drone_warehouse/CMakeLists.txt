@@ -27,6 +27,8 @@ pkg_check_modules(GPIOD REQUIRED libgpiod)
 add_executable(warehouse_gcs
   src/main.cpp
   src/mainwindow.cpp
+  src/cargo_inspection_page.cpp
+  src/animal_inspection_page.cpp
   src/scene_view.cpp
   src/animal_grid_view.cpp
   src/ros_manager.cpp
@@ -41,6 +43,8 @@ add_executable(warehouse_gcs
   src/warehouse_config.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
+  include/drone_warehouse/cargo_inspection_page.hpp
+  include/drone_warehouse/animal_inspection_page.hpp
   include/drone_warehouse/scene_view.hpp
   include/drone_warehouse/animal_grid_view.hpp
   include/drone_warehouse/ros_manager.hpp
