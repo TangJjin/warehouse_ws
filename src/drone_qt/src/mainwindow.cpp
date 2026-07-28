@@ -373,6 +373,7 @@ void MainWindow::setupConnections()
 
         // Default visual-servo settings; no action is inserted automatically.
         summary.visual_servo.target_id = "";
+        summary.visual_servo.enabled = true;
         summary.visual_servo.require_confirmed = true;
         summary.visual_servo.image_x_axis = "y";
         summary.visual_servo.image_y_axis = "z";

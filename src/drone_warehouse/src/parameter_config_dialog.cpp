@@ -475,6 +475,7 @@ const QVector<ParameterDefinition> &parameterDefinitions()
         stringChoiceParameter("frame", "任务坐标系", "任务航点使用的参考坐标系。", &WarehouseConfig::mission, &MissionConfig::frame, frameChoices()),
 
         // 视觉伺服参数。
+        boolParameter("visual_servo_enabled", "视觉伺服开关", "决定是否启用相机伺服", &WarehouseConfig::visual_servo, &VisualServoConfig::enabled),
         textParameter("visual_servo_target_id", "视觉目标 ID", "指定需要跟踪的视觉目标 ID；留空时锁定首个符合条件的目标。", &WarehouseConfig::visual_servo, &VisualServoConfig::target_id, "自动锁定", "留空时自动锁定首个目标"),
         boolParameter("visual_servo_require_confirmed", "稳定确认", "启用后只接受视觉端已稳定确认的目标。", &WarehouseConfig::visual_servo, &VisualServoConfig::require_confirmed),
         stringChoiceParameter("visual_servo_image_x_axis", "X 映射轴", "图像水平误差映射到无人机机体系的哪个轴。", &WarehouseConfig::visual_servo, &VisualServoConfig::image_x_axis, axisChoices()),

@@ -47,6 +47,10 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
 }
 }
 
+/*************************************************************/
+
+/**************************参数默认值**************************/
+
 WarehouseConfig createDefaultWarehouseConfig()
 {
     // 这里构造的是编译进程序的代码默认值，不读取 warehouse_config.json。
@@ -174,6 +178,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.mission.frame = "world_body";
 
     // 视觉伺服固定默认值。修改这里后需要重新编译，运行时 JSON 不会覆盖这套基准值。
+    config.visual_servo.enabled = true;
     config.visual_servo.target_id.clear();
     config.visual_servo.require_confirmed = true;
     config.visual_servo.image_x_axis = "y";
@@ -219,6 +224,10 @@ WarehouseConfig createDefaultWarehouseConfig()
 
     return config;
 }
+
+/************************************************************/
+
+/*************************字段校验函数*************************/
 
 QString validateWarehouseConfig(const WarehouseConfig &config)
 {
@@ -415,8 +424,17 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
     return validateRosConfig(config.bridge_ros, "ground_link_bridge");
 }
 
+/************************************************************/
+/************************************************************/
+/************************************************************/
+/************************************************************/
+
+
+
+
 namespace
 {
+/***********************读JSON字段函数**************************/
 bool jsonError(QString *error_message, const QString &message)
 {
     if (error_message)
@@ -523,6 +541,10 @@ QString inspectionProjectToString(InspectionProject project)
     return project == InspectionProject::Animal ? "animal" : "cargo";
 }
 
+/************************************************************/
+
+/***********************巡检项目相关函数**********************/
+
 bool inspectionProjectFromString(const QString &value,
                                  InspectionProject &project,
                                  QString *error_message)
@@ -578,6 +600,10 @@ bool doubleVectorFromJson(const QJsonObject &object,
     values = loaded_values;
     return true;
 }
+
+/************************************************************/
+
+/***********************ros通信相关函数***********************/
 
 QJsonObject rosConfigToJson(const RosTopicConfig &config)
 {
@@ -635,6 +661,10 @@ bool rosConfigFromJson(const QJsonObject &object,
            readString(object, "industrial_camera_params",
                       config.industrial_camera_params, error_message);
 }
+
+/************************************************************/
+
+/***********************数传串口相关函数**********************/
 
 QString parityToString(QSerialPort::Parity parity)
 {
@@ -881,6 +911,11 @@ bool connectionConfigFromJson(const QJsonObject &object,
                config.telemetry_serial,
                error_message);
 }
+
+/************************************************************/
+
+/***********************飞行任务相关函数**********************/
+
 QJsonObject missionConfigToJson(const MissionConfig &config)
 {
     QJsonObject object;
@@ -942,9 +977,14 @@ bool missionConfigFromJson(const QJsonObject &object,
            readDouble(object, "max_yaw_rate_deg_s", config.max_yaw_rate_deg_s, error_message);
 }
 
+/************************************************************/
+
+/***********************相机伺服相关函数**********************/
+
 QJsonObject visualServoConfigToJson(const VisualServoConfig &config)
 {
     QJsonObject object;
+    object.insert("enabled", config.enabled);
     object.insert("target_id", config.target_id);
     object.insert("require_confirmed", config.require_confirmed);
     object.insert("image_x_axis", config.image_x_axis);
@@ -976,6 +1016,14 @@ bool visualServoConfigFromJson(const QJsonObject &object,
                                VisualServoConfig &config,
                                QString *error_message)
 {
+    // Older warehouse_config.json files do not contain enabled. In that case,
+    // keep the code default created by createDefaultWarehouseConfig().
+    if (object.contains("enabled") &&
+        !readBool(object, "enabled", config.enabled, error_message))
+    {
+        return false;
+    }
+
     return readString(object, "target_id", config.target_id, error_message) &&
            readBool(object, "require_confirmed", config.require_confirmed, error_message) &&
            readString(object, "image_x_axis", config.image_x_axis, error_message) &&
@@ -1001,6 +1049,11 @@ bool visualServoConfigFromJson(const QJsonObject &object,
            readDouble(object, "max_body_speed_mps", config.max_body_speed_mps, error_message) &&
            readBool(object, "continue_on_timeout", config.continue_on_timeout, error_message);
 }
+
+/************************************************************/
+
+/***********************工业相机相关函数**********************/
+
 QJsonObject industrialCameraConfigToJson(const IndustrialCameraConfig &config)
 {
     QJsonObject object;
@@ -1052,6 +1105,11 @@ bool industrialCameraConfigFromJson(const QJsonObject &object,
     config.power_line_frequency = static_cast<quint8>(power_line_frequency);
     return true;
 }
+
+/************************************************************/
+
+/**************************JSON全部写*************************/
+
 QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
 {
     QJsonArray shelves;
@@ -1117,6 +1175,10 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
     root.insert("industrial_camera", industrialCameraConfigToJson(config.industrial_camera));
     return root;
 }
+
+/************************************************************/
+
+/**************************JSON全部读*************************/
 
 bool warehouseConfigFromJson(const QJsonObject &root,
                              WarehouseConfig &config,
@@ -1320,7 +1382,18 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     config = loaded_config;
     return true;
 }
+
+/************************************************************/
+/************************************************************/
+/************************************************************/
+/************************************************************/
+
 }
+
+/************************************************************/
+/*********************以下为提供外部函数***********************/
+
+/*********************数传配置映射ros参数*********************/
 
 void applyConnectionModeToRosConfig(
     WarehouseConfig &config,
@@ -1382,6 +1455,10 @@ void applyConnectionModeToRosConfig(
         remove_serial_prefix(config.ros.upload_mission_service);
 }
 
+/************************************************************/
+
+/***************************参数目录**************************/
+
 QString warehouseDataDirectory()
 {
     const QString configured_directory =
@@ -1402,6 +1479,10 @@ QString shelfPanelDataFilePath()
 {
     return QDir(warehouseDataDirectory()).filePath("shelf_panel_data.json");
 }
+
+/************************************************************/
+
+/*****************JSONWarehouseConfig写入函数*****************/
 
 bool saveWarehouseConfig(const WarehouseConfig &config, QString *error_message)
 {
@@ -1452,6 +1533,10 @@ bool saveWarehouseConfig(const WarehouseConfig &config, QString *error_message)
     }
     return true;
 }
+
+/************************************************************/
+
+/*****************JSONWarehouseConfig读取函数*****************/
 
 bool loadWarehouseConfig(WarehouseConfig &config, QString *error_message)
 {

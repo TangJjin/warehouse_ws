@@ -173,7 +173,11 @@ uint32_t AirborneMissionYamlBuilder::countMissionActions(const std::vector<Airbo
     }
 
     // 每个原始航点固定生成一个 move 和一个 visual_servo。
-    count += static_cast<uint32_t>(points.size()) * 2U;
+    // enabled=false is the exception: only the move action is generated.
+    count += static_cast<uint32_t>(points.size());
+    if (options.visual_servo.enabled) {
+        count += static_cast<uint32_t>(points.size());
+    }
     if (options.add_hover_between_moves) {
         count += static_cast<uint32_t>(points.size());
     }
@@ -206,6 +210,8 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
     // 保留输入点的 x/y/z/yaw 精度，不再强制舍入到两位小数。
     out.setRealNumberNotation(QTextStream::SmartNotation);
     out.setRealNumberPrecision(15);
+
+    const auto &visual = options.visual_servo;
 
     // 任务头：mission 基本结构和起飞动作，这一段按你的要求保持原样。
     out << "# Mission configuration\n";
@@ -242,7 +248,9 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
             out,
             frame,
             MissionMoveStep{point.x, point.y, point.move_altitude, point.yaw});
-        writeVisualServoStep(out);
+        if (visual.enabled) {
+            writeVisualServoStep(out);
+        }
 
         if (options.add_hover_between_moves) {
             writeMoveHover(out, options.move_hover_duration, false);
@@ -257,7 +265,6 @@ QString AirborneMissionYamlBuilder::buildMissionYaml(const std::vector<AirborneW
     out << "    - type: \"land\"\n\n";
 
     // System keys stay flat. Mission actions read these values as global defaults.
-    const auto &visual = options.visual_servo;
     out << "system:\n";
     out << "  tolerance: " << options.tolerance << "\n";
     out << "  yaw_tolerance_deg: " << options.yaw_tolerance_deg << "\n";

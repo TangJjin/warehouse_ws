@@ -608,6 +608,7 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
 
     // The ROS message is structured even though YAML writes these keys flat under system.
     const VisualServoConfig &visual = config_.visual_servo;
+    summary.visual_servo.enabled = visual.enabled;
     summary.visual_servo.target_id = visual.target_id.toStdString();
     summary.visual_servo.require_confirmed = visual.require_confirmed;
     summary.visual_servo.image_x_axis = visual.image_x_axis.toStdString();
@@ -1357,6 +1358,8 @@ void MainWindow::handleVisionServoStatus(
     const QString &time_text)
 {
     Q_UNUSED(requested_target_id);
+    // A locked target is retained for every terminal state, including timeout.
+    Q_UNUSED(state);
 
     if (!tracked_target_id.trimmed().isEmpty()) {
         current_tracked_target_id_ = tracked_target_id.trimmed();
@@ -1381,8 +1384,8 @@ void MainWindow::handleVisionServoStatus(
     const QString completed_target_id = current_tracked_target_id_;
     current_tracked_target_id_.clear();
 
-    if (state.compare("succeeded", Qt::CaseInsensitive) != 0 ||
-        completed_target_id.isEmpty() ||
+    // The active phase caches the last non-empty tracked_target_id for this action.
+    if (completed_target_id.isEmpty() ||
         config_.inspection_project != InspectionProject::Animal) {
         return;
     }

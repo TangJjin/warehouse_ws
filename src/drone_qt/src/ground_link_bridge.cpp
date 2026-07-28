@@ -505,6 +505,7 @@ QByteArray GroundLinkBridge::encodeUploadMissionSummaryRequest(
         !writeSizedBytes(stream, QByteArray::fromStdString(visual.target_id))) {
         return {};
     }
+    stream << static_cast<quint8>(visual.enabled ? 1 : 0);
     stream << static_cast<quint8>(visual.require_confirmed ? 1 : 0);
     if (!writeSizedBytes(stream, QByteArray::fromStdString(visual.image_x_axis)) ||
         !writeSizedBytes(stream, QByteArray::fromStdString(visual.image_y_axis))) {
