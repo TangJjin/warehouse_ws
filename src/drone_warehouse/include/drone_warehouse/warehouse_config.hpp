@@ -138,6 +138,7 @@ struct IndustrialCameraConfig
 // 这里只做安全的零值初始化；真正的代码默认值统一写在 createDefaultWarehouseConfig()。
 struct VisualServoConfig
 {
+    bool enabled = false; // 是否启用相机伺服；代码默认值在 createDefaultWarehouseConfig() 中设为 true。
     QString target_id; // 目标 ID；留空表示锁定第一个符合条件的目标。
     bool require_confirmed = false; // 是否要求视觉端将目标标记为稳定确认。
     QString image_x_axis; // 图像水平误差映射到的机体系轴：x、y 或 z。
