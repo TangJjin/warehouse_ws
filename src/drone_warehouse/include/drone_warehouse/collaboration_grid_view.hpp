@@ -19,7 +19,7 @@ public:
     // 更新无人机实时位置，x/y/z 单位都是米。
     void setdronePosition(double x, double y, double z);
 
-    // 更新无人车实时位置，使用与无人机相同的坐标原点和方向。
+    // 更新无人车实时位置；小车以 A 点为原点，方向仍是上方 x+、左方 y+。
     void setcarPosition(double x, double y, double z);
 
 protected:
@@ -32,7 +32,7 @@ private:
     static constexpr qreal kMapWidthCm = 400.0;
     static constexpr qreal kMapHeightCm = 500.0;
 
-    // 计算保持 400:500 比例后的场地像素矩形。
+    // 根据实际图形范围计算虚拟场地矩形；外侧空白不参与缩放。
     QRectF mapRect() const;
 
     // 把场地尺寸坐标转换成 Qt 像素坐标：
@@ -65,7 +65,7 @@ private:
     double display_y_ = 0.0;
     double altitude_ = 0.0;
 
-    // 小车中心与无人机中心是两个不同的位置：
+    // 小车中心与无人机中心是两个不同的坐标原点：
     //
     // 无人机圆心（ROS 原点）：
     //   场地尺寸坐标 = (horizontal=112.5, vertical=112.5) cm。
@@ -73,10 +73,9 @@ private:
     // 小车中心（A 点）：
     //   场地尺寸坐标 = (horizontal=150, vertical=200) cm。
     //
-    // 把 A 点换成以无人机圆心为原点的 ROS 坐标：
-    //   x = (200 - 112.5) / 100 = 0.875 m，x+ 向上；
-    //   y = (112.5 - 150) / 100 = -0.375 m，y+ 向左。
-    double car_display_x_ = 0.875;
-    double car_display_y_ = -0.375;
+    // 小车话题发送 (0, 0) m 时，黄色圆点应位于 A 点；
+    // 后续坐标偏移必须从 A 点计算，不能从无人机圆心计算。
+    double car_display_x_ = 0.0;
+    double car_display_y_ = 0.0;
     double car_altitude_ = 0.0;
 };

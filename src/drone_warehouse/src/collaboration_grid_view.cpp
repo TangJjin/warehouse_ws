@@ -46,6 +46,15 @@ constexpr qreal kOriginVerticalCm =
     kCircleBottomClearanceCm + kOuterCircleRadiusCm;
 constexpr qreal kInnerCircleRadiusCm = 25.0;
 
+// 实际显示范围只取圆形和直圆跑道的外沿，不包含 400x500 cm 场地的空白。
+// 左、下边界来自圆形外沿，右、上边界来自直圆跑道外沿。
+// 删除场地外框后按这个范围缩放，图形就能占满状态栏下方的可用区域。
+constexpr qreal kDrawingLeftCm = kCircleLeftClearanceCm;
+constexpr qreal kDrawingRightCm = kTrackLeftCm + kTrackWidthCm;
+constexpr qreal kDrawingBottomCm = kCircleBottomClearanceCm;
+constexpr qreal kDrawingTopCm = kTrackBottomCm + kTrackHeightCm;
+
+
 // 跑道上的四个命名点。
 // Horizontal 表示从场地左边向右量，Vertical 表示从场地底边向上量。
 // 注意：这只是绘制示意图使用的场地尺寸坐标，不是 ROS 的 x/y 坐标。
@@ -74,14 +83,14 @@ void drawNamedPoint(
     const QString &name)
 {
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(30, 30, 30));
+    painter.setBrush(ColorPalette::GrayLight);
     painter.drawEllipse(
         point,
         kNamedPointRadiusPx,
         kNamedPointRadiusPx);
 
     // 标签向右下方稍微偏移，避免文字压住中心圆点。
-    painter.setPen(ColorPalette::GrayDark);
+    painter.setPen(ColorPalette::BlueLight);
     painter.drawText(
         point + QPointF(7.0, 5.0),
         name);
@@ -117,7 +126,7 @@ void CollaborationGridView::setcarPosition(
     double y,
     double z)
 {
-    // 小车与无人机使用完全相同的坐标原点、方向和单位。
+    // 小车使用 A 点作为自己的 (0, 0)，方向和单位与无人机相同。
     car_display_x_ = x;
     car_display_y_ = y;
     car_altitude_ = z;
@@ -126,14 +135,14 @@ void CollaborationGridView::setcarPosition(
 
 QRectF CollaborationGridView::mapRect() const
 {
-    // MainWindow 顶部状态栏位于 y=16~68，坐标信息绘制在 y=74~104。
-    // 因此地图从 y=108 以下开始，确保状态栏、坐标文字和地图互不遮挡。
-    // 左右及底部只保留少量安全距离，让地图尽可能铺满剩余区域。
+    // MainWindow 顶部状态栏位于 y=16~68，无人机和小车信息位于 y=70~109。
+    // 图形从 y=112 开始；上方直圆跑道直接顶到该位置，不再竖直居中。
+    // 左右和底部只留出防止粗线及文字被裁切的安全距离。
     // 这些数值单位是窗口像素，不是厘米。
-    const qreal left_margin = 16.0;
-    const qreal right_margin = 16.0;
-    const qreal top_margin = 108.0;
-    const qreal bottom_margin = 12.0;
+    const qreal left_margin = 24.0;
+    const qreal right_margin = 24.0;
+    const qreal top_margin = 112.0;
+    const qreal bottom_margin = 16.0;
 
     // 防止窗口过小时得到 0 或负数，后续比例计算始终有合法结果。
     const qreal available_width =
@@ -146,23 +155,35 @@ QRectF CollaborationGridView::mapRect() const
             1.0,
             height() - top_margin - bottom_margin);
 
-    // 宽度方向和高度方向分别计算“每厘米占多少像素”，取较小值。
-    // 因此场地一定完整显示，并始终保持 400:500 的真实长宽比例。
+    // 只根据实际图形包围范围计算缩放，不再把没有图形的场地空白算进去。
+    // 宽高方向取较小比例，保证圆不会变成椭圆，现场尺寸关系也不会变形。
+    const qreal drawing_width_cm =
+        kDrawingRightCm - kDrawingLeftCm;
+    const qreal drawing_height_cm =
+        kDrawingTopCm - kDrawingBottomCm;
     const qreal scale = std::min(
-        available_width / kMapWidthCm,
-        available_height / kMapHeightCm);
+        available_width / drawing_width_cm,
+        available_height / drawing_height_cm);
 
-    const qreal map_width = kMapWidthCm * scale;
-    const qreal map_height = kMapHeightCm * scale;
+    const qreal drawing_width = drawing_width_cm * scale;
 
-    // 场地在可用区域内水平、竖直居中。
-    const qreal left =
-        left_margin + (available_width - map_width) / 2.0;
+    // 实际图形只做水平居中；上边界固定在 top_margin，使跑道顶到上方。
+    const qreal drawing_left =
+        left_margin + (available_width - drawing_width) / 2.0;
+    const qreal drawing_top = top_margin;
 
-    const qreal top =
-        top_margin + (available_height - map_height) / 2.0;
+    // mapPoint 仍使用完整场地尺寸坐标，因此这里反推出 400x500 cm
+    // 虚拟场地矩形的位置。该矩形可以超出窗口，但不会被实际绘制出来。
+    const qreal map_left =
+        drawing_left - kDrawingLeftCm * scale;
+    const qreal map_top =
+        drawing_top - (kMapHeightCm - kDrawingTopCm) * scale;
 
-    return QRectF(left, top, map_width, map_height);
+    return QRectF(
+        map_left,
+        map_top,
+        kMapWidthCm * scale,
+        kMapHeightCm * scale);
 }
 
 QPointF CollaborationGridView::mapPoint(
@@ -205,7 +226,7 @@ QRectF CollaborationGridView::mapObjectRect(
 
 qreal CollaborationGridView::mapScale() const
 {
-    // mapRect 已保持 400:500 比例，因此用宽度或高度计算结果相同。
+    // mapRect 仍表示 400x500 cm 虚拟场地，因此用宽度除以 400 cm 得到比例。
     // 返回值含义：现场 1 cm 在当前窗口中对应多少像素。
     return mapRect().width() / kMapWidthCm;
 }
@@ -231,8 +252,9 @@ void CollaborationGridView::drawInspectionTrack(
         Qt::AbsoluteSize);
 
     painter.setBrush(Qt::NoBrush);
-    // 跑道使用项目统一的蓝灰色。圆头和圆角连接可避免粗线在转弯处出现尖角。
-    QPen track_pen(ColorPalette::BlueGrayDark, 3.5);
+    // 圆头和圆角连接可避免粗线在转弯处出现尖角。
+    // 与 Animal 网格外边界一致，主要固定轮廓使用 BlueLight。
+    QPen track_pen(ColorPalette::BlueLight, 3.0);
     track_pen.setCapStyle(Qt::RoundCap);
     track_pen.setJoinStyle(Qt::RoundJoin);
     painter.setPen(track_pen);
@@ -255,7 +277,8 @@ void CollaborationGridView::drawCircularArea(
 
     // 外圆半径是 37.5 cm，圆心为 (112.5, 112.5) cm。
     // 外圆与跑道使用相同颜色、相同线宽，保持固定场地图形风格一致。
-    QPen outer_circle_pen(ColorPalette::BlueGrayDark, 3.5);
+    // 外圆同样属于主要边界，与跑道统一使用 BlueLight。
+    QPen outer_circle_pen(ColorPalette::BlueLight, 3.0);
     outer_circle_pen.setCapStyle(Qt::RoundCap);
     outer_circle_pen.setJoinStyle(Qt::RoundJoin);
     painter.setPen(outer_circle_pen);
@@ -265,7 +288,8 @@ void CollaborationGridView::drawCircularArea(
         kOuterCircleRadiusCm * scale);
 
     // 内圆仅用于还原图片样式，半径可独立调整。
-    QPen inner_circle_pen(ColorPalette::BlueLight, 2.5);
+    // 内圆属于辅助线，使用 Animal 网格内部线相同的 BlueGrayDark。
+    QPen inner_circle_pen(ColorPalette::BlueGrayDark, 2.0);
     inner_circle_pen.setCapStyle(Qt::RoundCap);
     painter.setPen(inner_circle_pen);
     painter.drawEllipse(
@@ -287,27 +311,28 @@ void CollaborationGridView::drawCarMarker(
     QPainter &painter) const
 {
     const qreal scale = mapScale();
-    const QPointF origin =
+    // 小车自己的坐标原点是 A 点，不使用无人机所在的左下圆心。
+    const QPointF car_origin =
         mapPoint(
-            kOriginHorizontalCm,
-            kOriginVerticalCm);
+            kPointAHorizontalCm,
+            kPointAVerticalCm);
 
     // ROS 米坐标转换为窗口像素坐标：
     //
     //   car_display_x_ * 100     把米转换为厘米；
     //   再乘 scale              把厘米转换为像素。
     //
-    // 坐标方向：
+    // 坐标方向（注意这里的零点是 A）：
     //   x+ 向上，而 Qt 屏幕 Y 向下，所以屏幕 Y 要减去 x；
     //   y+ 向左，而 Qt 屏幕 X 向右，所以屏幕 X 要减去 y。
     const QPointF car_point(
-        origin.x() -
+        car_origin.x() -
             car_display_y_ * kCmPerMeter * scale,
-        origin.y() -
+        car_origin.y() -
             car_display_x_ * kCmPerMeter * scale);
 
-    // 小车使用黄色圆点。深黄色描边用于浅色场地背景上的边界识别。
-    painter.setPen(QPen(QColor(120, 95, 0), 2.0));
+    // 与 Animal 的位置标记一致，圆点不描边，直接在深色背景上使用高亮色。
+    painter.setPen(Qt::NoPen);
     painter.setBrush(ColorPalette::Yellow);
     painter.drawEllipse(
         car_point,
@@ -331,27 +356,18 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
         rect(),
         ColorPalette::BlueBlack);
 
-    const QRectF map = mapRect();
-
-    // 浅蓝灰矩形是 400 cm x 500 cm 的实际场地边界。
-    // 页面外围继续使用 BlueBlack，边框使用其他画板相同的 BlueLight，
-    // 场地内部保留浅色底，确保黑色 A/B/C/D 中心点和标签清晰可见。
-    painter.setBrush(QColor(238, 242, 247));
-    painter.setPen(
-        QPen(ColorPalette::BlueLight, 3.0));
-    painter.drawRect(map);
 
     // 第 1 层：绘制不随 ROS 数据变化的固定场地图形。
     drawInspectionTrack(painter);
     drawCircularArea(painter);
 
     // 第 2 层：先画黄色小车圆。
-    // 默认小车中心就是 A 点，但此时还没有绘制 A 点的黑色中心圆和字母。
+    // 小车 (0,0) 的中心就是 A 点，此时还没有绘制 A 点的浅色中心圆和字母。
     drawCarMarker(painter);
 
-    // 第 3 层：最后绘制 A/B/C/D 的黑色中心圆和字母。
-    // A 点会画在黄色小车圆上层，因此小车中心和 A 点中心完全重合，
-    // 同时仍然可以看到 A 点的小黑圆以及旁边的字母 A。
+    // 第 3 层：最后绘制 A/B/C/D 的浅色中心圆和蓝色字母。
+    // A 点会画在黄色小车圆上层，因此小车 (0,0) 与 A 点中心完全重合，
+    // 同时仍然可以看到 A 点的小圆以及旁边的字母 A。
     QFont point_font = painter.font();
     point_font.setPixelSize(14);
     point_font.setBold(true);
@@ -391,7 +407,7 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
             kOriginHorizontalCm,
             kOriginVerticalCm);
 
-    // 无人机使用与小车完全相同的坐标转换。
+    // 无人机仍从左下圆心换算；它与小车只共用方向和单位，不共用原点。
     // 默认 (0, 0) m 不产生偏移，所以红点位于左下圆心。
     const QPointF drone_point(
         origin.x() -
@@ -406,8 +422,8 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
         kPositionMarkerRadiusPx,
         kPositionMarkerRadiusPx);
 
-    // 顶部只显示收到的 ROS 原始米坐标，不显示转换后的像素值。
-    // 字号和字重与 Animal 画板的信息行保持一致。
+    // 顶部显示两套 ROS 原始米坐标。分成两行可保证较窄窗口也能完整显示。
+    // 颜色、字号和字重与 Animal 画板的信息行保持一致。
     QFont info_font = painter.font();
     info_font.setPixelSize(17);
     info_font.setBold(false);
@@ -416,13 +432,26 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
     painter.drawText(
         QRectF(
             24.0,
-            74.0,
+            70.0,
             width() - 48.0,
-            30.0),
+            20.0),
         Qt::AlignLeft | Qt::AlignVCenter,
         QString(
             "drone  x=%1 m  y=%2 m  z=%3 m")
             .arg(display_x_, 0, 'f', 2)
             .arg(display_y_, 0, 'f', 2)
             .arg(altitude_, 0, 'f', 2));
+
+    painter.drawText(
+        QRectF(
+            24.0,
+            90.0,
+            width() - 48.0,
+            20.0),
+        Qt::AlignLeft | Qt::AlignVCenter,
+        QString(
+            "car       x=%1 m  y=%2 m  z=%3 m")
+            .arg(car_display_x_, 0, 'f', 2)
+            .arg(car_display_y_, 0, 'f', 2)
+            .arg(car_altitude_, 0, 'f', 2));
 }
