@@ -165,11 +165,9 @@ QRectF CollaborationGridView::mapRect() const
         available_width / drawing_width_cm,
         available_height / drawing_height_cm);
 
-    const qreal drawing_width = drawing_width_cm * scale;
-
-    // 实际图形只做水平居中；上边界固定在 top_margin，使跑道顶到上方。
-    const qreal drawing_left =
-        left_margin + (available_width - drawing_width) / 2.0;
+    // 图形不再水平居中，直接贴近左侧安全边距。
+    // 原来的“剩余宽度 / 2”会在宽屏窗口中产生很大一块左侧空白。
+    const qreal drawing_left = left_margin;
     const qreal drawing_top = top_margin;
 
     // mapPoint 仍使用完整场地尺寸坐标，因此这里反推出 400x500 cm

@@ -1613,6 +1613,24 @@ void MainWindow::applyWindowStyle()
         "padding: 6px 10px;"//内边距
         "}"
     );
+    drone_attitude_panel_->setStyleSheet(
+        "background: rgba(18, 24, 34, 100);"//半透明深色背景
+        "border: 1px solid rgba(90, 130, 180, 100);"//边框颜色和透明度
+        "border-radius: 10px;"
+
+        "border: none;"//无边框
+        "padding: 6px 10px;"//内边距
+        "}"
+    );
+    car_attitude_panel_->setStyleSheet(
+        "background: rgba(18, 24, 34, 100);"//半透明深色背景
+        "border: 1px solid rgba(90, 130, 180, 100);"//边框颜色和透明度
+        "border-radius: 10px;"
+
+        "border: none;"//无边框
+        "padding: 6px 10px;"//内边距
+        "}"
+    );
 }
 
 void MainWindow::setupDemoData()
@@ -1685,8 +1703,8 @@ void MainWindow::updateOverlayGeometry()
 
     // 顶部状态栏属于两个项目共用区域，先确定它的位置。
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
-    drone_attitude_panel_->setGeometry(width() - 220, 84, 220, 160);
-    car_attitude_panel_->setGeometry(width() - 220, 300, 220, 160);
+    drone_attitude_panel_->setGeometry(width() - 260, 84, 250, 250);
+    car_attitude_panel_->setGeometry(width() - 260, 320, 250, 180);
 
     // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
     // 安排画板、日志、识别记录和 Cargo 视角控件。
