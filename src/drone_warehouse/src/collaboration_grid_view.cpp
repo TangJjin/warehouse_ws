@@ -60,11 +60,11 @@ constexpr qreal kPointDVerticalCm = 200.0;
 
 // 实时位置圆点使用固定像素半径，窗口缩放时仍然清晰可见。
 // 如果希望圆点跟随场地一起缩放，可以改成“实际厘米尺寸 * mapScale()”。
-constexpr qreal kPositionMarkerRadiusPx = 8.0;
+constexpr qreal kPositionMarkerRadiusPx = 10.0;
 
 // 圆心十字和命名点同样使用像素尺寸，只承担视觉提示作用。
-constexpr qreal kOriginCrossHalfSizePx = 8.0;
-constexpr qreal kNamedPointRadiusPx = 3.5;
+constexpr qreal kOriginCrossHalfSizePx = 9.0;
+constexpr qreal kNamedPointRadiusPx = 4.0;
 
 // 绘制 A/B/C/D 的公共函数。
 // point 已经是窗口像素坐标，因此这里不再做厘米或米的换算。
@@ -126,12 +126,14 @@ void CollaborationGridView::setcarPosition(
 
 QRectF CollaborationGridView::mapRect() const
 {
-    // 给顶部坐标文字和场地边框预留空间。
+    // MainWindow 顶部状态栏位于 y=16~68，坐标信息绘制在 y=74~104。
+    // 因此地图从 y=108 以下开始，确保状态栏、坐标文字和地图互不遮挡。
+    // 左右及底部只保留少量安全距离，让地图尽可能铺满剩余区域。
     // 这些数值单位是窗口像素，不是厘米。
-    const qreal left_margin = 55.0;
-    const qreal right_margin = 30.0;
-    const qreal top_margin = 45.0;
-    const qreal bottom_margin = 45.0;
+    const qreal left_margin = 16.0;
+    const qreal right_margin = 16.0;
+    const qreal top_margin = 108.0;
+    const qreal bottom_margin = 12.0;
 
     // 防止窗口过小时得到 0 或负数，后续比例计算始终有合法结果。
     const qreal available_width =
@@ -229,8 +231,11 @@ void CollaborationGridView::drawInspectionTrack(
         Qt::AbsoluteSize);
 
     painter.setBrush(Qt::NoBrush);
-    painter.setPen(
-        QPen(ColorPalette::GrayLight, 2.0));
+    // 跑道使用项目统一的蓝灰色。圆头和圆角连接可避免粗线在转弯处出现尖角。
+    QPen track_pen(ColorPalette::BlueGrayDark, 3.5);
+    track_pen.setCapStyle(Qt::RoundCap);
+    track_pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(track_pen);
 
     painter.drawPath(track);
 }
@@ -249,16 +254,20 @@ void CollaborationGridView::drawCircularArea(
     painter.setBrush(Qt::NoBrush);
 
     // 外圆半径是 37.5 cm，圆心为 (112.5, 112.5) cm。
-    painter.setPen(
-        QPen(ColorPalette::GrayLight, 2.0));
+    // 外圆与跑道使用相同颜色、相同线宽，保持固定场地图形风格一致。
+    QPen outer_circle_pen(ColorPalette::BlueGrayDark, 3.5);
+    outer_circle_pen.setCapStyle(Qt::RoundCap);
+    outer_circle_pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(outer_circle_pen);
     painter.drawEllipse(
         center,
         kOuterCircleRadiusCm * scale,
         kOuterCircleRadiusCm * scale);
 
     // 内圆仅用于还原图片样式，半径可独立调整。
-    painter.setPen(
-        QPen(ColorPalette::BlueLight, 1.5));
+    QPen inner_circle_pen(ColorPalette::BlueLight, 2.5);
+    inner_circle_pen.setCapStyle(Qt::RoundCap);
+    painter.setPen(inner_circle_pen);
     painter.drawEllipse(
         center,
         kInnerCircleRadiusCm * scale,
@@ -298,7 +307,7 @@ void CollaborationGridView::drawCarMarker(
             car_display_x_ * kCmPerMeter * scale);
 
     // 小车使用黄色圆点。深黄色描边用于浅色场地背景上的边界识别。
-    painter.setPen(QPen(QColor(120, 95, 0), 1.5));
+    painter.setPen(QPen(QColor(120, 95, 0), 2.0));
     painter.setBrush(ColorPalette::Yellow);
     painter.drawEllipse(
         car_point,
@@ -324,10 +333,12 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
 
     const QRectF map = mapRect();
 
-    // 白色矩形是 400 cm x 500 cm 的实际场地边界。
-    painter.setBrush(QColor(245, 247, 249));
+    // 浅蓝灰矩形是 400 cm x 500 cm 的实际场地边界。
+    // 页面外围继续使用 BlueBlack，边框使用其他画板相同的 BlueLight，
+    // 场地内部保留浅色底，确保黑色 A/B/C/D 中心点和标签清晰可见。
+    painter.setBrush(QColor(238, 242, 247));
     painter.setPen(
-        QPen(ColorPalette::BlueLight, 2.0));
+        QPen(ColorPalette::BlueLight, 3.0));
     painter.drawRect(map);
 
     // 第 1 层：绘制不随 ROS 数据变化的固定场地图形。
@@ -396,11 +407,16 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
         kPositionMarkerRadiusPx);
 
     // 顶部只显示收到的 ROS 原始米坐标，不显示转换后的像素值。
+    // 字号和字重与 Animal 画板的信息行保持一致。
+    QFont info_font = painter.font();
+    info_font.setPixelSize(17);
+    info_font.setBold(false);
+    painter.setFont(info_font);
     painter.setPen(ColorPalette::GrayLight);
     painter.drawText(
         QRectF(
             24.0,
-            8.0,
+            74.0,
             width() - 48.0,
             30.0),
         Qt::AlignLeft | Qt::AlignVCenter,
