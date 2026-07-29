@@ -239,6 +239,31 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+    auto car_local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    //创建一个订阅者，订阅无人车本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    car_local_position_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+        topic_config_.car_local_position.toStdString(),
+        car_local_position_qos,
+        [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+        {
+            const double x = msg->pose.position.x;
+            const double y = msg->pose.position.y;
+            const double z = msg->pose.position.z;
+
+            const double qx = msg->pose.orientation.x;
+            const double qy = msg->pose.orientation.y;
+            const double qz = msg->pose.orientation.z;
+            const double qw = msg->pose.orientation.w;
+
+            //使用Qt的信号槽机制在线程安全的方式下发位置更新信号，包含无人机的二维位置坐标和高度等信息
+            QMetaObject::invokeMethod(
+                this,
+                [this, x, y, z, qx, qy, qz, qw]() {
+                    emit carpositionUpdated(x, y, z, qx, qy, qz, qw);
+                },
+                Qt::QueuedConnection);
+        });
+
 auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     delta_sub_ = node_->create_subscription<geometry_msgs::msg::Vector3>(
         topic_config_.pose_delta.toStdString(),

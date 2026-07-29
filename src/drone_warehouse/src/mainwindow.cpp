@@ -3,6 +3,7 @@
 #include "drone_warehouse/models.hpp"
 #include "drone_warehouse/cargo_inspection_page.hpp"
 #include "drone_warehouse/animal_inspection_page.hpp"
+#include "drone_warehouse/collaboration_grid_view.hpp"
 #include "drone_warehouse/shelf_info_dialog.hpp"
 #include "drone_warehouse/connection_info_dialog.hpp"
 #include "drone_warehouse/title_info_dialog.hpp"
@@ -103,9 +104,13 @@ void MainWindow::setupUi()
     // 每个页面在构造时创建自己的画板、日志和局部控件，MainWindow 不再逐个持有。
     cargo_page_ = new CargoInspectionPage(central_container_);
     animal_page_ = new AnimalInspectionPage(central_container_);
+    collaboration_grid_view_ = new CollaborationGridView(central_container_);
     cargo_page_->setGeometry(central_container_->rect());
     animal_page_->setGeometry(central_container_->rect());
+    collaboration_grid_view_->setGeometry(central_container_->rect());
+    cargo_page_->hide();
     animal_page_->hide();
+    collaboration_grid_view_->hide();
 
     top_status_bar_ = new TopStatusBar(central_container_);
 
@@ -152,6 +157,54 @@ void MainWindow::setupFloatingWidgets()
     mode_value_label_ = new QLabel("MODE_UNKNOWN", attitude_panel_);
     attitude_layout->addWidget(mode_value_label_, 3, 1);
 
+
+    /*******************************************************/
+
+    /*********************空地协同悬浮姿态控件***********************/
+
+    drone_attitude_panel_ = new QWidget(central_container_);
+    auto *drone_attitude_layout = new QGridLayout(drone_attitude_panel_);
+    drone_attitude_panel_->setObjectName("droneattitudeSwitchPanel");
+    drone_attitude_layout->setContentsMargins(12, 12, 12, 12);//姿态面板内部边框留白
+
+    drone_attitude_layout->addWidget(new QLabel("高度", drone_attitude_panel_), 0, 0);
+    drone_z_value_label_ = new QLabel("0.0 m", drone_attitude_panel_);
+    drone_attitude_layout->addWidget(drone_z_value_label_, 0, 1);
+
+    drone_attitude_layout->addWidget(new QLabel("坐标", drone_attitude_panel_), 1, 0);
+    drone_xy_value_label_ = new QLabel("N/A", drone_attitude_panel_);
+    drone_attitude_layout->addWidget(drone_xy_value_label_, 1, 1);
+
+    drone_attitude_layout->addWidget(new QLabel("航向", drone_attitude_panel_), 2, 0);
+    drone_yaw_value_label_ = new QLabel("0.0°", drone_attitude_panel_);
+    drone_attitude_layout->addWidget(drone_yaw_value_label_, 2, 1);
+
+    drone_attitude_layout->addWidget(new QLabel("电量", drone_attitude_panel_), 3, 0);
+    drone_battery_value_label_ = new QLabel("N/A", drone_attitude_panel_);
+    drone_attitude_layout->addWidget(drone_battery_value_label_, 3, 1);
+
+    drone_attitude_layout->addWidget(new QLabel("模式", drone_attitude_panel_), 4, 0);
+    drone_move_value_label_ = new QLabel("none", drone_attitude_panel_);
+    drone_attitude_layout->addWidget(drone_move_value_label_, 4, 1);
+
+
+
+    car_attitude_panel_ = new QWidget(central_container_);
+    auto *car_attitude_layout = new QGridLayout(car_attitude_panel_);
+    car_attitude_panel_->setObjectName("carattitudeSwitchPanel");
+    car_attitude_layout->setContentsMargins(12, 12, 12, 12);//姿态面板内部边框留白
+
+    car_attitude_layout->addWidget(new QLabel("高度", car_attitude_panel_), 0, 0);
+    car_z_value_label_ = new QLabel("0.0 m", car_attitude_panel_);
+    car_attitude_layout->addWidget(car_z_value_label_, 0, 1);
+
+    car_attitude_layout->addWidget(new QLabel("坐标", car_attitude_panel_), 1, 0);
+    car_xy_value_label_ = new QLabel("N/A", car_attitude_panel_);
+    car_attitude_layout->addWidget(car_xy_value_label_, 1, 1);
+
+    car_attitude_layout->addWidget(new QLabel("航向", car_attitude_panel_), 2, 0);
+    car_yaw_value_label_ = new QLabel("0.0°", car_attitude_panel_);
+    car_attitude_layout->addWidget(car_yaw_value_label_, 2, 1);
 
     /*******************************************************/
 
@@ -316,13 +369,24 @@ void MainWindow::setupConnections()
             runClaudeApiDiffAnalysis();
         });
 
-        connect(top_status_bar_, &TopStatusBar::executeButtonClicked, this, [this]() {
-            // Animal 的执行按钮直接上传当前栅格路线；Cargo 保持原来的执行逻辑。
-            triggerMissionUpload(
-                config_.inspection_project == InspectionProject::Animal
-                    ? "animal"
-                    : "button");
-        });
+        connect(top_status_bar_, &TopStatusBar::executeButtonClicked,
+            this,
+            [this]()
+            {
+                QString trigger_source = "button";
+                switch (config_.inspection_project)
+                {
+                case InspectionProject::Cargo:
+                    break;
+                case InspectionProject::Animal:
+                    trigger_source = "animal";
+                    break;
+                case InspectionProject::Collaboration:
+                    trigger_source = "collaboration";
+                    break;
+                }
+                triggerMissionUpload(trigger_source);
+            });
 
         connect(top_status_bar_, &TopStatusBar::triggerTimeReached, this, [this](const QString &) {
             triggerMissionUpload("time");
@@ -501,7 +565,36 @@ void MainWindow::setupConnections()
 
                 altitude_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
                 yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
+
+                drone_z_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
+                drone_xy_value_label_->setText(
+                QString("(%1, %2) m")
+                    .arg(scene_data_.drone_state.pose.x, 0, 'f', 1)
+                    .arg(scene_data_.drone_state.pose.y, 0, 'f', 1));
+                drone_yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
+                collaboration_grid_view_->setdronePosition(x, y, z);
+
                 cargo_page_->setSceneData(scene_data_);
+            },
+            Qt::QueuedConnection);
+
+        //连接rosmanager发出的无人车位置信号
+        connect(ros_manager_, &RosManager::carpositionUpdated,
+            this,
+            [this](double x, double y, double z, double qx, double qy, double qz, double qw)
+            {
+                const double siny_cosp = 2.0 * (qw * qz + qx * qy);
+                const double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+                const double yaw = std::atan2(siny_cosp, cosy_cosp);          // 弧度
+                const double yaw_deg = yaw * 180.0 / M_PI;                    // 角度
+
+                car_z_value_label_->setText(QString::number(z, 'f', 1) + " m");
+                car_xy_value_label_->setText(
+                QString("(%1, %2) m")
+                    .arg(x, 0, 'f', 1)
+                    .arg(y, 0, 'f', 1));
+                car_yaw_value_label_->setText(QString::number(yaw_deg, 'f', 1) + "°");
+                collaboration_grid_view_->setcarPosition(x, y, z);
             },
             Qt::QueuedConnection);
 
@@ -659,7 +752,20 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         mission_upload_in_progress_ = true;
         ros_manager_->uploadMissionSummary(animal_points, summary);
     }
-    else if(trigger_source == "waypoint"){
+    else if (trigger_source == "collaboration")
+    {
+        // Collaboration 暂时没有独立航点列表，明确上传空路线并使用普通任务压缩策略。
+        // 独立分支可避免以后增加空地协同任务时误改 Cargo 流程。
+        animal_route_start_pending_ = false;
+        animal_offboard_ready_ = false;
+        animal_returned_route_.clear();
+        summary.compress_straight_segments =
+            mission.compress_non_waypoint_segments;
+        QVector<WorldCoord> empty_points;
+        mission_upload_in_progress_ = true;
+        ros_manager_->uploadMissionSummary(empty_points, summary);
+    }
+    else if (trigger_source == "waypoint"){
         // 切回 Cargo 流程时取消尚未完成的 Animal 等待状态。
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
@@ -846,7 +952,10 @@ void MainWindow::updateStatus(
     //top_status_bar_->setTaskText(task_name);
 
     battery_value_label_->setText(QString::number(scene_data_.drone_state.battery*100, 'f', 1) + "%");
+    drone_battery_value_label_->setText(QString::number(scene_data_.drone_state.battery*100, 'f', 1) + "%");
+
     mode_value_label_->setText(scene_data_.drone_state.flight_mode);
+    drone_move_value_label_->setText(scene_data_.drone_state.flight_mode);
 
     // flight_mode 目前在当前仓储界面里没有单独的枚举显示控件，
     // 先把它拼进速度/航向旁的任务文本体系里，不额外造新控件。
@@ -1401,13 +1510,18 @@ void MainWindow::appendRunLog(const QString &text)
 {
     // 运行日志属于项目页面；MainWindow 只根据当前项目转发文本，
     // 不再直接操作页面内部的 QPlainTextEdit。
-    if (config_.inspection_project == InspectionProject::Animal)
+
+    switch (config_.inspection_project)
     {
-        animal_page_->appendRunLog(text);
-    }
-    else
-    {
+    case InspectionProject::Cargo:
         cargo_page_->appendRunLog(text);
+        break;
+    case InspectionProject::Animal:
+        animal_page_->appendRunLog(text);
+        break;
+    case InspectionProject::Collaboration:
+        cargo_page_->appendRunLog(text);
+        break;
     }
 }
 
@@ -1420,21 +1534,48 @@ void MainWindow::clearRunLogs()
 
 void MainWindow::applyInspectionProject(InspectionProject project)
 {
-    const bool animal =
-        project == InspectionProject::Animal;
+    // const bool animal =
+    //     project == InspectionProject::Animal;
 
-    // 两套画板始终保留各自状态，只切换可见性，不在切换时重新创建。
-    cargo_page_->setVisible(!animal);
-    animal_page_->setVisible(animal);
+    // // 两套画板始终保留各自状态，只切换可见性，不在切换时重新创建。
+    // cargo_page_->setVisible(!animal);
+    // animal_page_->setVisible(animal);
+
+    cargo_page_->hide();
+    animal_page_->hide();
+    collaboration_grid_view_->hide();
+
+    switch (project)
+    {
+    case InspectionProject::Cargo:
+        cargo_page_->show();
+        attitude_panel_->show();
+        drone_attitude_panel_->hide();
+        car_attitude_panel_->hide();
+        break;
+    case InspectionProject::Animal:
+        animal_page_->show();
+        attitude_panel_->show();
+        drone_attitude_panel_->hide();
+        car_attitude_panel_->hide();
+        break;
+    case InspectionProject::Collaboration:
+        collaboration_grid_view_->show();
+        attitude_panel_->hide();
+        drone_attitude_panel_->show();
+        car_attitude_panel_->show();
+        break;
+    }
 
     // Animal 只保留运行日志和姿态状态；Cargo 继续显示原来的三个日志区域。
     // Animal 是固定二维视角，不显示 Cargo 的 2D/3D 和观察角度滑块。
     // Animal 是固定二维视角；Cargo 的 2D/3D、航点日志和 AI 日志
     // 都已经封装在 CargoInspectionPage 内，切换页面时会一起显示或隐藏。
-    appendRunLog(
-        animal
-            ? "已切换到动物巡检二维画板"
-            : "已切换到货物巡检仓库画板");
+    // appendRunLog(
+    //     animal
+    //         ? "已切换到动物巡检二维画板"
+    //         : "已切换到货物巡检仓库画板");
+    // clock_timer_->start(5000);
 
     // 项目切换后立即应用对应布局，不必等待下一次窗口缩放。
     updateOverlayGeometry();
@@ -1544,11 +1685,14 @@ void MainWindow::updateOverlayGeometry()
 
     // 顶部状态栏属于两个项目共用区域，先确定它的位置。
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
+    drone_attitude_panel_->setGeometry(width() - 220, 84, 220, 160);
+    car_attitude_panel_->setGeometry(width() - 220, 300, 220, 160);
 
     // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
     // 安排画板、日志、识别记录和 Cargo 视角控件。
     cargo_page_->setGeometry(area);
     animal_page_->setGeometry(area);
+    collaboration_grid_view_->setGeometry(area);
 
     // 姿态面板是共享控件，但不同项目需要不同位置。
     attitude_panel_->setGeometry(
@@ -1559,6 +1703,8 @@ void MainWindow::updateOverlayGeometry()
     // 页面铺满主容器后，共享状态控件必须保持在最上层。
     top_status_bar_->raise();
     attitude_panel_->raise();
+    drone_attitude_panel_->raise();
+    car_attitude_panel_->raise();
 }
 
 QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const

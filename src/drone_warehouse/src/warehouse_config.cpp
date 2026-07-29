@@ -28,6 +28,7 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
         config.vision_barcode,
         config.vision_servo_status,
         config.local_position,
+        config.car_local_position,
         config.pose_delta,
         config.industrial_camera_params,
         config.start_task_service,
@@ -122,6 +123,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.ros.vision_barcode = "/drone/vision/barcode";
     config.ros.vision_servo_status = "/control/vision_servo/status";
     config.ros.local_position = "/drone/local_position";
+    config.ros.car_local_position = "/car/local_position";
     config.ros.pose_delta = "/drone/pose_yaw_compare/delta";
     config.ros.industrial_camera_params = "/industrial_camera/params";
     config.ros.start_task_service = "/drone/start_task";
@@ -139,6 +141,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.bridge_ros.vision_barcode = "/serial/drone/vision/barcode";
     config.bridge_ros.vision_servo_status = "/serial/control/vision_servo/status";
     config.bridge_ros.local_position = "/serial/drone/local_position";
+    config.bridge_ros.car_local_position = "/serial/car/local_position";
     config.bridge_ros.pose_delta = "/serial/drone/pose_yaw_compare/delta";
     config.bridge_ros.industrial_camera_params = "/serial/industrial_camera/params";
     config.bridge_ros.start_task_service = "/serial/drone/start_task";
@@ -538,7 +541,17 @@ bool readBool(const QJsonObject &object,
 // JSON 使用稳定的英文值，避免界面中文名称变化后旧配置无法读取。
 QString inspectionProjectToString(InspectionProject project)
 {
-    return project == InspectionProject::Animal ? "animal" : "cargo";
+    switch (project)
+    {
+    case InspectionProject::Cargo:
+        return "cargo";
+    case InspectionProject::Animal:
+        return "animal";
+    case InspectionProject::Collaboration:
+        return "collaboration";
+    }
+
+    return "cargo";
 }
 
 /************************************************************/
@@ -559,9 +572,14 @@ bool inspectionProjectFromString(const QString &value,
         project = InspectionProject::Animal;
         return true;
     }
+    if (value == "collaboration")
+    {
+        project = InspectionProject::Collaboration;
+        return true;
+    }
     return jsonError(
         error_message,
-        "inspection_project 必须是 cargo 或 animal");
+        "inspection_project 无效");
 }
 
 QJsonArray doubleVectorToJson(const QVector<double> &values)
@@ -617,6 +635,7 @@ QJsonObject rosConfigToJson(const RosTopicConfig &config)
     object.insert("vision_barcode", config.vision_barcode);
     object.insert("vision_servo_status", config.vision_servo_status);
     object.insert("local_position", config.local_position);
+    object.insert("car_local_position", config.car_local_position);
     object.insert("pose_delta", config.pose_delta);
     object.insert("industrial_camera_params", config.industrial_camera_params);
     object.insert("start_task_service", config.start_task_service);
@@ -656,7 +675,14 @@ bool rosConfigFromJson(const QJsonObject &object,
         return false;
     }
 
-    // Older JSON versions keep the current code default for this new topic.
+    // Older JSON versions keep the current code defaults for new topics.
+    if (object.contains("car_local_position") &&
+        !readString(object, "car_local_position",
+                    config.car_local_position, error_message))
+    {
+        return false;
+    }
+
     return !object.contains("industrial_camera_params") ||
            readString(object, "industrial_camera_params",
                       config.industrial_camera_params, error_message);
@@ -1441,6 +1467,8 @@ void applyConnectionModeToRosConfig(
         remove_serial_prefix(config.ros.vision_servo_status);
     config.ros.local_position =
         remove_serial_prefix(config.ros.local_position);
+    config.ros.car_local_position =
+        remove_serial_prefix(config.ros.car_local_position);
     config.ros.pose_delta =
         remove_serial_prefix(config.ros.pose_delta);
     config.ros.industrial_camera_params =

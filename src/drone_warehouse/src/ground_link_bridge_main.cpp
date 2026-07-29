@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
     }
 
     auto node = std::make_shared<GroundLinkBridge>(
-        config.bridge_ros, config.connection.telemetry_serial);
+        config.connection.telemetry_serial);
 
     QTimer ros_timer;
     QObject::connect(&ros_timer, &QTimer::timeout, [node]() {
