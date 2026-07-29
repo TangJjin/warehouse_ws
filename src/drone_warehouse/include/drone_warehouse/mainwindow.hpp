@@ -13,6 +13,7 @@ class QLabel;
 class QWidget;
 class CargoInspectionPage;
 class AnimalInspectionPage;
+class CollaborationGridView;
 class ShelfInfoDialog;
 class TopStatusBar;
 class RosManager;
@@ -130,6 +131,7 @@ private:
     QWidget *central_container_ = nullptr;//主容器，所有内容都放在这里面，方便统一管理布局和坐标
     CargoInspectionPage *cargo_page_ = nullptr;//Cargo 页面，管理仓库画板、日志和视角控件
     AnimalInspectionPage *animal_page_ = nullptr;//Animal 页面，管理二维栅格、运行日志和识别记录
+    CollaborationGridView *collaboration_grid_view_ = nullptr;//Collaboration 只有画板，布局和状态面板由 MainWindow 管理
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
 
@@ -164,6 +166,17 @@ private:
     QLabel *battery_value_label_ = nullptr;//电池电量数值
     QLabel *mode_value_label_ = nullptr;//模式显示
 
+    QWidget *drone_attitude_panel_ = nullptr;//无人机信息面板
+    QLabel *drone_z_value_label_ = nullptr;//z数值
+    QLabel *drone_xy_value_label_ = nullptr;//xy数值
+    QLabel *drone_yaw_value_label_ = nullptr;//航向数值
+    QLabel *drone_battery_value_label_ = nullptr;//电池电量数值
+    QLabel *drone_move_value_label_ = nullptr;//无人机动作状态
+
+    QWidget *car_attitude_panel_ = nullptr;//无人车信息面板
+    QLabel *car_z_value_label_ = nullptr;//z数值
+    QLabel *car_xy_value_label_ = nullptr;//xy数值
+    QLabel *car_yaw_value_label_ = nullptr;//航向数值
 
     QVector<ShelfPanelData> shelf_panel_data_;//主窗口持有的货架弹窗数据，后续图片和槽位更新都改这份
     QDialog *image_preview_dialog_{nullptr};//槽位图片预览弹窗

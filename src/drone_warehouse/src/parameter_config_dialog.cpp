@@ -40,7 +40,8 @@ struct ProjectDefinition
 const QVector<ProjectDefinition> projects = {
     // 项目按钮动态创建；以后增加巡检项目，只需要在这里增加一项。
     {InspectionProject::Cargo, "货物巡检"},
-    {InspectionProject::Animal, "动物巡检"}
+    {InspectionProject::Animal, "动物巡检"},
+    {InspectionProject::Collaboration, "空地协同"}
 };
 
 struct ParameterFilterDefinition

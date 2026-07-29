@@ -101,6 +101,7 @@ class RosManager : public QObject
 
         //定义一个信号，用于位置更新事件，包含无人机的二维位置坐标与高度
         void positionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
+        void carpositionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void deltaUpdated(double dx, double dy, double dyaw, bool valid);
 
         //机载端执行 offboard 启动服务后，把结果通知 UI
@@ -139,6 +140,7 @@ class RosManager : public QObject
         rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr barcode_sub_;
         rclcpp::Subscription<drone_msgs::msg::BarcodeCapture>::SharedPtr vision_barcode_sub_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr local_position_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr car_local_position_sub_;
         rclcpp::Subscription<drone_msgs::msg::VisionServoStatus>::SharedPtr vision_servo_status_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;

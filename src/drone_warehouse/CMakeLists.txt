@@ -31,6 +31,7 @@ add_executable(warehouse_gcs
   src/animal_inspection_page.cpp
   src/scene_view.cpp
   src/animal_grid_view.cpp
+  src/collaboration_grid_view.cpp
   src/ros_manager.cpp
   src/gpio_output.cpp
   src/top_status_bar.cpp
@@ -47,6 +48,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/animal_inspection_page.hpp
   include/drone_warehouse/scene_view.hpp
   include/drone_warehouse/animal_grid_view.hpp
+  include/drone_warehouse/collaboration_grid_view.hpp
   include/drone_warehouse/ros_manager.hpp
   include/drone_warehouse/gpio_output.hpp
   include/drone_warehouse/top_status_bar.hpp
@@ -60,10 +62,16 @@ add_executable(warehouse_gcs
 )
 
 add_executable(ground_link_bridge
-  src/ground_link_bridge_main.cpp  
+  src/ground_link_bridge_main.cpp
   src/ground_link_bridge.cpp
   src/warehouse_config.cpp
   include/drone_warehouse/ground_link_bridge.hpp
+)
+
+add_executable(car_link_bridge
+  src/car_link_bridge_main.cpp
+  src/car_link_bridge.cpp
+  include/drone_warehouse/car_link_bridge.hpp
 )
 
 target_include_directories(warehouse_gcs PUBLIC
@@ -77,6 +85,11 @@ target_include_directories(ground_link_bridge PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(car_link_bridge PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 target_link_libraries(warehouse_gcs
   Qt5::Widgets
   Qt5::SerialPort
@@ -86,6 +99,11 @@ target_link_libraries(warehouse_gcs
 target_link_libraries(ground_link_bridge
   Qt5::Core
   Qt5::Gui
+  Qt5::SerialPort
+)
+
+target_link_libraries(car_link_bridge
+  Qt5::Core
   Qt5::SerialPort
 )
 
@@ -106,9 +124,15 @@ ament_target_dependencies(ground_link_bridge
   geometry_msgs
 )
 
+ament_target_dependencies(car_link_bridge
+  rclcpp
+  geometry_msgs
+)
+
 install(TARGETS
   warehouse_gcs
   ground_link_bridge
+  car_link_bridge
   DESTINATION lib/${PROJECT_NAME}
 )
 

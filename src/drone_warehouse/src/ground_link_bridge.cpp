@@ -106,11 +106,9 @@ namespace
 }
 
 GroundLinkBridge::GroundLinkBridge(
-    const RosTopicConfig &topic_config,
     const SerialPortConfig &serial_config)
     : QObject(),
-      rclcpp::Node(topic_config.node_name.toStdString()),
-      topic_config_(topic_config),
+      rclcpp::Node("ground_link_bridge"),
       serial_config_(serial_config)
 {
     setupRosInterfaces();
@@ -121,35 +119,35 @@ void GroundLinkBridge::setupRosInterfaces()
 {
     /*************** 创建与机载端相对应的通信接口 ***************/
     status_pub_ = this->create_publisher<drone_msgs::msg::DroneStatus>(
-        topic_config_.drone_status.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        "/serial/drone/status", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     task_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
-        topic_config_.task_status.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/task/status", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     path_ready_pub_ = this->create_publisher<drone_msgs::msg::ReadyStatus>(
-        topic_config_.path_ready.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/control/path_ready", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     return_world_group_pub_ = this->create_publisher<drone_msgs::msg::WorldGroup>(
-        topic_config_.return_world_group.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/return/world_group", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     vision_barcode_pub_ = this->create_publisher<drone_msgs::msg::BarcodeCapture>(
-        topic_config_.vision_barcode.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+        "/serial/drone/vision/barcode", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     vision_servo_status_pub_ =
         this->create_publisher<drone_msgs::msg::VisionServoStatus>(
-            topic_config_.vision_servo_status.toStdString(),
+            "/serial/control/vision_servo/status",
             rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local());
 
     delta_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>(
-        topic_config_.pose_delta.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        "/serial/drone/pose_yaw_compare/delta", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
-        topic_config_.local_position.toStdString(), rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        "/serial/drone/local_position", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
     // 数传模式下接收地面站发布的完整参数，并通过可靠串口帧发往机载端。
     industrial_camera_params_sub_ =
         this->create_subscription<drone_msgs::msg::IndustrialCameraParams>(
-            topic_config_.industrial_camera_params.toStdString(),
+            "/serial/industrial_camera/params",
             rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
             [this](const drone_msgs::msg::IndustrialCameraParams::SharedPtr message) {
                 if (!message) {
@@ -166,7 +164,7 @@ void GroundLinkBridge::setupRosInterfaces()
             });
 
     upload_mission_summary_srv_ = this->create_service<drone_msgs::srv::UploadMissionSummary>(
-        topic_config_.upload_mission_service.toStdString(),
+        "/serial/drone/upload_mission_summary",
         [this](
         const std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Request> request,
         std::shared_ptr<drone_msgs::srv::UploadMissionSummary::Response> response)
@@ -218,7 +216,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     start_offboard_srv_ = this->create_service<drone_msgs::srv::StartOffboard>(
-        topic_config_.start_offboard_service.toStdString(),
+        "/serial/drone/start_offboard",
         [this](
         const std::shared_ptr<drone_msgs::srv::StartOffboard::Request> request,
         std::shared_ptr<drone_msgs::srv::StartOffboard::Response> response)
@@ -261,7 +259,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     start_task_srv_ = this->create_service<drone_msgs::srv::StartTask>(
-        topic_config_.start_task_service.toStdString(),
+        "/serial/drone/start_task",
         [this](
         const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
         std::shared_ptr<drone_msgs::srv::StartTask::Response> response)
@@ -304,7 +302,7 @@ void GroundLinkBridge::setupRosInterfaces()
         });
 
     stop_push_srv_ = this->create_service<drone_msgs::srv::StartTask>(
-        topic_config_.stop_push_service.toStdString(),
+        "/serial/drone/stop_push",
         [this](
         const std::shared_ptr<drone_msgs::srv::StartTask::Request> request,
         std::shared_ptr<drone_msgs::srv::StartTask::Response> response)

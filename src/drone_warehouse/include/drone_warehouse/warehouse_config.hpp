@@ -71,6 +71,7 @@ struct RosTopicConfig
     QString barcode_capture;          // 带图片的扫码结果话题。
     QString vision_barcode;           // 无线链路转发的扫码结果话题。
     QString local_position;           // 无人机本地位姿话题。
+    QString car_local_position;       // 无人车本地位姿话题。
     QString pose_delta;               // 位姿和航向误差话题。
     QString industrial_camera_params; // 地面站发布完整工业相机参数的话题。
 
@@ -102,7 +103,8 @@ enum class ConnectionMode
 enum class InspectionProject
 {
     Cargo,  // 货物巡检：使用现有仓库 SceneView。
-    Animal  // 动物巡检：使用固定二维栅格画板。
+    Animal, // 动物巡检：使用固定二维栅格画板。
+    Collaboration // 空地协同
 };
 
 // 连接方式和数传串口放在同一个结构中，方便界面整体保存。

@@ -32,8 +32,7 @@ class GroundLinkBridge : public QObject, public rclcpp::Node
     Q_OBJECT
 
 public:
-    GroundLinkBridge(const RosTopicConfig &topic_config,
-                     const SerialPortConfig &serial_config);
+    explicit GroundLinkBridge(const SerialPortConfig &serial_config);
     ~GroundLinkBridge() override = default;
 
 private:
@@ -139,7 +138,6 @@ private:
     uint16_t sendPacket(uint8_t type, uint8_t flags, const QByteArray &payload, bool need_ack);
     void sendAck(uint16_t seq);
 
-    RosTopicConfig topic_config_;
     SerialPortConfig serial_config_;
 
     rclcpp::Service<drone_msgs::srv::UploadMissionSummary>::SharedPtr upload_mission_summary_srv_;
