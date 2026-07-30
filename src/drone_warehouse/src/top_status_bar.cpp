@@ -18,7 +18,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->setContentsMargins(12, 8, 12, 8);
     layout->setSpacing(12);
 
-    title_button_ = new QPushButton("仓储智航", this);
+    title_button_ = new QPushButton("智航", this);
     connection_button_ = new QPushButton("未连接", this);
     shelf_button_ = new QPushButton("货架信息", this);
     task_button_ = new QPushButton("任务待命", this);
@@ -78,7 +78,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(scheduled_check_button_);
     layout->addWidget(time_label_);
 
-    title_button_->hide();
+    // title_button_->hide();
     shelf_button_->hide();
     analysis_button_->hide();
     task_button_->hide();
