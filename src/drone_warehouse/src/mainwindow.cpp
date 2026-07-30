@@ -70,6 +70,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupConnections();
     applyWindowStyle();
     setupDemoData();
+    resetWorldBodyTransform();
 
     /*********************ros移植部分***********************/
     // 本轮先把时间触发接口和状态变量接进来，但按用户要求默认关闭。
@@ -550,31 +551,71 @@ void MainWindow::setupConnections()
             this,
             [this](double x, double y, double z, double qx, double qy, double qz, double qw)
             {
-                // 当前仓储项目没有移植 position_view_，所以这里改成直接更新当前场景里的无人机位置。
-                scene_data_.drone_state.pose.x = 1 * (x * 100 +150);
-                scene_data_.drone_state.pose.y = -1 * (y * 100 -100);
-                scene_data_.drone_state.pose.z = z;
+                // 上游只透传 MAVROS local_position。地面站先把原始 world_enu
+                // 位姿统一转换成控制程序使用的 world_body，再交给三个画板。
+                GroundTfPose world_enu_pose;
+                world_enu_pose.x = x;
+                world_enu_pose.y = y;
+                world_enu_pose.z = z;
+                world_enu_pose.qx = qx;
+                world_enu_pose.qy = qy;
+                world_enu_pose.qz = qz;
+                world_enu_pose.qw = qw;
 
-                const double siny_cosp = 2.0 * (qw * qz + qx * qy);
-                const double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-                const double yaw = std::atan2(siny_cosp, cosy_cosp);          // 弧度
-                const double yaw_deg = yaw * 180.0 / M_PI;                    // 角度
+                GroundTfPose world_body_pose;
+                if (!ground_world_body_tf_.update(
+                        world_enu_pose, world_body_pose))
+                {
+                    // 与控制端一致，最初 10 帧只用于确定固定原点和初始朝向。
+                    return;
+                }
 
-                scene_data_.drone_state.pose.yaw = yaw_deg;
-                animal_page_->setPosition(x, y, z);
+                const double body_siny_cosp = 2.0 * (
+                    world_body_pose.qw * world_body_pose.qz +
+                    world_body_pose.qx * world_body_pose.qy);
+                const double body_cosy_cosp = 1.0 - 2.0 * (
+                    world_body_pose.qy * world_body_pose.qy +
+                    world_body_pose.qz * world_body_pose.qz);
+                const double body_yaw_deg =
+                    std::atan2(body_siny_cosp, body_cosy_cosp) *
+                    180.0 / M_PI;
 
-                altitude_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
-                yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
-
-                drone_z_value_label_->setText(QString::number(scene_data_.drone_state.pose.z, 'f', 1) + " m");
-                drone_xy_value_label_->setText(
-                QString("(%1, %2) m")
-                    .arg(scene_data_.drone_state.pose.x, 0, 'f', 1)
-                    .arg(scene_data_.drone_state.pose.y, 0, 'f', 1));
-                drone_yaw_value_label_->setText(QString::number(scene_data_.drone_state.pose.yaw, 'f', 1) + "°");
-                collaboration_grid_view_->setdronePosition(x, y, z);
-
+                // Cargo 保留当前场景坐标逻辑：
+                //   world_body (0, 0) -> 场景像素 (150, 100)；
+                //   1 m -> 100 px；x+ 向场景右，y+ 向场景上。
+                scene_data_.drone_state.pose.x =
+                    world_body_pose.x * 100.0 + 150.0;
+                scene_data_.drone_state.pose.y =
+                    -world_body_pose.y * 100.0 + 100.0;
+                scene_data_.drone_state.pose.z = world_body_pose.z;
+                scene_data_.drone_state.pose.yaw = body_yaw_deg;
                 cargo_page_->setSceneData(scene_data_);
+
+                // Animal 保留现有 setPosition 内部的轴映射和右下角网格原点。
+                animal_page_->setPosition(
+                    world_body_pose.x,
+                    world_body_pose.y,
+                    world_body_pose.z);
+
+                // Collaboration 直接使用 world_body：x+ 向上，y+ 向左。
+                collaboration_grid_view_->setdronePosition(
+                    world_body_pose.x,
+                    world_body_pose.y,
+                    world_body_pose.z);
+
+                // 顶部通用姿态和 Collaboration 右侧信息统一显示 world_body。
+                altitude_value_label_->setText(
+                    QString::number(world_body_pose.z, 'f', 1) + " m");
+                yaw_value_label_->setText(
+                    QString::number(body_yaw_deg, 'f', 1) + "°");
+                drone_z_value_label_->setText(
+                    QString::number(world_body_pose.z, 'f', 1) + " m");
+                drone_xy_value_label_->setText(
+                    QString("(%1, %2) m")
+                        .arg(world_body_pose.x, 0, 'f', 1)
+                        .arg(world_body_pose.y, 0, 'f', 1));
+                drone_yaw_value_label_->setText(
+                    QString::number(body_yaw_deg, 'f', 1) + "°");
             },
             Qt::QueuedConnection);
 
@@ -866,6 +907,7 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
     {
         appendRunLog(QString("%1").arg(message));
         //clock_timer_->start(5000);
+        resetWorldBodyTransform();
         ros_manager_->requestStartOffboard();
     }
     else if (!message.isEmpty())
@@ -892,6 +934,31 @@ void MainWindow::updateCommandResult(bool success, const QString &message)
     Q_UNUSED(message);
 }
 
+
+void MainWindow::resetWorldBodyTransform()
+{
+    // 控制端的 tf_bridge_node 每次启动都会用最初 10 帧建立 world_body。
+    // 地面站在发出 start_offboard 前同步清空窗口，复现相同的初始化时机。
+    ground_world_body_tf_.reset();
+
+    // TF 等待 10 帧期间，三个画板都先回到各自原点，避免保留上一轮任务的位置。
+    // Cargo 的原点是场景像素 (150, 100)，不是直接写成 (0, 0)。
+    scene_data_.drone_state.pose.x = 150.0;
+    scene_data_.drone_state.pose.y = 100.0;
+    scene_data_.drone_state.pose.z = 0.0;
+    scene_data_.drone_state.pose.yaw = 0.0;
+    cargo_page_->setSceneData(scene_data_);
+
+    // Animal 和 Collaboration 的接口都接收米坐标，传 (0, 0, 0) 即回到各自绘图原点。
+    animal_page_->setPosition(0.0, 0.0, 0.0);
+    collaboration_grid_view_->setdronePosition(0.0, 0.0, 0.0);
+
+    altitude_value_label_->setText("N/A");
+    drone_xy_value_label_->setText("N/A");
+    yaw_value_label_->setText("N/A");
+    drone_z_value_label_->setText("N/A");
+    drone_yaw_value_label_->setText("N/A");
+}
 
 
 
