@@ -35,7 +35,7 @@ constexpr qreal kTrackRadiusCm = 75.0;
 //   horizontal = 75 + 37.5 = 112.5 cm；
 //   vertical   = 75 + 37.5 = 112.5 cm。
 //
-// 这个圆心只作为无人机红点的初始中心，同时也是 ROS 坐标系的 (0, 0)。
+// 这个圆心只作为无人机红点的初始中心，同时也是 world_body 坐标系的 (0, 0)。
 // 小车黄色圆的初始中心是跑道 A 点，不是这个圆心。
 constexpr qreal kCircleLeftClearanceCm = 75.0;
 constexpr qreal kCircleBottomClearanceCm = 75.0;
@@ -109,7 +109,7 @@ void CollaborationGridView::setdronePosition(
     double y,
     double z)
 {
-    // ROS 坐标单位为米，方向约定：
+    // 输入是地面站已经转换好的 world_body 坐标，单位为米，方向约定：
     //   x 增大 -> 画面向上移动；
     //   y 增大 -> 画面向左移动；
     //   z 只用于界面文字显示，不参与二维位置计算。
@@ -315,7 +315,7 @@ void CollaborationGridView::drawCarMarker(
             kPointAHorizontalCm,
             kPointAVerticalCm);
 
-    // ROS 米坐标转换为窗口像素坐标：
+    // 小车米坐标转换为窗口像素坐标：
     //
     //   car_display_x_ * 100     把米转换为厘米；
     //   再乘 scale              把厘米转换为像素。
@@ -420,7 +420,7 @@ void CollaborationGridView::paintEvent(QPaintEvent *event)
         kPositionMarkerRadiusPx,
         kPositionMarkerRadiusPx);
 
-    // 顶部显示两套 ROS 原始米坐标。分成两行可保证较窄窗口也能完整显示。
+    // 顶部显示无人机 world_body 坐标和小车本地坐标。分成两行可保证较窄窗口也能完整显示。
     // 颜色、字号和字重与 Animal 画板的信息行保持一致。
     QFont info_font = painter.font();
     info_font.setPixelSize(17);

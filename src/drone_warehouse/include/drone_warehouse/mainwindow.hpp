@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "drone_warehouse/models.hpp"
+#include "drone_warehouse/ground_world_body_tf.hpp"
 #include "drone_warehouse/warehouse_config.hpp"
 #include "drone_msgs/msg/mission_summary.hpp"
 
@@ -123,6 +124,9 @@ private:
 
     void updateCommandResult(bool success, const QString &message);
 
+    // 清空地面站坐标参考，下一批 10 帧将重新建立三个画板共用的 world_body。
+    void resetWorldBodyTransform();
+
     /******************************************************/
 
 private:
@@ -154,6 +158,9 @@ private:
 
     QVector<WorldCoord> path_points_;
     QVector<QString> waypoint_labels_;
+
+    // 三个画板共用这一份转换结果，各画板只负责自己的原点偏移和屏幕映射。
+    GroundWorldBodyTf ground_world_body_tf_;
     /******************************************************/
 
     QTimer *clock_timer_ = nullptr;//用于每秒刷新一次顶部时间

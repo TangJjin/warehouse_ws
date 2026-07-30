@@ -32,6 +32,7 @@ add_executable(warehouse_gcs
   src/scene_view.cpp
   src/animal_grid_view.cpp
   src/collaboration_grid_view.cpp
+  src/ground_world_body_tf.cpp
   src/ros_manager.cpp
   src/gpio_output.cpp
   src/top_status_bar.cpp
@@ -49,6 +50,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/scene_view.hpp
   include/drone_warehouse/animal_grid_view.hpp
   include/drone_warehouse/collaboration_grid_view.hpp
+  include/drone_warehouse/ground_world_body_tf.hpp
   include/drone_warehouse/ros_manager.hpp
   include/drone_warehouse/gpio_output.hpp
   include/drone_warehouse/top_status_bar.hpp
