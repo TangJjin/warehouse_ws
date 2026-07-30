@@ -1770,8 +1770,8 @@ void MainWindow::updateOverlayGeometry()
 
     // 顶部状态栏属于两个项目共用区域，先确定它的位置。
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
-    drone_attitude_panel_->setGeometry(width() - 260, 84, 250, 250);
-    car_attitude_panel_->setGeometry(width() - 260, 320, 250, 180);
+    drone_attitude_panel_->setGeometry(width() - 540, 84, 250, 250);
+    car_attitude_panel_->setGeometry(width() - 260, 84, 250, 180);
 
     // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
     // 安排画板、日志、识别记录和 Cargo 视角控件。
