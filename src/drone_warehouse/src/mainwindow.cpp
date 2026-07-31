@@ -39,6 +39,69 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace
+{
+QString translatedDroneAction(const QString &action_name)
+{
+    const QString action = action_name.trimmed().toLower();
+    if (action == "takeoff") {
+        return "起飞";
+    }
+    if (action == "hover") {
+        return "悬停";
+    }
+    if (action == "visual_servo") {
+        return "伴飞";
+    }
+    if (action == "move") {
+        return "飞行";
+    }
+    if (action == "land") {
+        return "降落";
+    }
+    if (action == "finished") {
+        return "任务完成";
+    }
+    if (action == "stopped") {
+        return "已停止";
+    }
+    if (action == "queued" || action == "waiting_start") {
+        return "准备中";
+    }
+    if (action.isEmpty() || action == "idle") {
+        return "待命";
+    }
+    return action_name;
+}
+
+QString translatedCarRouteState(const QString &route_state)
+{
+    const QString state = route_state.trimmed().toUpper();
+    if (state == "IDLE") {
+        return "等待出发";
+    }
+    if (state == "LEAVING_A" || state == "TO_B") {
+        return "正在前往 B 点";
+    }
+    if (state == "TO_C") {
+        return "正在前往 C 点";
+    }
+    if (state == "TO_D") {
+        return "正在前往 D 点";
+    }
+    if (state == "TO_A") {
+        return "正在前往 A 点";
+    }
+    if (state == "ALIGNING_AT_A") {
+        return "正在 A 点对正";
+    }
+    if (state == "COMPLETE") {
+        return "路线已完成";
+    }
+    return state.isEmpty() ? QString("等待状态") : state;
+}
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       config_(createDefaultWarehouseConfig())
@@ -207,6 +270,38 @@ void MainWindow::setupFloatingWidgets()
     car_yaw_value_label_ = new QLabel("0.0°", car_attitude_panel_);
     car_attitude_layout->addWidget(car_yaw_value_label_, 2, 1);
 
+    // 空地协同右下角只显示两行任务语义状态，不重复坐标和姿态信息。
+    collaboration_status_panel_ = new QWidget(central_container_);
+    collaboration_status_panel_->setObjectName("collaborationStatusPanel");
+    auto *collaboration_status_layout =
+        new QGridLayout(collaboration_status_panel_);
+    collaboration_status_layout->setContentsMargins(16, 12, 16, 12);
+    collaboration_status_layout->setHorizontalSpacing(16);
+    collaboration_status_layout->setVerticalSpacing(10);
+
+    collaboration_status_layout->addWidget(
+        new QLabel("无人机状态", collaboration_status_panel_), 0, 0);
+    collaboration_drone_status_value_label_ =
+        new QLabel("待命", collaboration_status_panel_);
+    collaboration_status_layout->addWidget(
+        collaboration_drone_status_value_label_, 0, 1);
+
+    collaboration_status_layout->addWidget(
+        new QLabel("无人车状态", collaboration_status_panel_), 1, 0);
+    collaboration_car_status_value_label_ =
+        new QLabel("等待状态", collaboration_status_panel_);
+    collaboration_status_layout->addWidget(
+        collaboration_car_status_value_label_, 1, 1);
+
+    // 控制端舵机抛投保持 3 秒；这段时间优先显示“抛投”，结束后恢复最新动作。
+    drone_drop_status_timer_ = new QTimer(this);
+    drone_drop_status_timer_->setSingleShot(true);
+    drone_drop_status_timer_->setInterval(3000);
+    connect(drone_drop_status_timer_, &QTimer::timeout, this, [this]() {
+        collaboration_drone_status_value_label_->setText(
+            translatedDroneAction(latest_drone_action_name_));
+    });
+
     /*******************************************************/
 
     /*********************模式切换滑块***********************/
@@ -217,6 +312,7 @@ void MainWindow::setupFloatingWidgets()
 
     top_status_bar_->raise();//确保悬浮控件在主场景视图上面
     attitude_panel_->raise();//确保姿态面板在主场景视图上面
+    collaboration_status_panel_->raise();
 }
 
 void MainWindow::setupConnections()
@@ -407,41 +503,39 @@ void MainWindow::setupConnections()
                 appendRunLog("已发送小车恢复命令");
             });
 
-        // S4 会持续发布 true，直到小车路线状态离开 IDLE/COMPLETE；发布结束时
-        // 不一定补发 false。单次定时器会被每条 true 重新计时，最后一条消息停止
-        // 3 秒后才解锁，既避免同一轮重复初始化，也允许下一次按 S4 再次触发。
-        car_route_start_release_timer_ = new QTimer(this);
-        car_route_start_release_timer_->setSingleShot(true);
-        car_route_start_release_timer_->setInterval(3000);
-        connect(car_route_start_release_timer_, &QTimer::timeout,
-            this,
-            [this]()
-            {
-                car_route_start_latched_ = false;
-            });
+        // S4 常态发布 false，按下时只发布一个 true。用锁存值只接受
+        // false -> true 的一次边沿，防止异常的连续 true 重复启动任务。
 
-        connect(ros_manager_, &RosManager::carRouteStartReceived,
+        connect(ros_manager_, &RosManager::carKeypadS4PressedReceived,
             this,
-            [this](bool start)
+            [this](bool pressed)
             {
-                if (!start)
+                if (!pressed)
                 {
-                    car_route_start_release_timer_->stop();
-                    car_route_start_latched_ = false;
+                    car_s4_pressed_latched_ = false;
                     return;
                 }
                 if (config_.inspection_project != InspectionProject::Collaboration)
                 {
                     return;
                 }
-                car_route_start_release_timer_->start();
-                if (car_route_start_latched_)
+                if (car_s4_pressed_latched_)
                 {
                     return;
                 }
-                car_route_start_latched_ = true;
-                appendRunLog("收到小车路线启动信号，开始初始化空地协同任务");
+                car_s4_pressed_latched_ = true;
+                appendRunLog("收到小车 S4 按键信号，开始初始化空地协同任务");
                 triggerMissionUpload("collaboration");
+            },
+            Qt::QueuedConnection);
+
+        // 路线状态经小车数传链路到达后，只在这里转换成面向操作员的中文。
+        connect(ros_manager_, &RosManager::carRouteStateReceived,
+            this,
+            [this](const QString &state)
+            {
+                collaboration_car_status_value_label_->setText(
+                    translatedCarRouteState(state));
             },
             Qt::QueuedConnection);
 
@@ -1123,10 +1217,20 @@ void MainWindow::action_updateStatus(
     int action_num,
     const QString &action_name)
 {
-    // 当前仓储界面没有原 drone_qt 那套 action 进度控件，
-    // 这里先把 action 状态收敛成一条顶部任务文本，便于看到“当前执行到哪一步”。
+    latest_drone_action_name_ =
+        task_running ? action_name : QString("idle");
+    const QString translated_action =
+        translatedDroneAction(latest_drone_action_name_);
+
+    // 抛投由视觉伺服成功事件单独显示 3 秒；此时仍缓存新的 action，
+    // 但不让紧接着到来的 move 状态提前覆盖“抛投”。
+    if (!drone_drop_status_timer_->isActive())
+    {
+        collaboration_drone_status_value_label_->setText(translated_action);
+    }
+
     const QString task_text = task_running
-        ? QString("%1 (%2/%3)").arg(action_name).arg(action_step).arg(action_num)
+        ? QString("%1 (%2/%3)").arg(translated_action).arg(action_step).arg(action_num)
         : QString("任务待命");
     top_status_bar_->setTaskText(task_text);
 }
@@ -1591,7 +1695,7 @@ void MainWindow::handleVisionServoStatus(
 {
     Q_UNUSED(requested_target_id);
     // A locked target is retained for every terminal state, including timeout.
-    Q_UNUSED(state);
+    const QString normalized_state = state.trimmed().toLower();
 
     if (!tracked_target_id.trimmed().isEmpty()) {
         current_tracked_target_id_ = tracked_target_id.trimmed();
@@ -1612,6 +1716,14 @@ void MainWindow::handleVisionServoStatus(
         return;
     }
 
+
+    // 控制端在视觉伺服成功后立即触发舵机，抛投不是独立 TaskStatus 动作。
+    // 因此借助这条完成状态，在右下角准确显示舵机实际保持的 3 秒。
+    if (normalized_state == "succeeded")
+    {
+        collaboration_drone_status_value_label_->setText("抛投");
+        drone_drop_status_timer_->start();
+    }
     vision_servo_active_seen_ = false;
     const QString completed_target_id = current_tracked_target_id_;
     current_tracked_target_id_.clear();
@@ -1662,11 +1774,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     top_status_bar_->setCollaborationMode(collaboration);
     if (!collaboration)
     {
-        car_route_start_latched_ = false;
-        if (car_route_start_release_timer_)
-        {
-            car_route_start_release_timer_->stop();
-        }
+        car_s4_pressed_latched_ = false;
     }
 
     // const bool animal =
@@ -1679,6 +1787,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     cargo_page_->hide();
     animal_page_->hide();
     collaboration_grid_view_->hide();
+    collaboration_status_panel_->hide();
 
     switch (project)
     {
@@ -1696,6 +1805,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
         break;
     case InspectionProject::Collaboration:
         collaboration_grid_view_->show();
+        collaboration_status_panel_->show();
         attitude_panel_->hide();
         drone_attitude_panel_->show();
         car_attitude_panel_->show();
@@ -1764,6 +1874,19 @@ void MainWindow::applyWindowStyle()
 
         "border: none;"//无边框
         "padding: 6px 10px;"//内边距
+        "}"
+    );
+    collaboration_status_panel_->setStyleSheet(
+        "#collaborationStatusPanel {"
+        "background: rgba(18, 24, 34, 180);"
+        "border: 1px solid rgba(90, 130, 180, 140);"
+        "border-radius: 8px;"
+        "}"
+        "#collaborationStatusPanel QLabel {"
+        "background: transparent;"
+        "border: none;"
+        "color: #d7e3f4;"
+        "font-size: 18px;"
         "}"
     );
 }
@@ -1840,6 +1963,12 @@ void MainWindow::updateOverlayGeometry()
     top_status_bar_->setGeometry(20, 16, area.width() - 40, 52);
     drone_attitude_panel_->setGeometry(width() - 540, 84, 250, 250);
     car_attitude_panel_->setGeometry(width() - 260, 84, 250, 180);
+    const int status_panel_width = 380;
+    const int status_panel_height = 112;
+    collaboration_status_panel_->setGeometry(
+        area.width() - status_panel_width - 20,
+        area.height() - status_panel_height - 20,
+        status_panel_width, status_panel_height);
 
     // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
     // 安排画板、日志、识别记录和 Cargo 视角控件。
@@ -1858,6 +1987,7 @@ void MainWindow::updateOverlayGeometry()
     attitude_panel_->raise();
     drone_attitude_panel_->raise();
     car_attitude_panel_->raise();
+    collaboration_status_panel_->raise();
 }
 
 QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const

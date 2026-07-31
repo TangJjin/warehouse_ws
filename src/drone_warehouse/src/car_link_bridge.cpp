@@ -50,9 +50,14 @@ void CarLinkBridge::setupRosInterfaces()
             "/serial/car/local_position",
             rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
 
-    car_route_start_pub_ =
+    car_keypad_s4_pressed_pub_ =
         this->create_publisher<std_msgs::msg::Bool>(
-            "/serial/car/route_start",
+            "/serial/car/keypad/s4_pressed",
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+
+    car_route_state_pub_ =
+        this->create_publisher<std_msgs::msg::String>(
+            "/serial/car/route_state",
             rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
     car_control_mode_sub_ =
@@ -102,8 +107,10 @@ void CarLinkBridge::onSerialReadyRead()
     while (tryParseCarFrame(type, payload)) {
         if (type == lp::kTypecarLocalPosition) {
             publishCarLocalPosition(payload);
-        } else if (type == lp::kTypeCarRouteStart) {
-            publishCarRouteStart(payload);
+        } else if (type == lp::kTypeCarKeypadS4Pressed) {
+            publishCarKeypadS4Pressed(payload);
+        } else if (type == lp::kTypeCarRouteState) {
+            publishCarRouteState(payload);
         } else {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -217,9 +224,9 @@ void CarLinkBridge::publishCarLocalPosition(const QByteArray &payload)
     car_local_position_pub_->publish(message);
 }
 
-void CarLinkBridge::publishCarRouteStart(const QByteArray &payload)
+void CarLinkBridge::publishCarKeypadS4Pressed(const QByteArray &payload)
 {
-    // Bool 帧固定为一个字节，拒绝尺寸异常的数据，避免把损坏帧当成启动信号。
+    // S4 状态帧固定为一个字节：按下时 true，常态为 false。
     if (payload.size() != 1) {
         RCLCPP_ERROR(
             this->get_logger(),
@@ -229,7 +236,25 @@ void CarLinkBridge::publishCarRouteStart(const QByteArray &payload)
 
     std_msgs::msg::Bool message;
     message.data = static_cast<uint8_t>(payload.at(0)) != 0;
-    car_route_start_pub_->publish(message);
+    car_keypad_s4_pressed_pub_->publish(message);
+}
+
+void CarLinkBridge::publishCarRouteState(const QByteArray &payload)
+{
+    // 路线状态是短 ASCII 字符串。这里保留未来扩展状态，只拒绝空内容。
+    const QString state =
+        QString::fromUtf8(payload).trimmed().toUpper();
+    if (state.isEmpty())
+    {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "ignored empty car route state payload");
+        return;
+    }
+
+    std_msgs::msg::String message;
+    message.data = state.toStdString();
+    car_route_state_pub_->publish(message);
 }
 
 void CarLinkBridge::sendCarControlMode(

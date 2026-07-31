@@ -264,10 +264,10 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
-    // /route/start 是小车/S4发出的启动事件。地面站只接收并上报给界面，
-    // 不在 ROS 回调线程里直接调用无人机服务。
-    car_route_start_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
-        topic_config_.car_route_start.toStdString(),
+    // /keypad/s4_pressed 是小车 S4 的实时按键状态。地面站只转发状态，
+    // 无人机任务仍由 Qt 主线程在 false -> true 的边沿上触发。
+    car_keypad_s4_pressed_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+        topic_config_.car_keypad_s4_pressed.toStdString(),
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const std_msgs::msg::Bool::SharedPtr msg)
         {
@@ -278,8 +278,30 @@ void RosManager::setupRosInterfaces()
 
             QMetaObject::invokeMethod(
                 this,
-                [this, start = msg->data]() {
-                    emit carRouteStartReceived(start);
+                [this, pressed = msg->data]() {
+                    emit carKeypadS4PressedReceived(pressed);
+                },
+                Qt::QueuedConnection);
+        });
+
+    // 路线管理器发布的是短字符串状态。回调仍只负责转发，
+    // 中文显示由 MainWindow 统一处理，避免通信层混入界面文案。
+    car_route_state_sub_ = node_->create_subscription<std_msgs::msg::String>(
+        topic_config_.car_route_state.toStdString(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const std_msgs::msg::String::SharedPtr msg)
+        {
+            if (!msg)
+            {
+                return;
+            }
+
+            const QString state =
+                QString::fromStdString(msg->data).trimmed().toUpper();
+            QMetaObject::invokeMethod(
+                this,
+                [this, state]() {
+                    emit carRouteStateReceived(state);
                 },
                 Qt::QueuedConnection);
         });

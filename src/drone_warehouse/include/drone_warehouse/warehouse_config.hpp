@@ -72,7 +72,8 @@ struct RosTopicConfig
     QString vision_barcode;           // 无线链路转发的扫码结果话题。
     QString local_position;           // 无人机本地位姿话题。
     QString car_local_position;       // 无人车本地位姿话题。
-    QString car_route_start;          // 小车路线启动标志话题。
+    QString car_keypad_s4_pressed;    // 小车 S4 按键状态话题：按下时单次 true，常态 false。
+    QString car_route_state;          // 小车固定路线任务状态话题。
     QString car_control_mode;         // 小车手动暂停和恢复控制话题。
     QString pose_delta;               // 位姿和航向误差话题。
     QString industrial_camera_params; // 地面站发布完整工业相机参数的话题。

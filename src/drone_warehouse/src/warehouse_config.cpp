@@ -29,7 +29,8 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
         config.vision_servo_status,
         config.local_position,
         config.car_local_position,
-        config.car_route_start,
+        config.car_keypad_s4_pressed,
+        config.car_route_state,
         config.car_control_mode,
         config.pose_delta,
         config.industrial_camera_params,
@@ -126,7 +127,8 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.ros.vision_servo_status = "/control/vision_servo/status";
     config.ros.local_position = "/drone/local_position";
     config.ros.car_local_position = "/car/local_position";
-    config.ros.car_route_start = "/route/start";
+    config.ros.car_keypad_s4_pressed = "/keypad/s4_pressed";
+    config.ros.car_route_state = "/route/state";
     config.ros.car_control_mode = "/control/mode";
     config.ros.pose_delta = "/drone/pose_yaw_compare/delta";
     config.ros.industrial_camera_params = "/industrial_camera/params";
@@ -146,7 +148,8 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.bridge_ros.vision_servo_status = "/serial/control/vision_servo/status";
     config.bridge_ros.local_position = "/serial/drone/local_position";
     config.bridge_ros.car_local_position = "/serial/car/local_position";
-    config.bridge_ros.car_route_start = "/serial/car/route_start";
+    config.bridge_ros.car_keypad_s4_pressed = "/serial/car/keypad/s4_pressed";
+    config.bridge_ros.car_route_state = "/serial/car/route_state";
     config.bridge_ros.car_control_mode = "/serial/car/control_mode";
     config.bridge_ros.pose_delta = "/serial/drone/pose_yaw_compare/delta";
     config.bridge_ros.industrial_camera_params = "/serial/industrial_camera/params";
@@ -642,7 +645,8 @@ QJsonObject rosConfigToJson(const RosTopicConfig &config)
     object.insert("vision_servo_status", config.vision_servo_status);
     object.insert("local_position", config.local_position);
     object.insert("car_local_position", config.car_local_position);
-    object.insert("car_route_start", config.car_route_start);
+    object.insert("car_keypad_s4_pressed", config.car_keypad_s4_pressed);
+    object.insert("car_route_state", config.car_route_state);
     object.insert("car_control_mode", config.car_control_mode);
     object.insert("pose_delta", config.pose_delta);
     object.insert("industrial_camera_params", config.industrial_camera_params);
@@ -691,9 +695,16 @@ bool rosConfigFromJson(const QJsonObject &object,
         return false;
     }
 
-    if (object.contains("car_route_start") &&
-        !readString(object, "car_route_start",
-                    config.car_route_start, error_message))
+    if (object.contains("car_keypad_s4_pressed") &&
+        !readString(object, "car_keypad_s4_pressed",
+                    config.car_keypad_s4_pressed, error_message))
+    {
+        return false;
+    }
+
+    if (object.contains("car_route_state") &&
+        !readString(object, "car_route_state",
+                    config.car_route_state, error_message))
     {
         return false;
     }
@@ -1491,8 +1502,10 @@ void applyConnectionModeToRosConfig(
         remove_serial_prefix(config.ros.local_position);
     config.ros.car_local_position =
         remove_serial_prefix(config.ros.car_local_position);
-    config.ros.car_route_start =
-        remove_serial_prefix(config.ros.car_route_start);
+    config.ros.car_keypad_s4_pressed =
+        remove_serial_prefix(config.ros.car_keypad_s4_pressed);
+    config.ros.car_route_state =
+        remove_serial_prefix(config.ros.car_route_state);
     config.ros.car_control_mode =
         remove_serial_prefix(config.ros.car_control_mode);
     config.ros.pose_delta =
