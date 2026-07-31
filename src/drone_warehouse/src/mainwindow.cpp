@@ -54,7 +54,13 @@ QString translatedDroneAction(const QString &action_name)
         return "伴飞";
     }
     if (action == "move") {
-        return "飞行";
+        return "移动";
+    }
+    if (action == "drop") {
+        return "抛投";
+    }
+    if (action == "return") {
+        return "返航";
     }
     if (action == "land") {
         return "降落";
@@ -78,7 +84,7 @@ QString translatedCarRouteState(const QString &route_state)
 {
     const QString state = route_state.trimmed().toUpper();
     if (state == "IDLE") {
-        return "等待出发";
+        return "等待状态";
     }
     if (state == "LEAVING_A" || state == "TO_B") {
         return "正在前往 B 点";
@@ -289,7 +295,7 @@ void MainWindow::setupFloatingWidgets()
     collaboration_status_layout->addWidget(
         new QLabel("无人车状态", collaboration_status_panel_), 1, 0);
     collaboration_car_status_value_label_ =
-        new QLabel("等待状态", collaboration_status_panel_);
+        new QLabel("未连接", collaboration_status_panel_);
     collaboration_status_layout->addWidget(
         collaboration_car_status_value_label_, 1, 1);
 
@@ -603,6 +609,15 @@ void MainWindow::setupConnections()
             this,
             [this](bool success, const QString &message)
             {
+                if (!success && collaboration_mission_active_)
+                {
+                    collaboration_mission_active_ = false;
+                    collaboration_task_running_seen_ = false;
+                    appendRunLog(message.isEmpty()
+                        ? "Offboard 启动失败，空地协同任务未启动"
+                        : message);
+                }
+
                 if (success)
                 {
                     // Animal 不在这里直接调用 startTask()。控制程序返回的有效路线
@@ -854,6 +869,14 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         return;
     }
 
+    // 空地协同任务从第一次 S4/执行触发开始锁定整条启动链路。任务运行期间
+    // 不允许 S4、定时触发或其他上传入口改写机载端当前任务路径。
+    if (collaboration_mission_active_)
+    {
+        appendRunLog("空地协同任务正在执行，已忽略重复启动请求");
+        return;
+    }
+
     if (mission_upload_in_progress_)
     {
         appendRunLog("无法初始化");
@@ -950,9 +973,12 @@ void MainWindow::triggerMissionUpload(const QString &trigger_source)
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
         animal_returned_route_.clear();
-        summary.compress_straight_segments =
-            mission.compress_non_waypoint_segments;
+        // false 配合空路线是机载端选择固定 ground_station.yaml 的明确协议。
+        // 不能读取普通任务压缩配置，否则 true 会误入动态 YAML 生成分支。
+        summary.compress_straight_segments = false;
         QVector<WorldCoord> empty_points;
+        collaboration_mission_active_ = true;
+        collaboration_task_running_seen_ = false;
         mission_upload_in_progress_ = true;
         ros_manager_->uploadMissionSummary(empty_points, summary);
     }
@@ -1062,6 +1088,8 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
     }
     else if (!message.isEmpty())
     {
+        collaboration_mission_active_ = false;
+        collaboration_task_running_seen_ = false;
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
         animal_returned_route_.clear();
@@ -1070,6 +1098,8 @@ void MainWindow::handleMissionUploadFinished(bool success, const QString &messag
     }
     else
     {
+        collaboration_mission_active_ = false;
+        collaboration_task_running_seen_ = false;
         animal_route_start_pending_ = false;
         animal_offboard_ready_ = false;
         animal_returned_route_.clear();
@@ -1217,6 +1247,20 @@ void MainWindow::action_updateStatus(
     int action_num,
     const QString &action_name)
 {
+    if (collaboration_mission_active_)
+    {
+        if (task_running)
+        {
+            collaboration_task_running_seen_ = true;
+        }
+        else if (collaboration_task_running_seen_)
+        {
+            // 初始化阶段可能先收到 idle；只有进入过运行态后的 false 才表示任务结束。
+            collaboration_mission_active_ = false;
+            collaboration_task_running_seen_ = false;
+        }
+    }
+
     latest_drone_action_name_ =
         task_running ? action_name : QString("idle");
     const QString translated_action =
