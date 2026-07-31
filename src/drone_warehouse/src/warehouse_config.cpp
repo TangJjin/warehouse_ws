@@ -161,7 +161,7 @@ WarehouseConfig createDefaultWarehouseConfig()
     // 默认使用 WiFi；数传串口保留原 ground_link_bridge 参数。
     // 扫码串口仍由 ShelfInfoDialog 独立管理，不属于这里的连接设置。
     config.connection.mode = ConnectionMode::Wifi;
-    config.connection.telemetry_serial.port_name = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
+    config.connection.telemetry_serial.port_name = "/dev/warehouse_drone_serial";
     config.connection.telemetry_serial.baud_rate = QSerialPort::Baud115200;
     config.connection.telemetry_serial.data_bits = QSerialPort::Data8;
     config.connection.telemetry_serial.parity = QSerialPort::NoParity;
