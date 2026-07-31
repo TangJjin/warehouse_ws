@@ -129,6 +129,7 @@ ament_target_dependencies(ground_link_bridge
 ament_target_dependencies(car_link_bridge
   rclcpp
   geometry_msgs
+  std_msgs
 )
 
 install(TARGETS

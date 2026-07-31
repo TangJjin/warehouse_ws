@@ -10,6 +10,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <QByteArray>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include "drone_warehouse/models.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
@@ -49,6 +51,8 @@ class RosManager : public QObject
         //定义一个公共方法，用于上传任务总结，包括路径点列表和任务总结信息
         // Publish one complete camera parameter set; partial updates are not allowed.
         void publishIndustrialCameraParams(const IndustrialCameraConfig &config);
+        // 发布小车控制模式，只允许 DISABLED 或 AUTO 两个文档约定值。
+        void publishCarControlMode(const QString &mode);
 
         void uploadMissionSummary(const QVector<WorldCoord> &path_points,
                           const drone_msgs::msg::MissionSummary &summary);
@@ -103,6 +107,8 @@ class RosManager : public QObject
         void positionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void carpositionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void deltaUpdated(double dx, double dy, double dyaw, bool valid);
+        // 小车/S4发出 route/start=true 后，把启动事件转交给 Qt 主线程。
+        void carRouteStartReceived(bool start);
 
         //机载端执行 offboard 启动服务后，把结果通知 UI
         void offboardCommandResult(bool success, const QString &message);
@@ -143,6 +149,7 @@ class RosManager : public QObject
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr car_local_position_sub_;
         rclcpp::Subscription<drone_msgs::msg::VisionServoStatus>::SharedPtr vision_servo_status_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
+        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr car_route_start_sub_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;
@@ -150,6 +157,7 @@ class RosManager : public QObject
         rclcpp::Publisher<drone_msgs::msg::IndustrialCameraParams>::SharedPtr industrial_camera_params_pub_;
         rclcpp::executors::SingleThreadedExecutor executor_;
         std::thread spin_thread_;
+        rclcpp::Publisher<std_msgs::msg::String>::SharedPtr car_control_mode_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
 
         std::string current_flight_mode{"UNKNOWN"};//当前飞行模式字符串

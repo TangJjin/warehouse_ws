@@ -389,6 +389,62 @@ void MainWindow::setupConnections()
                 triggerMissionUpload(trigger_source);
             });
 
+        // 空地协同顶部只暴露这两个小车控制命令。RosManager 会再次校验字符串，
+        // 防止其他调用点发布文档以外的控制模式。
+        connect(top_status_bar_, &TopStatusBar::carPauseRequested,
+            this,
+            [this]()
+            {
+                ros_manager_->publishCarControlMode("DISABLED");
+                appendRunLog("已发送小车暂停命令");
+            });
+
+        connect(top_status_bar_, &TopStatusBar::carResumeRequested,
+            this,
+            [this]()
+            {
+                ros_manager_->publishCarControlMode("AUTO");
+                appendRunLog("已发送小车恢复命令");
+            });
+
+        // S4 会持续发布 true，直到小车路线状态离开 IDLE/COMPLETE；发布结束时
+        // 不一定补发 false。单次定时器会被每条 true 重新计时，最后一条消息停止
+        // 3 秒后才解锁，既避免同一轮重复初始化，也允许下一次按 S4 再次触发。
+        car_route_start_release_timer_ = new QTimer(this);
+        car_route_start_release_timer_->setSingleShot(true);
+        car_route_start_release_timer_->setInterval(3000);
+        connect(car_route_start_release_timer_, &QTimer::timeout,
+            this,
+            [this]()
+            {
+                car_route_start_latched_ = false;
+            });
+
+        connect(ros_manager_, &RosManager::carRouteStartReceived,
+            this,
+            [this](bool start)
+            {
+                if (!start)
+                {
+                    car_route_start_release_timer_->stop();
+                    car_route_start_latched_ = false;
+                    return;
+                }
+                if (config_.inspection_project != InspectionProject::Collaboration)
+                {
+                    return;
+                }
+                car_route_start_release_timer_->start();
+                if (car_route_start_latched_)
+                {
+                    return;
+                }
+                car_route_start_latched_ = true;
+                appendRunLog("收到小车路线启动信号，开始初始化空地协同任务");
+                triggerMissionUpload("collaboration");
+            },
+            Qt::QueuedConnection);
+
         connect(top_status_bar_, &TopStatusBar::triggerTimeReached, this, [this](const QString &) {
             triggerMissionUpload("time");
         });
@@ -1601,6 +1657,18 @@ void MainWindow::clearRunLogs()
 
 void MainWindow::applyInspectionProject(InspectionProject project)
 {
+    const bool collaboration =
+        project == InspectionProject::Collaboration;
+    top_status_bar_->setCollaborationMode(collaboration);
+    if (!collaboration)
+    {
+        car_route_start_latched_ = false;
+        if (car_route_start_release_timer_)
+        {
+            car_route_start_release_timer_->stop();
+        }
+    }
+
     // const bool animal =
     //     project == InspectionProject::Animal;
 

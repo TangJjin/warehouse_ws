@@ -22,6 +22,8 @@ public:
     void setTimeText(const QString &text);//设置时间文本
 
     void setConnected(bool connected);
+    // 空地协同模式只保留小车的暂停、恢复操作，隐藏常规巡检按钮。
+    void setCollaborationMode(bool enabled);
 
     /*********************ros移植部分***********************/
     void setTriggerTime(const QString &text);//设置时间触发的目标时刻，格式先按 HH:mm:ss 使用
@@ -43,6 +45,8 @@ signals:
     void executeButtonClicked();//执行按钮被点击
     void waypointButtonClicked();//航点飞行按钮被点击
     void scheduledcheckbuttonnClicked(QString mission_trigger_time);//巡检按钮被点击
+    void carPauseRequested();//请求小车进入手动暂停模式
+    void carResumeRequested();//请求小车恢复自动运行模式
 
     void exitRequested();//退出信号
 
@@ -51,6 +55,8 @@ signals:
     /******************************************************/
 
 private:
+    void updateOperationButtonVisibility();//统一刷新右侧操作按钮，避免连接和项目切换互相覆盖
+
     QPushButton *title_button_ = nullptr;//标题按钮
     QPushButton *connection_button_ = nullptr;//连接状态按钮
     QPushButton *shelf_button_ = nullptr;//货架状态按钮
@@ -65,6 +71,8 @@ private:
     QPushButton *execute_button_ = nullptr;//执行按钮
     QPushButton *waypoint_button_ = nullptr;//航点飞行按钮
     QPushButton *scheduled_check_button_ = nullptr;//执行按钮
+    QPushButton *car_pause_button_ = nullptr;//空地协同中的小车暂停按钮
+    QPushButton *car_resume_button_ = nullptr;//空地协同中的小车恢复按钮
     QLabel *time_label_ = nullptr;//时间标签
 
     RosManager *ros_manager_{nullptr};//ROS管理器
@@ -76,6 +84,9 @@ private:
     QString last_triggered_time_text_;//记录最近一次已经触发过的时刻文本，避免同一秒重复触发
     bool time_trigger_enabled_ = false;//当前是否启用到点触发上传
     /******************************************************/
+
+    bool connected_ = false;//保存连接状态，项目切换时据此决定按钮是否可见
+    bool collaboration_mode_ = false;//当前是否为空地协同项目
 
     QTimer *exit_long_press_timer_{nullptr};
     bool stop_button_pressed_{false};
