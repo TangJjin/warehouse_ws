@@ -36,7 +36,7 @@ CarLinkBridge::CarLinkBridge()
     : rclcpp::Node("ground_car_link_bridge")
 {
     serial_port_ = this->declare_parameter<std::string>(
-        "serial_port", "/dev/ttyS3");
+        "serial_port", "/dev/warehouse_car_serial");
     baud_rate_ = this->declare_parameter<int>("baud_rate", 115200);
 
     setupRosInterfaces();
