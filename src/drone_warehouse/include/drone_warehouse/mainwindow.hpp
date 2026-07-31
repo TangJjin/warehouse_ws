@@ -146,8 +146,7 @@ private:
     int mission_trigger_time_text_flag_ = 1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
-    bool car_route_start_latched_ = false;//小车持续发布 true 时只触发一次
-    QTimer *car_route_start_release_timer_ = nullptr;//最后一条 true 停止一段时间后允许下一轮 S4
+    bool car_s4_pressed_latched_ = false;//只在 S4 从 false 变为 true 时触发一次
 
     // Animal 点击执行后保持为 true，直到成功调用一次 startTask() 或前置步骤失败。
     bool animal_route_start_pending_ = false;
@@ -186,6 +185,12 @@ private:
     QLabel *car_z_value_label_ = nullptr;//z数值
     QLabel *car_xy_value_label_ = nullptr;//xy数值
     QLabel *car_yaw_value_label_ = nullptr;//航向数值
+
+    QWidget *collaboration_status_panel_ = nullptr;//空地协同右下角任务状态面板
+    QLabel *collaboration_drone_status_value_label_ = nullptr;//无人机当前动作的中文状态
+    QLabel *collaboration_car_status_value_label_ = nullptr;//无人车当前路线状态的中文说明
+    QTimer *drone_drop_status_timer_ = nullptr;//抛投持续期间临时保持“抛投”显示
+    QString latest_drone_action_name_ = "idle";//抛投显示结束后恢复到最新动作
 
     QVector<ShelfPanelData> shelf_panel_data_;//主窗口持有的货架弹窗数据，后续图片和槽位更新都改这份
     QDialog *image_preview_dialog_{nullptr};//槽位图片预览弹窗

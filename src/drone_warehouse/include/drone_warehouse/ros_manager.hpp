@@ -107,8 +107,10 @@ class RosManager : public QObject
         void positionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void carpositionUpdated(double x, double y, double z, double qx, double qy, double qz, double qw);
         void deltaUpdated(double dx, double dy, double dyaw, bool valid);
-        // 小车/S4发出 route/start=true 后，把启动事件转交给 Qt 主线程。
-        void carRouteStartReceived(bool start);
+        // 小车 S4 状态更新后，把按键值转交给 Qt 主线程。
+        void carKeypadS4PressedReceived(bool pressed);
+        // 小车固定路线状态更新后，把原始英文状态交给主界面翻译显示。
+        void carRouteStateReceived(const QString &state);
 
         //机载端执行 offboard 启动服务后，把结果通知 UI
         void offboardCommandResult(bool success, const QString &message);
@@ -149,7 +151,8 @@ class RosManager : public QObject
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr car_local_position_sub_;
         rclcpp::Subscription<drone_msgs::msg::VisionServoStatus>::SharedPtr vision_servo_status_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr delta_sub_;
-        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr car_route_start_sub_;
+        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr car_keypad_s4_pressed_sub_;
+        rclcpp::Subscription<std_msgs::msg::String>::SharedPtr car_route_state_sub_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr start_task_client_;
         rclcpp::Client<drone_msgs::srv::StartTask>::SharedPtr stop_push_client_;
         rclcpp::Client<drone_msgs::srv::StartOffboard>::SharedPtr start_offboard_client_;

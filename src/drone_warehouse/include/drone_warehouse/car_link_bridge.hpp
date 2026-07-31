@@ -25,7 +25,8 @@ private:
     bool tryParseCarFrame(uint8_t &type, QByteArray &payload);
     bool validateFrame(const QByteArray &frame) const;
     void publishCarLocalPosition(const QByteArray &payload);
-    void publishCarRouteStart(const QByteArray &payload);
+    void publishCarKeypadS4Pressed(const QByteArray &payload);
+    void publishCarRouteState(const QByteArray &payload);
     void sendCarControlMode(
         const std_msgs::msg::String::SharedPtr message);
 
@@ -45,7 +46,9 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
         car_local_position_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr
-        car_route_start_pub_;
+        car_keypad_s4_pressed_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+        car_route_state_pub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr
         car_control_mode_sub_;
 };
