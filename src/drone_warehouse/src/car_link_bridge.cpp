@@ -1,5 +1,6 @@
 #include "drone_warehouse/car_link_bridge.hpp"
 
+#include <limits>
 #include <QDataStream>
 
 #include "drone_warehouse/link_protocol.hpp"
@@ -48,6 +49,19 @@ void CarLinkBridge::setupRosInterfaces()
         this->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/serial/car/local_position",
             rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+
+    car_route_start_pub_ =
+        this->create_publisher<std_msgs::msg::Bool>(
+            "/serial/car/route_start",
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+
+    car_control_mode_sub_ =
+        this->create_subscription<std_msgs::msg::String>(
+            "/serial/car/control_mode",
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+            [this](const std_msgs::msg::String::SharedPtr message) {
+                sendCarControlMode(message);
+            });
 }
 
 void CarLinkBridge::setupSerial()
@@ -63,7 +77,7 @@ void CarLinkBridge::setupSerial()
         onSerialReadyRead();
     });
 
-    if (!serial_.open(QIODevice::ReadOnly)) {
+    if (!serial_.open(QIODevice::ReadWrite)) {
         RCLCPP_ERROR(
             this->get_logger(),
             "failed to open car serial port %s: %s",
@@ -83,13 +97,23 @@ void CarLinkBridge::onSerialReadyRead()
 {
     rx_buffer_.append(serial_.readAll());
 
+    uint8_t type = 0;
     QByteArray payload;
-    while (tryParseCarFrame(payload)) {
-        publishCarLocalPosition(payload);
+    while (tryParseCarFrame(type, payload)) {
+        if (type == lp::kTypecarLocalPosition) {
+            publishCarLocalPosition(payload);
+        } else if (type == lp::kTypeCarRouteStart) {
+            publishCarRouteStart(payload);
+        } else {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "ignored unexpected car serial frame type: 0x%02X",
+                type);
+        }
     }
 }
 
-bool CarLinkBridge::tryParseCarFrame(QByteArray &payload)
+bool CarLinkBridge::tryParseCarFrame(uint8_t &type, QByteArray &payload)
 {
     while (true) {
         while (rx_buffer_.size() >= 2) {
@@ -131,14 +155,7 @@ bool CarLinkBridge::tryParseCarFrame(QByteArray &payload)
 
         const auto *frame_data =
             reinterpret_cast<const uint8_t *>(frame.constData());
-        if (frame_data[3] != lp::kTypecarLocalPosition) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "ignored unexpected car serial frame type: 0x%02X",
-                frame_data[3]);
-            continue;
-        }
-
+        type = frame_data[3];
         payload = frame.mid(9, payload_length);
         return true;
     }
@@ -198,4 +215,85 @@ void CarLinkBridge::publishCarLocalPosition(const QByteArray &payload)
 
     message.header.stamp = this->now();
     car_local_position_pub_->publish(message);
+}
+
+void CarLinkBridge::publishCarRouteStart(const QByteArray &payload)
+{
+    // Bool 帧固定为一个字节，拒绝尺寸异常的数据，避免把损坏帧当成启动信号。
+    if (payload.size() != 1) {
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "invalid car route start payload");
+        return;
+    }
+
+    std_msgs::msg::Bool message;
+    message.data = static_cast<uint8_t>(payload.at(0)) != 0;
+    car_route_start_pub_->publish(message);
+}
+
+void CarLinkBridge::sendCarControlMode(
+    const std_msgs::msg::String::SharedPtr message)
+{
+    if (!message || !serial_.isOpen()) {
+        return;
+    }
+
+    const QString mode =
+        QString::fromStdString(message->data).trimmed().toUpper();
+    if (mode != "DISABLED" && mode != "AUTO") {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "ignored unsupported car control mode: %s",
+            message->data.c_str());
+        return;
+    }
+
+    const QByteArray payload = mode.toUtf8();
+    const QByteArray frame = encodeFrame(
+        lp::kTypeCarControlMode,
+        0,
+        tx_sequence_++,
+        payload);
+    if (frame.isEmpty() || serial_.write(frame) < 0) {
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "failed to write car control mode frame: %s",
+            serial_.errorString().toStdString().c_str());
+    }
+}
+
+QByteArray CarLinkBridge::encodeFrame(
+    uint8_t type,
+    uint8_t flags,
+    uint16_t sequence,
+    const QByteArray &payload) const
+{
+    if (payload.size() > std::numeric_limits<quint16>::max()) {
+        return {};
+    }
+
+    QByteArray frame;
+    frame.reserve(9 + payload.size() + 2);
+    frame.append(static_cast<char>(lp::kSof1));
+    frame.append(static_cast<char>(lp::kSof2));
+    frame.append(static_cast<char>(lp::kVersion));
+    frame.append(static_cast<char>(type));
+    frame.append(static_cast<char>(flags));
+    frame.append(static_cast<char>(sequence & 0xFF));
+    frame.append(static_cast<char>((sequence >> 8) & 0xFF));
+
+    const auto payload_length =
+        static_cast<uint16_t>(payload.size());
+    frame.append(static_cast<char>(payload_length & 0xFF));
+    frame.append(static_cast<char>((payload_length >> 8) & 0xFF));
+    frame.append(payload);
+
+    const auto *crc_begin =
+        reinterpret_cast<const uint8_t *>(frame.constData() + 2);
+    const uint16_t crc =
+        crc16Ccitt(crc_begin, frame.size() - 2);
+    frame.append(static_cast<char>(crc & 0xFF));
+    frame.append(static_cast<char>((crc >> 8) & 0xFF));
+    return frame;
 }

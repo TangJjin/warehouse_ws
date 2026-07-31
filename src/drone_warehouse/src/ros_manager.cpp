@@ -264,6 +264,30 @@ void RosManager::setupRosInterfaces()
                 Qt::QueuedConnection);
         });
 
+    // /route/start 是小车/S4发出的启动事件。地面站只接收并上报给界面，
+    // 不在 ROS 回调线程里直接调用无人机服务。
+    car_route_start_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+        topic_config_.car_route_start.toStdString(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        [this](const std_msgs::msg::Bool::SharedPtr msg)
+        {
+            if (!msg)
+            {
+                return;
+            }
+
+            QMetaObject::invokeMethod(
+                this,
+                [this, start = msg->data]() {
+                    emit carRouteStartReceived(start);
+                },
+                Qt::QueuedConnection);
+        });
+
+    car_control_mode_pub_ = node_->create_publisher<std_msgs::msg::String>(
+        topic_config_.car_control_mode.toStdString(),
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+
 auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     delta_sub_ = node_->create_subscription<geometry_msgs::msg::Vector3>(
         topic_config_.pose_delta.toStdString(),
@@ -374,6 +398,24 @@ void RosManager::publishIndustrialCameraParams(const IndustrialCameraConfig &con
 }
 
 /*********************ros移植部分***********************/
+
+void RosManager::publishCarControlMode(const QString &mode)
+{
+    if (!car_control_mode_pub_)
+    {
+        return;
+    }
+
+    const QString normalized_mode = mode.trimmed().toUpper();
+    if (normalized_mode != "DISABLED" && normalized_mode != "AUTO")
+    {
+        return;
+    }
+
+    std_msgs::msg::String message;
+    message.data = normalized_mode.toStdString();
+    car_control_mode_pub_->publish(message);
+}
 void RosManager::startTask()
 {
     // 这一段严格沿用来源工程的语义：

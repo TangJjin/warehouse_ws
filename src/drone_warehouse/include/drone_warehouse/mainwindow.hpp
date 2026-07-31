@@ -146,6 +146,8 @@ private:
     int mission_trigger_time_text_flag_ = 1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
+    bool car_route_start_latched_ = false;//小车持续发布 true 时只触发一次
+    QTimer *car_route_start_release_timer_ = nullptr;//最后一条 true 停止一段时间后允许下一轮 S4
 
     // Animal 点击执行后保持为 true，直到成功调用一次 startTask() 或前置步骤失败。
     bool animal_route_start_pending_ = false;

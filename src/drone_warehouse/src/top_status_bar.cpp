@@ -52,6 +52,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     execute_button_ = new QPushButton("执行", this);
     waypoint_button_ = new QPushButton("航点飞行", this);
     scheduled_check_button_ = new QPushButton("定时巡检", this);
+    car_pause_button_ = new QPushButton("暂停", this);
+    car_resume_button_ = new QPushButton("恢复", this);
     time_label_ = new QLabel("00:00:00", this);
 
     clock_timer_ = new QTimer(this);//新建定时器
@@ -76,6 +78,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(execute_button_);
     layout->addWidget(waypoint_button_);
     layout->addWidget(scheduled_check_button_);
+    layout->addWidget(car_pause_button_);
+    layout->addWidget(car_resume_button_);
     layout->addWidget(time_label_);
 
     // title_button_->hide();
@@ -85,6 +89,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     execute_button_->hide();
     waypoint_button_->hide();
     scheduled_check_button_->hide();
+    car_pause_button_->hide();
+    car_resume_button_->hide();
 
     exit_long_press_timer_ = new QTimer(this);
     exit_long_press_timer_->setSingleShot(true);
@@ -96,6 +102,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(waypoint_button_, &QPushButton::clicked, this, &TopStatusBar::waypointButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
+    connect(car_pause_button_, &QPushButton::clicked, this, &TopStatusBar::carPauseRequested);
+    connect(car_resume_button_, &QPushButton::clicked, this, &TopStatusBar::carResumeRequested);
     connect(scheduled_check_button_, &QPushButton::clicked, this, [this]() {
         const QString mission_trigger_time_text_ = QDateTime::currentDateTime().toString("HH:mm:ss");
         emit scheduledcheckbuttonnClicked(mission_trigger_time_text_);
@@ -182,6 +190,8 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
 void TopStatusBar::setConnected(bool connected)
 {
+    connected_ = connected;
+
     // title_button_->setVisible(connected);
     //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
@@ -193,11 +203,28 @@ void TopStatusBar::setConnected(bool connected)
     dyaw_value_label_->setVisible(connected);
     dyaw_indicator_label_->setVisible(connected);
 
-    analysis_button_->setVisible(connected);
-    execute_button_->setVisible(connected);
-    waypoint_button_->setVisible(connected);
-    scheduled_check_button_->setVisible(connected);
+    updateOperationButtonVisibility();
     connection_button_->setText(connected ? "已连接" : "未连接");
+}
+
+void TopStatusBar::setCollaborationMode(bool enabled)
+{
+    collaboration_mode_ = enabled;
+    updateOperationButtonVisibility();
+}
+
+void TopStatusBar::updateOperationButtonVisibility()
+{
+    // 普通项目沿用原来的四个操作按钮；空地协同只显示暂停和恢复。
+    const bool show_inspection_actions = connected_ && !collaboration_mode_;
+    analysis_button_->setVisible(show_inspection_actions);
+    execute_button_->setVisible(show_inspection_actions);
+    waypoint_button_->setVisible(show_inspection_actions);
+    scheduled_check_button_->setVisible(show_inspection_actions);
+
+    const bool show_car_actions = connected_ && collaboration_mode_;
+    car_pause_button_->setVisible(show_car_actions);
+    car_resume_button_->setVisible(show_car_actions);
 }
 
 void TopStatusBar::setConnectionText(const QString &text)
