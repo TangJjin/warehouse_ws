@@ -147,6 +147,8 @@ private:
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
     bool car_s4_pressed_latched_ = false;//只在 S4 从 false 变为 true 时触发一次
+    bool collaboration_mission_active_ = false;//空地协同从启动到任务结束期间拒绝重复上传和启动
+    bool collaboration_task_running_seen_ = false;//确认本轮至少进入过运行态后，false 才视为正常结束
 
     // Animal 点击执行后保持为 true，直到成功调用一次 startTask() 或前置步骤失败。
     bool animal_route_start_pending_ = false;
