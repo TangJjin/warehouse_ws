@@ -147,10 +147,10 @@ WarehouseConfig createDefaultWarehouseConfig()
     config.bridge_ros.vision_barcode = "/serial/drone/vision/barcode";
     config.bridge_ros.vision_servo_status = "/serial/control/vision_servo/status";
     config.bridge_ros.local_position = "/serial/drone/local_position";
-    config.bridge_ros.car_local_position = "/serial/car/local_position";
-    config.bridge_ros.car_keypad_s4_pressed = "/serial/car/keypad/s4_pressed";
-    config.bridge_ros.car_route_state = "/serial/car/route_state";
-    config.bridge_ros.car_control_mode = "/serial/car/control_mode";
+    config.bridge_ros.car_local_position = "/car/local_position";
+    config.bridge_ros.car_keypad_s4_pressed = "/car/keypad/s4_pressed";
+    config.bridge_ros.car_route_state = "/route/state";
+    config.bridge_ros.car_control_mode = "/car/control_mode";
     config.bridge_ros.pose_delta = "/serial/drone/pose_yaw_compare/delta";
     config.bridge_ros.industrial_camera_params = "/serial/industrial_camera/params";
     config.bridge_ros.start_task_service = "/serial/drone/start_task";
@@ -395,7 +395,8 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
             return shelf.code + " has a duplicate shelf code";
         }
         shelf_codes.insert(shelf_code);
-        if (!shelf.scene_color.isValid() || shelf.height <= 0.0 ||
+        if (!shelf.scene_color.isValid() ||
+            !QColor(shelf.button_status_color).isValid() || shelf.height <= 0.0 ||
             shelf.base_rect.width() <= 0.0 || shelf.base_rect.height() <= 0.0)
         {
             return shelf.code + " has invalid geometry, height, or color";

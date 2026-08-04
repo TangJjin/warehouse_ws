@@ -19,6 +19,7 @@ class ShelfInfoDialog;
 class TopStatusBar;
 class RosManager;
 class QTimer;
+class QPlainTextEdit;
 
 class QDialog;
 
@@ -42,6 +43,9 @@ private:
     void updateOverlayGeometry();//调整悬浮控件的位置和大小
     void applyWindowStyle();//设置整体的窗口和控件样式
     void applyInspectionProject(InspectionProject project);//切换 Cargo/Animal 主画板
+    // 参数页启用新的货架/槽位配置后，迁移槽位数据并立即刷新货物巡检界面。
+    void applyShelfConfigurationToUi(
+        const WarehouseConfig &previous_config);
     void appendRunLog(const QString &text);//把运行日志写入当前项目页面
     void clearRunLogs();//清除两个项目页面的运行日志
 
@@ -146,7 +150,7 @@ private:
     int mission_trigger_time_text_flag_ = 1;
     bool mission_time_trigger_enabled_ = false;//当前是否启用时间触发上传，本轮默认关闭
     bool mission_upload_in_progress_ = false;//当前是否有一条上传请求正在执行，避免重复触发
-    bool car_s4_pressed_latched_ = false;//只在 S4 从 false 变为 true 时触发一次
+    bool car_route_active_latched_ = false;//小车路线从 IDLE 进入运行态时只触发一次，回到 IDLE 后重新允许触发
     bool collaboration_mission_active_ = false;//空地协同从启动到任务结束期间拒绝重复上传和启动
     bool collaboration_task_running_seen_ = false;//确认本轮至少进入过运行态后，false 才视为正常结束
 
@@ -189,6 +193,8 @@ private:
     QLabel *car_yaw_value_label_ = nullptr;//航向数值
 
     QWidget *collaboration_status_panel_ = nullptr;//空地协同右下角任务状态面板
+    QWidget *collaboration_log_panel_ = nullptr;//空地协同独立运行日志面板
+    QPlainTextEdit *collaboration_run_log_view_ = nullptr;//显示上传、Offboard、Start 和控制命令结果
     QLabel *collaboration_drone_status_value_label_ = nullptr;//无人机当前动作的中文状态
     QLabel *collaboration_car_status_value_label_ = nullptr;//无人车当前路线状态的中文说明
     QTimer *drone_drop_status_timer_ = nullptr;//抛投持续期间临时保持“抛投”显示

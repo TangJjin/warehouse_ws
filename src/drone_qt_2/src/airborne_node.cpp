@@ -42,6 +42,11 @@ void AirborneNode::setupInterfaces()
     local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/drone/local_position", position_pub_qos);
 
+    auto car_position_pub_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    //创建一个发布者，发布无人机本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
+    car_local_position_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+        "/car/local_position", car_position_pub_qos);
+
     auto drone_control_status_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     //创建一个发布者，发布无人机控制状态话题，消息类型为自定义消息
     return_status_pub_ = this->create_publisher<drone_msgs::msg::TaskStatus>(
@@ -127,6 +132,21 @@ void AirborneNode::setupInterfaces()
             position_qy = msg->pose.orientation.y;
             position_qz = msg->pose.orientation.z;
             position_qw = msg->pose.orientation.w;
+        });
+
+    auto car_position_qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
+    //创建一个订阅者，订阅无人车本地位置，消息类型为geometry_msgs::PoseStamped
+    car_local_position_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        "/car/local_position/pose", car_position_qos,
+        [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+            car_position_x = msg->pose.position.x;
+            car_position_y = msg->pose.position.y;
+            car_position_z = msg->pose.position.z;
+
+            car_position_qx = msg->pose.orientation.x;
+            car_position_qy = msg->pose.orientation.y;
+            car_position_qz = msg->pose.orientation.z;
+            car_position_qw = msg->pose.orientation.w;
         });
 
     auto control_status_qos =
@@ -245,6 +265,16 @@ void AirborneNode::publishStatus()
     position_msg.pose.orientation.z = position_qz;
     position_msg.pose.orientation.w = position_qw;
     local_position_pub_->publish(position_msg);
+
+    geometry_msgs::msg::PoseStamped car_position_msg;
+    car_position_msg.pose.position.x = car_position_x;
+    car_position_msg.pose.position.y = car_position_y;
+    car_position_msg.pose.position.z = car_position_z;
+    car_position_msg.pose.orientation.x = car_position_qx;
+    car_position_msg.pose.orientation.y = car_position_qy;
+    car_position_msg.pose.orientation.z = car_position_qz;
+    car_position_msg.pose.orientation.w = car_position_qw;
+    car_local_position_pub_->publish(car_position_msg);
 
     if (armed == true) {
         if (unlock_flag_ == false) {
@@ -393,7 +423,7 @@ bool AirborneNode::saveMissionYamlToFile(
     std::string &error_message)
 {
     //将接收到的yaml字符串保存到文件中，并返回保存路径和错误信息
-    const std::string dir_path = "/home/orangepi/drone_ws/src/drone_mission/config";
+    const std::string dir_path = "/home/sunrise/warehouse_ws/src/drone_mission/config";
     const std::string file_path = dir_path + "/ground_mission.yaml";
 
     //使用std::filesystem创建目录，如果目录不存在的话
@@ -438,15 +468,11 @@ void AirborneNode::handleUploadMissionSummary(
     }
 
     //保存当前上传方式内容
-    waypoint_or_button_ = request->summary.compress_straight_segments;
+    // 空航点用于顶部“执行”，直接读取固定 mission.yaml；非空航点用于“航点飞行”，
+    // 始终动态生成 ground_mission.yaml。compress_straight_segments 只负责生成规则，
+    // 不再决定读取固定路线还是生成路线。
+    waypoint_or_button_ = !request->points.empty();
 
-    if (request->points.empty() && waypoint_or_button_ == true) {
-        response->success = false;
-        response->message = "路线点为空";
-        response->saved_path = "";
-        response->action_count = 0;
-        return;
-    }
 
     std::vector<AirborneWorldCoord> path_points;
     path_points.reserve(request->points.size());
@@ -454,16 +480,22 @@ void AirborneNode::handleUploadMissionSummary(
         path_points.push_back(AirborneWorldCoord{point.x, point.y, point.z, point.yaw});
     }
 
+    // 生成任务分支中的结果需要在函数末尾写入响应，因此变量必须定义在 if 外。
+    uint32_t action_count = 0;
+    std::string generated_mission_path;
+
     if(waypoint_or_button_ == true){
         //从mission summary中提取选项参数，并使用路径点和选项参数生成mission yaml文本，同时统计mission action的数量
         const auto options = AirborneMissionYamlBuilder::fromMissionSummary(request->summary);
         const QString mission_yaml = AirborneMissionYamlBuilder::buildMissionYaml(path_points, options);
-        const uint32_t action_count = AirborneMissionYamlBuilder::countMissionActions(path_points, options);
+        action_count = AirborneMissionYamlBuilder::countMissionActions(path_points, options);
 
-        std::string saved_path;
         std::string error_message;
         //将生成的mission yaml文本保存到文件中，并获取保存路径和错误信息
-        const bool ok = saveMissionYamlToFile(mission_yaml.toStdString(), saved_path, error_message);
+        const bool ok = saveMissionYamlToFile(
+            mission_yaml.toStdString(),
+            generated_mission_path,
+            error_message);
 
         if (!ok) {
             response->success = false;
@@ -480,18 +512,21 @@ void AirborneNode::handleUploadMissionSummary(
 
     if(waypoint_or_button_ == false)
     {
-        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/warehouse/mission.yaml";
+        // 空路线表示使用机载端预设的货架巡检固定路线，不生成也不覆盖 YAML。
+        current_mission_path_ =
+            "/home/sunrise/warehouse_ws/src/drone_mission/warehouse/mission.yaml";
     }
     else
     {
-        current_mission_path_ = "/home/sunrise/drone_ws/src/drone_mission/config/ground_mission.yaml";
+        // 使用保存函数实际返回的路径，避免再维护一份可能不一致的硬编码路径。
+        current_mission_path_ = generated_mission_path;
     }
 
     response->success = true;
     //response->message = "mission 摘要上传成功，机载端已生成 YAML";
     response->message = "正在初始化";
     response->saved_path = current_mission_path_;
-    response->action_count = 0;
+    response->action_count = action_count;
 }
 
 bool AirborneNode::startOffboardCommand()
@@ -537,7 +572,7 @@ bool AirborneNode::startOffboardCommand()
 
     const QString command = QString(
         "source /opt/ros/humble/setup.bash && "
-        "source ~/drone_ws/install/setup.bash && "
+        "source /home/sunrise/warehouse_ws/install/setup.bash && "
         "exec ros2 launch drone_bringup run_offboard.launch.py "
         "mission_config_path:=%1 "
         "enable_offboard_control:=true ")
@@ -560,7 +595,7 @@ bool AirborneNode::startTaskCommand()
 {
     const std::string command =
         "bash -lc 'source /opt/ros/humble/setup.bash && "
-        "source ~/drone_ws/install/setup.bash && "
+        "source /home/sunrise/warehouse_ws/install/setup.bash && "
         "ros2 topic pub --once /start_mission std_msgs/msg/Empty \"{}\"'";
 
     std::thread([this, command]() {

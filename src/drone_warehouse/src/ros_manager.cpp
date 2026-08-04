@@ -242,7 +242,7 @@ void RosManager::setupRosInterfaces()
     auto car_local_position_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     //创建一个订阅者，订阅无人车本地位置话题，消息类型为geometry_msgs::msg::PoseStamped
     car_local_position_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-        topic_config_.car_local_position.toStdString(),
+        "/car/local_position",
         car_local_position_qos,
         [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg)
         {
@@ -267,7 +267,7 @@ void RosManager::setupRosInterfaces()
     // /keypad/s4_pressed 是小车 S4 的实时按键状态。地面站只转发状态，
     // 无人机任务仍由 Qt 主线程在 false -> true 的边沿上触发。
     car_keypad_s4_pressed_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
-        topic_config_.car_keypad_s4_pressed.toStdString(),
+        "/keypad/s4_pressed",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const std_msgs::msg::Bool::SharedPtr msg)
         {
@@ -287,7 +287,7 @@ void RosManager::setupRosInterfaces()
     // 路线管理器发布的是短字符串状态。回调仍只负责转发，
     // 中文显示由 MainWindow 统一处理，避免通信层混入界面文案。
     car_route_state_sub_ = node_->create_subscription<std_msgs::msg::String>(
-        topic_config_.car_route_state.toStdString(),
+        "/route/state",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         [this](const std_msgs::msg::String::SharedPtr msg)
         {
@@ -307,7 +307,7 @@ void RosManager::setupRosInterfaces()
         });
 
     car_control_mode_pub_ = node_->create_publisher<std_msgs::msg::String>(
-        topic_config_.car_control_mode.toStdString(),
+        "/control/mode",
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
 
 auto delta_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();

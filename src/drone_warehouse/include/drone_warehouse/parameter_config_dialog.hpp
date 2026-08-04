@@ -20,6 +20,7 @@ class QWidget;
 enum class ParameterGroup
 {
     All,
+    Shelf,
     Flight,
     Servo,
     Camera
