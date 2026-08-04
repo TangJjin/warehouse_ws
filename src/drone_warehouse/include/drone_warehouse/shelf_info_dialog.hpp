@@ -29,6 +29,10 @@ public:
     // 这里不再像之前那样分散传很多 QStringList，而是直接传结构化后的 QVector<ShelfPanelData>。
     void setShelfPanelData(const QVector<ShelfPanelData> &shelf_panel_data);//将外部数据一次性传入
 
+    // 参数页修改槽位行列后，主窗口调用这里重建按钮网格。
+    // 仅替换结构配置，不直接修改主窗口持有的货架业务数据。
+    void setSlotGridConfig(const SlotGridConfig &slot_config);
+
 signals:
     void slotDoubleClicked(int shelf_index, const QString &side, int row, int col);//双击某个点位时通知主窗口弹图
     void manualStockInScanned(int shelf_index, const QString &side, int row, int col,

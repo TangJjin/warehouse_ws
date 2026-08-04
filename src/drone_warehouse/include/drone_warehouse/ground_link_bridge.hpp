@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <unordered_map>
@@ -9,6 +10,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QSerialPort>
+#include <QTimer>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 
 #include <rclcpp/rclcpp.hpp>
@@ -88,6 +90,12 @@ private:
     void setupRosInterfaces();
     //设置串口通信参数，并连接相关信号槽
     void setupSerial();
+    // Open the configured drone telemetry port; the watchdog retries after disconnects.
+    bool openSerial();
+    // Close a failed device handle so the watchdog can reopen the stable port name.
+    void onSerialError(QSerialPort::SerialPortError error);
+    // Recover from USB reconnects, driver stalls, and prolonged frame loss.
+    void checkSerialHealth();
 
     //串口数据读取回调函数，用于处理接收到的数据
     void onSerialReadyRead();
@@ -161,7 +169,11 @@ private:
     std::unordered_map<uint16_t, PendingStopPushCall> pending_stop_push_calls_;
 
     QSerialPort serial_;
+    QTimer serial_watchdog_timer_;
     QByteArray rx_buffer_;
+    std::chrono::steady_clock::time_point last_valid_packet_time_{
+        std::chrono::steady_clock::now()};
+    bool serial_reopen_in_progress_{false};
     uint16_t next_seq_{1};
     uint16_t next_msg_id_{1};
     std::unordered_map<uint16_t, PendingRequest> pending_requests_;

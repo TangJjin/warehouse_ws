@@ -120,7 +120,12 @@ namespace
 
         if (all_gray)
         {
-            return QColor("#7f8c9a");
+            // 没有业务状态时使用 ShelfConfig 配置的按钮默认色。
+            // 运行状态仍按下方红/黄/绿优先级覆盖该颜色。
+            const QColor configured_color(shelf.button_status_color);
+            return configured_color.isValid()
+                ? configured_color
+                : QColor("#7f8c9a");
         }
 
         if (has_red)
@@ -353,6 +358,32 @@ ShelfInfoDialog::ShelfInfoDialog(
         "background: rgba(70, 110, 160, 120);"
         "}"
     );
+}
+
+void ShelfInfoDialog::setSlotGridConfig(const SlotGridConfig &slot_config)
+{
+    // buildSlotGrid() 在构造时运行过一次。配置变化后必须先销毁旧按钮，
+    // 否则新旧按钮会同时留在 QGridLayout 中，并且旧按钮仍保存旧行列属性。
+    for (QPushButton *button : slot_buttons_)
+    {
+        slot_grid_layout_->removeWidget(button);
+        delete button;
+    }
+    slot_buttons_.clear();
+
+    slot_config_ = slot_config;
+    current_slot_row_ = qBound(0, current_slot_row_, slot_config_.rows - 1);
+    current_slot_col_ = qBound(0, current_slot_col_, slot_config_.columns - 1);
+    buildSlotGrid();
+
+    // 主窗口随后会通过 setShelfPanelData() 传入按新行列迁移后的数据。
+    // 如果当前副本本身已经匹配，也允许这里直接刷新，方便单独复用此接口。
+    if (!shelf_panel_data_.isEmpty() &&
+        shelf_panel_data_.constFirst().front_slots.size() ==
+            slot_config_.slotCountPerSide())
+    {
+        updateSlotGrid();
+    }
 }
 
 void ShelfInfoDialog::setShelfPanelData(const QVector<ShelfPanelData> &shelf_panel_data)

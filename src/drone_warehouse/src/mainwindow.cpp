@@ -41,6 +41,74 @@
 
 namespace
 {
+// 只比较会影响货架画板、槽位映射和航点生成的配置。
+// 飞行、伺服或相机参数变化时不应触发货架业务数据迁移。
+bool shelfConfigurationEquals(
+    const WarehouseConfig &left,
+    const WarehouseConfig &right)
+{
+    const SlotGridConfig &left_grid = left.slot_grid;
+    const SlotGridConfig &right_grid = right.slot_grid;
+    if (left_grid.rows != right_grid.rows ||
+        left_grid.columns != right_grid.columns ||
+        left_grid.waypoint_row_z_m != right_grid.waypoint_row_z_m ||
+        left_grid.waypoint_front_x_m != right_grid.waypoint_front_x_m ||
+        left_grid.waypoint_back_x_m != right_grid.waypoint_back_x_m ||
+        left_grid.front_yaw_rad != right_grid.front_yaw_rad ||
+        left_grid.back_yaw_rad != right_grid.back_yaw_rad ||
+        left_grid.pose_y_min != right_grid.pose_y_min ||
+        left_grid.pose_y_max != right_grid.pose_y_max ||
+        left_grid.pose_z_min != right_grid.pose_z_min ||
+        left_grid.pose_z_max != right_grid.pose_z_max ||
+        left.shelves.size() != right.shelves.size())
+    {
+        return false;
+    }
+
+    for (int shelf_index = 0;
+         shelf_index < left.shelves.size();
+         ++shelf_index)
+    {
+        const ShelfConfig &left_shelf =
+            left.shelves.at(shelf_index);
+        const ShelfConfig &right_shelf =
+            right.shelves.at(shelf_index);
+        if (left_shelf.code != right_shelf.code ||
+            left_shelf.display_name != right_shelf.display_name ||
+            left_shelf.front_slot_prefix != right_shelf.front_slot_prefix ||
+            left_shelf.back_slot_prefix != right_shelf.back_slot_prefix ||
+            left_shelf.base_rect != right_shelf.base_rect ||
+            left_shelf.height != right_shelf.height ||
+            left_shelf.scene_color != right_shelf.scene_color ||
+            left_shelf.button_status_color != right_shelf.button_status_color ||
+            left_shelf.front_waypoint_y_m != right_shelf.front_waypoint_y_m ||
+            left_shelf.back_waypoint_y_m != right_shelf.back_waypoint_y_m ||
+            left_shelf.pose_regions.size() != right_shelf.pose_regions.size())
+        {
+            return false;
+        }
+
+        for (int region_index = 0;
+             region_index < left_shelf.pose_regions.size();
+             ++region_index)
+        {
+            const ShelfPoseRegionConfig &left_region =
+                left_shelf.pose_regions.at(region_index);
+            const ShelfPoseRegionConfig &right_region =
+                right_shelf.pose_regions.at(region_index);
+            if (left_region.side != right_region.side ||
+                left_region.x_min != right_region.x_min ||
+                left_region.x_max != right_region.x_max ||
+                left_region.yaw_min != right_region.yaw_min ||
+                left_region.yaw_max != right_region.yaw_max)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 QString translatedDroneAction(const QString &action_name)
 {
     const QString action = action_name.trimmed().toLower();
@@ -292,12 +360,34 @@ void MainWindow::setupFloatingWidgets()
     collaboration_status_layout->addWidget(
         collaboration_drone_status_value_label_, 0, 1);
 
-    collaboration_status_layout->addWidget(
-        new QLabel("无人车状态", collaboration_status_panel_), 1, 0);
-    collaboration_car_status_value_label_ =
-        new QLabel("未连接", collaboration_status_panel_);
-    collaboration_status_layout->addWidget(
-        collaboration_car_status_value_label_, 1, 1);
+    // collaboration_status_layout->addWidget(
+    //     new QLabel("无人车状态", collaboration_status_panel_), 1, 0);
+    // collaboration_car_status_value_label_ =
+    //     new QLabel("未连接", collaboration_status_panel_);
+    // collaboration_status_layout->addWidget(
+    //     collaboration_car_status_value_label_, 1, 1);
+
+    collaboration_status_panel_->hide();
+
+    // Collaboration 不复用 Cargo 的日志控件。Cargo 页面在协同模式下是隐藏的，
+    // 如果继续写入 Cargo 日志，操作员虽然收到消息却无法在当前界面看到。
+    collaboration_log_panel_ = new QWidget(central_container_);
+    collaboration_log_panel_->setObjectName("collaborationLogPanel");
+    auto *collaboration_log_layout =
+        new QVBoxLayout(collaboration_log_panel_);
+    collaboration_log_layout->setContentsMargins(12, 10, 12, 12);
+    collaboration_log_layout->setSpacing(8);
+
+    auto *collaboration_log_title =
+        new QLabel("运行日志", collaboration_log_panel_);
+    collaboration_log_title->setObjectName("collaborationLogTitle");
+    collaboration_log_layout->addWidget(collaboration_log_title);
+
+    collaboration_run_log_view_ =
+        new QPlainTextEdit(collaboration_log_panel_);
+    collaboration_run_log_view_->setReadOnly(true);
+    collaboration_run_log_view_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    collaboration_log_layout->addWidget(collaboration_run_log_view_, 1);
 
     // 控制端舵机抛投保持 3 秒；这段时间优先显示“抛投”，结束后恢复最新动作。
     drone_drop_status_timer_ = new QTimer(this);
@@ -319,6 +409,7 @@ void MainWindow::setupFloatingWidgets()
     top_status_bar_->raise();//确保悬浮控件在主场景视图上面
     attitude_panel_->raise();//确保姿态面板在主场景视图上面
     collaboration_status_panel_->raise();
+    collaboration_log_panel_->raise();
 }
 
 void MainWindow::setupConnections()
@@ -377,8 +468,10 @@ void MainWindow::setupConnections()
             // 参数页点击“启用”后保持打开，同时立即更新地面站内存配置和相机参数。
             connect(&parameter_dialog, &ParameterConfigDialog::configApplied,
                     this, [this](const WarehouseConfig &applied_config) {
+                        const WarehouseConfig previous_config = config_;
                         config_ = applied_config;
                         applyInspectionProject(config_.inspection_project);
+                        applyShelfConfigurationToUi(previous_config);
                         ros_manager_->publishIndustrialCameraParams(
                             config_.industrial_camera);
                     });
@@ -509,39 +602,34 @@ void MainWindow::setupConnections()
                 appendRunLog("已发送小车恢复命令");
             });
 
-        // S4 常态发布 false，按下时只发布一个 true。用锁存值只接受
-        // false -> true 的一次边沿，防止异常的连续 true 重复启动任务。
-
-        connect(ros_manager_, &RosManager::carKeypadS4PressedReceived,
-            this,
-            [this](bool pressed)
-            {
-                if (!pressed)
-                {
-                    car_s4_pressed_latched_ = false;
-                    return;
-                }
-                if (config_.inspection_project != InspectionProject::Collaboration)
-                {
-                    return;
-                }
-                if (car_s4_pressed_latched_)
-                {
-                    return;
-                }
-                car_s4_pressed_latched_ = true;
-                appendRunLog("收到小车 S4 按键信号，开始初始化空地协同任务");
-                triggerMissionUpload("collaboration");
-            },
-            Qt::QueuedConnection);
-
-        // 路线状态经小车数传链路到达后，只在这里转换成面向操作员的中文。
+        // 小车路线状态既用于界面显示，也作为空地协同任务的启动信号。
+        // IDLE 只负责重新布防；同一轮路线中的 TO_B、TO_C 等多个非 IDLE
+        // 状态共用一个锁存值，因此整轮小车任务只会触发一次无人机任务。
         connect(ros_manager_, &RosManager::carRouteStateReceived,
             this,
             [this](const QString &state)
             {
+                const QString normalized_state = state.trimmed().toUpper();
                 collaboration_car_status_value_label_->setText(
                     translatedCarRouteState(state));
+
+                if (normalized_state == "IDLE")
+                {
+                    car_route_active_latched_ = false;
+                    return;
+                }
+                if (normalized_state.isEmpty() ||
+                    config_.inspection_project != InspectionProject::Collaboration ||
+                    car_route_active_latched_)
+                {
+                    return;
+                }
+
+                car_route_active_latched_ = true;
+                appendRunLog(
+                    QString("小车路线进入 %1，开始初始化空地协同任务")
+                        .arg(normalized_state));
+                triggerMissionUpload("collaboration");
             },
             Qt::QueuedConnection);
 
@@ -583,6 +671,14 @@ void MainWindow::setupConnections()
                 //根据命令执行结果的成功与否，更新界面上的结果标签文本，显示相关消息
                 updateCommandResult(success, message);
                 appendRunLog(QString("%1").arg(message));
+                if (!success && collaboration_mission_active_)
+                {
+                    // Start 失败后释放任务锁；路线锁仍保持到小车回到 IDLE，
+                    // 防止同一轮路线状态持续发布时不断自动重试起飞。
+                    collaboration_mission_active_ = false;
+                    collaboration_task_running_seen_ = false;
+                }
+
                 //clock_timer_->start(5000);
             },
             Qt::QueuedConnection);
@@ -628,6 +724,14 @@ void MainWindow::setupConnections()
                         appendRunLog(
                             message.isEmpty() ? "Offboard 启动成功" : message);
                         tryStartAnimalTask();
+                    }
+                    else if (collaboration_mission_active_)
+                    {
+                        // 固定 ground_station.yaml 不会回传需要等待的动态路线。
+                        // Offboard 成功后直接调用 Start，才会真正执行预设任务。
+                        appendRunLog(
+                            message.isEmpty() ? "Offboard 启动成功，正在启动空地协同任务" : message);
+                        ros_manager_->startTask();
                     }
                     else
                     {
@@ -828,6 +932,14 @@ void MainWindow::setupConnections()
             this,
             [this](const QVector<WorldCoord> &points)
             {
+                if (collaboration_mission_active_ ||
+                    config_.inspection_project == InspectionProject::Collaboration)
+                {
+                    // 空地协同使用机载端固定 YAML，不依赖控制程序回传路线。
+                    // 忽略这里的消息，防止 Offboard 回调已经 Start 后再次启动。
+                    return;
+                }
+
                 if (config_.inspection_project == InspectionProject::Animal)
                 {
                     // 只有点击“执行”建立了本轮等待状态，Animal 路线才有效。
@@ -1799,16 +1911,17 @@ void MainWindow::appendRunLog(const QString &text)
         animal_page_->appendRunLog(text);
         break;
     case InspectionProject::Collaboration:
-        cargo_page_->appendRunLog(text);
+        collaboration_run_log_view_->appendPlainText(text);
         break;
     }
 }
 
 void MainWindow::clearRunLogs()
 {
-    // 定时清理时同时清除两页，避免切换后看到上一轮短提示。
+    // 定时清理时同时清除三个项目的日志，避免切换后看到上一轮短提示。
     cargo_page_->clearRunLog();
     animal_page_->clearRunLog();
+    collaboration_run_log_view_->clear();
 }
 
 void MainWindow::applyInspectionProject(InspectionProject project)
@@ -1816,10 +1929,8 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     const bool collaboration =
         project == InspectionProject::Collaboration;
     top_status_bar_->setCollaborationMode(collaboration);
-    if (!collaboration)
-    {
-        car_s4_pressed_latched_ = false;
-    }
+
+    // 路线状态锁只由 IDLE 清除，切换页面不能让同一轮小车路线重复触发。
 
     // const bool animal =
     //     project == InspectionProject::Animal;
@@ -1832,6 +1943,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     animal_page_->hide();
     collaboration_grid_view_->hide();
     collaboration_status_panel_->hide();
+    collaboration_log_panel_->hide();
 
     switch (project)
     {
@@ -1850,6 +1962,7 @@ void MainWindow::applyInspectionProject(InspectionProject project)
     case InspectionProject::Collaboration:
         collaboration_grid_view_->show();
         collaboration_status_panel_->show();
+        collaboration_log_panel_->show();
         attitude_panel_->hide();
         drone_attitude_panel_->show();
         car_attitude_panel_->show();
@@ -1933,6 +2046,138 @@ void MainWindow::applyWindowStyle()
         "font-size: 18px;"
         "}"
     );
+    collaboration_log_panel_->setStyleSheet(
+        "#collaborationLogPanel {"
+        "background: rgba(18, 24, 34, 180);"
+        "border: 1px solid rgba(90, 130, 180, 140);"
+        "border-radius: 8px;"
+        "}"
+        "#collaborationLogTitle {"
+        "background: transparent;"
+        "border: none;"
+        "color: #d7e3f4;"
+        "font-size: 18px;"
+        "font-weight: 600;"
+        "}"
+        "QPlainTextEdit {"
+        "background: rgba(8, 12, 18, 150);"
+        "border: 1px solid rgba(90, 130, 180, 90);"
+        "border-radius: 4px;"
+        "color: #d7e3f4;"
+        "font-size: 16px;"
+        "padding: 6px;"
+        "}"
+    );
+}
+
+void MainWindow::applyShelfConfigurationToUi(
+    const WarehouseConfig &previous_config)
+{
+    // 参数页还会启用飞行、伺服和相机配置。只有 shelves 或 slots 真正变化时
+    // 才重建货架界面，避免修改其他类别时意外清除用户已经选择的航点。
+    const bool shelf_config_changed =
+        !shelfConfigurationEquals(previous_config, config_);
+    if (!shelf_config_changed)
+    {
+        return;
+    }
+
+    // 场景状态、无人机位姿、轨迹和货物数据继续沿用，只替换货架绘制数据。
+    // 这样参数启用后 SceneView 会立即使用新的矩形、立体高度、名称和颜色。
+    scene_data_.shelves.clear();
+    scene_data_.shelves.reserve(config_.shelves.size());
+    for (const ShelfConfig &shelf_config : config_.shelves)
+    {
+        ShelfBlock shelf;
+        shelf.base_rect = shelf_config.base_rect;
+        shelf.height = shelf_config.height;
+        shelf.name = shelf_config.code;
+        shelf.color = shelf_config.scene_color;
+        scene_data_.shelves.push_back(shelf);
+    }
+    cargo_page_->setSceneData(scene_data_);
+
+    // shelf_panel_data_ 保存的是入库台账和巡检结果，不属于低频配置。
+    // 重建时按“同一货架下标、同一行列”迁移仍然存在的格子；缩小行列数时，
+    // 超出新范围的格子会被舍弃，扩大时新增格子保持为空。
+    const QVector<ShelfPanelData> previous_panels = shelf_panel_data_;
+    QVector<ShelfPanelData> migrated_panels;
+    migrated_panels.reserve(config_.shelves.size());
+
+    const int old_rows = previous_config.slot_grid.rows;
+    const int old_columns = previous_config.slot_grid.columns;
+    const int new_rows = config_.slot_grid.rows;
+    const int new_columns = config_.slot_grid.columns;
+    const int copied_rows = std::min(old_rows, new_rows);
+    const int copied_columns = std::min(old_columns, new_columns);
+
+    for (int shelf_index = 0;
+         shelf_index < config_.shelves.size();
+         ++shelf_index)
+    {
+        const ShelfConfig &shelf_config =
+            config_.shelves.at(shelf_index);
+        ShelfPanelData panel;
+        panel.display_name = shelf_config.display_name;
+        panel.button_status_color =
+            shelf_config.button_status_color;
+        panel.front_slots.resize(
+            config_.slot_grid.slotCountPerSide());
+        panel.back_slots.resize(
+            config_.slot_grid.slotCountPerSide());
+
+        if (shelf_index < previous_panels.size() &&
+            old_rows > 0 && old_columns > 0)
+        {
+            const ShelfPanelData &old_panel =
+                previous_panels.at(shelf_index);
+            auto copy_face = [&](const QVector<ShelfSlotItem> &source,
+                                 QVector<ShelfSlotItem> &target) {
+                for (int row = 0; row < copied_rows; ++row)
+                {
+                    for (int col = 0; col < copied_columns; ++col)
+                    {
+                        const int old_index =
+                            row * old_columns + col;
+                        const int new_index =
+                            row * new_columns + col;
+                        if (old_index >= 0 &&
+                            old_index < source.size() &&
+                            new_index >= 0 &&
+                            new_index < target.size())
+                        {
+                            target[new_index] = source.at(old_index);
+                        }
+                    }
+                }
+            };
+            copy_face(old_panel.front_slots, panel.front_slots);
+            copy_face(old_panel.back_slots, panel.back_slots);
+        }
+        migrated_panels.push_back(panel);
+    }
+
+    shelf_panel_data_ = migrated_panels;
+    shelf_info_dialog_->setSlotGridConfig(config_.slot_grid);
+    shelf_info_dialog_->setShelfPanelData(shelf_panel_data_);
+
+    // 已选择航点包含旧的货架坐标、行高和航向，继续保留会造成显示配置
+    // 与实际上传路线不一致，因此货架参数生效时统一清空，要求用户重新选择。
+    clearWaypointRequest();
+
+    // 槽位行列发生变化后同步覆盖运行数据文件，保证下次启动加载时数量匹配。
+    QString storage_error;
+    if (!ShelfPanelStorage::save(
+            shelf_panel_data_, &storage_error))
+    {
+        appendRunLog(
+            QString("货架配置已生效，但槽位数据保存失败：%1")
+                .arg(storage_error));
+    }
+    else
+    {
+        appendRunLog("货架和槽位配置已立即生效");
+    }
 }
 
 void MainWindow::setupDemoData()
@@ -2009,10 +2254,21 @@ void MainWindow::updateOverlayGeometry()
     car_attitude_panel_->setGeometry(width() - 260, 84, 250, 180);
     const int status_panel_width = 380;
     const int status_panel_height = 112;
+    const int status_panel_y =
+        area.height() - status_panel_height - 20;
     collaboration_status_panel_->setGeometry(
         area.width() - status_panel_width - 20,
-        area.height() - status_panel_height - 20,
+        status_panel_y,
         status_panel_width, status_panel_height);
+
+    // 日志使用右侧两块姿态面板的总宽度，并在下方状态面板前结束。
+    // 1024x600 下仍保留约 100 px 高度，更高分辨率会自动获得更多空间。
+    const int collaboration_log_y = 350;
+    const int collaboration_log_height =
+        std::max(90, status_panel_y - collaboration_log_y - 12);
+    collaboration_log_panel_->setGeometry(
+        area.width() - 540, collaboration_log_y,
+        520, collaboration_log_height);
 
     // 两个页面始终使用同一块完整区域；页面内部根据自己的项目规则
     // 安排画板、日志、识别记录和 Cargo 视角控件。
@@ -2032,6 +2288,7 @@ void MainWindow::updateOverlayGeometry()
     drone_attitude_panel_->raise();
     car_attitude_panel_->raise();
     collaboration_status_panel_->raise();
+    collaboration_log_panel_->raise();
 }
 
 QVector<SlotAnalysisInput> MainWindow::collectSlotAnalysisInputs() const
