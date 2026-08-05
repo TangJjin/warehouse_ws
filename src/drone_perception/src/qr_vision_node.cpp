@@ -1166,7 +1166,7 @@ void QrVisionNode::updateVisualCodeCategoryStability(
 
 #if DRONE_PERCEPTION_HAS_BPU
 std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFromDetections(
-    const cv::Mat &color_image,
+    const cv::Mat &source_image,
     const std::vector<BpuYoloDetection> &detections)
 {
   visual_code_timing_ = {};
@@ -1174,15 +1174,15 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
   debug_qr_preprocess_preview_.release();
   debug_qr_preprocess_mode_.clear();
 
-  if (color_image.empty() || detections.empty() || !visual_code_scanner_) {
+  if (source_image.empty() || detections.empty() || !visual_code_scanner_) {
     return decoded_codes;
   }
 
   zbar::ImageScanner &scanner = *visual_code_scanner_;
 
   const cv::Point2f image_center(
-      static_cast<float>(color_image.cols) * 0.5F,
-      static_cast<float>(color_image.rows) * 0.5F);
+      static_cast<float>(source_image.cols) * 0.5F,
+      static_cast<float>(source_image.rows) * 0.5F);
 
   for (const BpuYoloDetection &detection : detections) {
     if (detection.class_id != kYoloClassQrcode) {
@@ -1191,8 +1191,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
     const BpuImageRect image_rect = mapBpuDetectionToImageRect(
         detection,
-        color_image.cols,
-        color_image.rows);
+        source_image.cols,
+        source_image.rows);
     const float x_min = image_rect.x_min;
     const float y_min = image_rect.y_min;
     const float x_max = image_rect.x_max;
@@ -1208,8 +1208,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     const float pad_y = height * kVisualCodeRoiPaddingYRatio;
     const int roi_x_min = std::max(0, static_cast<int>(x_min - pad_x));
     const int roi_y_min = std::max(0, static_cast<int>(y_min - pad_y));
-    const int roi_x_max = std::min(color_image.cols, static_cast<int>(x_max + pad_x));
-    const int roi_y_max = std::min(color_image.rows, static_cast<int>(y_max + pad_y));
+    const int roi_x_max = std::min(source_image.cols, static_cast<int>(x_max + pad_x));
+    const int roi_y_max = std::min(source_image.rows, static_cast<int>(y_max + pad_y));
     const cv::Rect roi(
         roi_x_min,
         roi_y_min,
@@ -1222,8 +1222,15 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
     ++visual_code_timing_.roi_count;
     const auto gray_t0 = SteadyClock::now();
+    const cv::Mat roi_mat = source_image(roi);
     cv::Mat raw_gray_roi;
-    cv::cvtColor(color_image(roi), raw_gray_roi, cv::COLOR_BGR2GRAY);
+
+    if (roi_mat.channels() == 3) {
+      cv::cvtColor(roi_mat, raw_gray_roi, cv::COLOR_BGR2GRAY);
+    } else {
+      // source is already single-channel luma (direct hover path)
+      raw_gray_roi = roi_mat;
+    }
 
     if (!raw_gray_roi.isContinuous()) {
       raw_gray_roi = raw_gray_roi.clone();
@@ -1456,19 +1463,20 @@ void QrVisionNode::resetCaptureCandidateState()
 }
 
 bool QrVisionNode::selectBestPackageInDeadzone(
-    const cv::Mat &color_image,
+    int image_width,
+    int image_height,
     CaptureFrameCandidate &candidate) const
 {
   candidate = {};
 
-  if (color_image.empty() || last_bpu_detections_.empty()) {
+  if (image_width <= 0 || image_height <= 0 || last_bpu_detections_.empty()) {
     return false;
   }
 
-  const double image_center_x = static_cast<double>(color_image.cols) * 0.5;
-  const double image_center_y = static_cast<double>(color_image.rows) * 0.5;
+  const double image_center_x = static_cast<double>(image_width) * 0.5;
+  const double image_center_y = static_cast<double>(image_height) * 0.5;
   const double deadzone_radius =
-      static_cast<double>(std::min(color_image.cols, color_image.rows)) *
+      static_cast<double>(std::min(image_width, image_height)) *
       package_capture_deadzone_ratio_;
   const double deadzone_radius_sq = deadzone_radius * deadzone_radius;
 
@@ -1480,8 +1488,8 @@ bool QrVisionNode::selectBestPackageInDeadzone(
 
     const BpuImageRect image_rect = mapBpuDetectionToImageRect(
         detection,
-        color_image.cols,
-        color_image.rows);
+        image_width,
+        image_height);
 
     if (image_rect.x_max - image_rect.x_min <= 1.0F ||
         image_rect.y_max - image_rect.y_min <= 1.0F) {
@@ -1515,19 +1523,26 @@ bool QrVisionNode::selectBestPackageInDeadzone(
     candidate.valid = true;
   }
 
-  if (!candidate.valid) {
-    return false;
-  }
-
-  candidate.image = color_image.clone();
-  return !candidate.image.empty();
+  return candidate.valid;
 }
 
-void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
+void QrVisionNode::bufferPackageCaptureCandidate(
+    const cv::Mat &color_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height)
 {
-  if (!hover_active_ ||
-      hover_capture_start_time_.nanoseconds() <= 0 ||
-      color_image.empty()) {
+  if (!hover_active_ || hover_capture_start_time_.nanoseconds() <= 0) {
+    return;
+  }
+
+  const bool has_bgr = !color_image.empty();
+  const int image_width = has_bgr ? color_image.cols : yuyv_width;
+  const int image_height = has_bgr ? color_image.rows : yuyv_height;
+
+  if (image_width <= 0 || image_height <= 0 ||
+      (!has_bgr && yuyv == nullptr)) {
     return;
   }
 
@@ -1541,15 +1556,28 @@ void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
   CaptureFrameCandidate candidate;
 
   try {
-    if (!selectBestPackageInDeadzone(color_image, candidate)) {
+    if (!selectBestPackageInDeadzone(image_width, image_height, candidate)) {
       return;
+    }
+
+    // Store the payload only for the selected frame, avoiding a per-frame full
+    // BGR clone in the direct hover path.
+    if (has_bgr) {
+      candidate.image = color_image.clone();
+    } else {
+      candidate.yuyv.assign(
+          yuyv,
+          yuyv + static_cast<std::size_t>(yuyv_stride) * yuyv_height);
+      candidate.yuyv_stride = yuyv_stride;
+      candidate.yuyv_width = yuyv_width;
+      candidate.yuyv_height = yuyv_height;
     }
   } catch (const cv::Exception &e) {
     RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "package capture candidate clone failed: %s",
+        "package capture candidate storage failed: %s",
         e.what());
     return;
   }
@@ -1583,8 +1611,7 @@ void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
 
 bool QrVisionNode::publishBestBufferedCapture()
 {
-  if (!best_package_capture_candidate_.valid ||
-      best_package_capture_candidate_.image.empty()) {
+  if (!best_package_capture_candidate_.valid) {
     RCLCPP_INFO(
         get_logger(),
         "no centered package capture candidate collected in first %.2fs",
@@ -1598,9 +1625,32 @@ bool QrVisionNode::publishBestBufferedCapture()
     return false;
   }
 
-  const bool published = publishFullFrameCapture(
-      barcode,
-      best_package_capture_candidate_.image);
+  // The direct hover path stored YUYV; convert to BGR once at publish time
+  // instead of building a full BGR on every hover frame.
+  cv::Mat capture_bgr;
+
+  if (!best_package_capture_candidate_.image.empty()) {
+    capture_bgr = best_package_capture_candidate_.image;
+  } else if (!best_package_capture_candidate_.yuyv.empty()) {
+    cv::Mat yuyv_mat(
+        best_package_capture_candidate_.yuyv_height,
+        best_package_capture_candidate_.yuyv_width,
+        CV_8UC2,
+        const_cast<std::uint8_t *>(best_package_capture_candidate_.yuyv.data()),
+        best_package_capture_candidate_.yuyv_stride);
+    cv::cvtColor(yuyv_mat, capture_bgr, cv::COLOR_YUV2BGR_YUY2);
+  }
+
+  if (capture_bgr.empty()) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "buffered package capture has no usable frame");
+    return false;
+  }
+
+  const bool published = publishFullFrameCapture(barcode, capture_bgr);
 
   if (!published) {
     return false;
@@ -2056,26 +2106,36 @@ void QrVisionNode::processDirectFrame(
   }
 
   try {
-    // Stage C: only build BGR when the visual chain (QR/OCR/debug/capture) can
-    // consume it. When idle (not hovering, no debug window) the BPU runs on the
-    // Nano2D NV12 directly and no full-frame YUYV->BGR is generated (the RDK
-    // OpenCV YUY2 path is unoptimized, ~20 ms/frame).
-    const bool need_visual = debug_view_ || hover_active_;
+    // Stage C (per-ROI): build a full BGR only for the debug window. When
+    // hovering without a debug window, build full luma (YUYV Y) for QR decoding
+    // instead; OCR converts only its shelf ROI and the capture converts once at
+    // publish time, so no full-frame YUYV->BGR (~20 ms on the RDK) is needed.
+    const bool need_display = debug_view_;
+    const bool need_vision = need_display || hover_active_;
     cv::Mat bgr;
+    cv::Mat gray;
 
-    if (need_visual) {
-      cv::Mat yuyv(
+    if (need_display) {
+      cv::Mat yuyv_mat(
           frame.height,
           frame.width,
           CV_8UC2,
           const_cast<std::uint8_t *>(frame.yuyv.data()),
           frame.stride_bytes);
-      cv::cvtColor(yuyv, bgr, cv::COLOR_YUV2BGR_YUY2);
+      cv::cvtColor(yuyv_mat, bgr, cv::COLOR_YUV2BGR_YUY2);
 
       if (bgr.empty()) {
         ++failed_frame_count_;
         return;
       }
+    } else if (hover_active_) {
+      cv::Mat yuyv_mat(
+          frame.height,
+          frame.width,
+          CV_8UC2,
+          const_cast<std::uint8_t *>(frame.yuyv.data()),
+          frame.stride_bytes);
+      cv::cvtColor(yuyv_mat, gray, cv::COLOR_YUV2GRAY_YUY2);
     }
 
 #if DRONE_PERCEPTION_HAS_BPU
@@ -2201,8 +2261,15 @@ void QrVisionNode::processDirectFrame(
     }
 #endif
 
-    if (need_visual) {
-      runFrameBusinessLogic(bgr, "d435_direct");
+    if (need_vision) {
+      runFrameBusinessLogic(
+          bgr,
+          gray,
+          frame.yuyv.data(),
+          frame.stride_bytes,
+          frame.width,
+          frame.height,
+          "d435_direct");
     }
 
     const auto process_t1 = SteadyClock::now();
@@ -2246,6 +2313,11 @@ void QrVisionNode::processDirectFrame(
 
 void QrVisionNode::runFrameBusinessLogic(
     const cv::Mat &color_image,
+    const cv::Mat &gray_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height,
     const char *input_mode)
 {
 #if DRONE_PERCEPTION_HAS_BPU
@@ -2253,6 +2325,10 @@ void QrVisionNode::runFrameBusinessLogic(
     try {
       recognizeShelfTagFromDetections(
           color_image,
+          yuyv,
+          yuyv_stride,
+          yuyv_width,
+          yuyv_height,
           last_bpu_detections_,
           input_mode);
     } catch (const std::exception &e) {
@@ -2276,8 +2352,10 @@ void QrVisionNode::runFrameBusinessLogic(
 
 #if DRONE_PERCEPTION_HAS_BPU
   if (hover_active_) {
+    // QR decode source: full BGR (debug/ROS) or full luma (direct hover path).
+    const cv::Mat &decode_source = gray_image.empty() ? color_image : gray_image;
     updateVisualCodeStability(
-        decodeVisualCodesFromDetections(color_image, last_bpu_detections_));
+        decodeVisualCodesFromDetections(decode_source, last_bpu_detections_));
   } else {
     debug_raw_symbol_.clear();
     debug_raw_symbol_type_.clear();
@@ -2285,18 +2363,28 @@ void QrVisionNode::runFrameBusinessLogic(
     debug_qr_preprocess_mode_.clear();
   }
 #else
+  (void)gray_image;
   (void)input_mode;
+  (void)yuyv;
+  (void)yuyv_stride;
+  (void)yuyv_width;
+  (void)yuyv_height;
   updateVisualCodeStability({});
   updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
 #endif
 
 #if DRONE_PERCEPTION_HAS_BPU
-  bufferPackageCaptureCandidate(color_image);
+  bufferPackageCaptureCandidate(
+      color_image,
+      yuyv,
+      yuyv_stride,
+      yuyv_width,
+      yuyv_height);
 #else
   publishBarcodeCapture(color_image);
 #endif
 
-  if (debug_view_) {
+  if (debug_view_ && !color_image.empty()) {
     displayDebugFrame(color_image);
   }
 }
@@ -2379,7 +2467,14 @@ void QrVisionNode::processFrame(
   }
 #endif
 
-  runFrameBusinessLogic(color_bridge->image, input_mode);
+  runFrameBusinessLogic(
+      color_bridge->image,
+      cv::Mat{},
+      nullptr,
+      0,
+      0,
+      0,
+      input_mode);
 
   const auto process_t1 = SteadyClock::now();
   last_process_ms_ = elapsedMs(process_t0, process_t1);
@@ -3757,12 +3852,25 @@ QrVisionNode::BpuImageRect QrVisionNode::expandImageRect(
 
 void QrVisionNode::recognizeShelfTagFromDetections(
     const cv::Mat &color_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height,
     const std::vector<BpuYoloDetection> &detections,
     const char *input_mode)
 {
   last_ocr_regions_.clear();
 
-  if (!bpu_ocr_pipeline_ || color_image.empty()) {
+  if (!bpu_ocr_pipeline_) {
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    return;
+  }
+
+  const bool has_bgr = !color_image.empty();
+  const int image_width = has_bgr ? color_image.cols : yuyv_width;
+  const int image_height = has_bgr ? color_image.rows : yuyv_height;
+
+  if (image_width <= 0 || image_height <= 0 || (!has_bgr && yuyv == nullptr)) {
     updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
     return;
   }
@@ -3786,13 +3894,13 @@ void QrVisionNode::recognizeShelfTagFromDetections(
 
   const BpuImageRect image_rect = mapBpuDetectionToImageRect(
       *best_shelf_tag,
-      color_image.cols,
-      color_image.rows);
+      image_width,
+      image_height);
   const BpuImageRect padded_rect = expandImageRect(
       image_rect,
       ocr_yolo_padding_ratio_,
-      color_image.cols,
-      color_image.rows);
+      image_width,
+      image_height);
 
   if (padded_rect.x_max - padded_rect.x_min <= 1.0F ||
       padded_rect.y_max - padded_rect.y_min <= 1.0F) {
@@ -3807,7 +3915,57 @@ void QrVisionNode::recognizeShelfTagFromDetections(
       cv::Point2f(padded_rect.x_min, padded_rect.y_max)};
 
   ocr_invoked_this_frame_ = true;
-  last_ocr_regions_ = bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
+
+  if (has_bgr) {
+    last_ocr_regions_ =
+        bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
+  } else {
+    // Direct hover path: no full BGR. Convert only the padded shelf-tag ROI
+    // from YUYV, then offset OCR regions back into image coordinates.
+    const int roi_x = std::max(0, static_cast<int>(padded_rect.x_min)) & ~1;
+    const int roi_y = std::max(0, static_cast<int>(padded_rect.y_min));
+    const int roi_x_max = std::min(image_width, static_cast<int>(padded_rect.x_max));
+    const int roi_y_max = std::min(image_height, static_cast<int>(padded_rect.y_max));
+    const cv::Rect roi(roi_x, roi_y, roi_x_max - roi_x, roi_y_max - roi_y);
+
+    if (roi.width <= 1 || roi.height <= 1) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+      return;
+    }
+
+    cv::Mat yuyv_roi(
+        roi.height,
+        roi.width,
+        CV_8UC2,
+        const_cast<std::uint8_t *>(yuyv) +
+            static_cast<std::size_t>(roi.y) * yuyv_stride +
+            static_cast<std::size_t>(roi.x) * 2,
+        yuyv_stride);
+    cv::Mat roi_bgr;
+    cv::cvtColor(yuyv_roi, roi_bgr, cv::COLOR_YUV2BGR_YUY2);
+
+    if (roi_bgr.empty()) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+      return;
+    }
+
+    const std::array<cv::Point2f, 4> roi_box = {
+        cv::Point2f(0.0F, 0.0F),
+        cv::Point2f(static_cast<float>(roi.width), 0.0F),
+        cv::Point2f(
+            static_cast<float>(roi.width),
+            static_cast<float>(roi.height)),
+        cv::Point2f(0.0F, static_cast<float>(roi.height))};
+    last_ocr_regions_ =
+        bpu_ocr_pipeline_->recognizeTextBoxes(roi_bgr, {roi_box});
+
+    for (OcrTextRegion &region : last_ocr_regions_) {
+      for (cv::Point2f &point : region.box) {
+        point.x += static_cast<float>(roi.x);
+        point.y += static_cast<float>(roi.y);
+      }
+    }
+  }
 
   std::vector<DecodedVisualCode> ocr_codes;
   std::string ocr_text = "none";

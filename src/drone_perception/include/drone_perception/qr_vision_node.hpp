@@ -152,7 +152,14 @@ private:
 
   struct CaptureFrameCandidate
   {
+    // Full-frame capture payload. In the ROS/debug path the BGR Mat is stored
+    // directly; in the direct hover path (no full BGR built) the YUYV frame is
+    // stored and converted once at publish time.
     cv::Mat image;
+    std::vector<std::uint8_t> yuyv;
+    int yuyv_stride{0};
+    int yuyv_width{0};
+    int yuyv_height{0};
     rclcpp::Time stamp{0, 0, RCL_SYSTEM_TIME};
     float package_score{0.0F};
     double center_distance_sq{0.0};
@@ -264,9 +271,16 @@ private:
       const char *input_mode);
 
   // Shared business tail (QR/OCR/capture/debug) executed after BPU inference
-  // by both the ROS and the direct-capture frame paths.
+  // by both the ROS and the direct-capture frame paths. color_image is the full
+  // BGR (debug/ROS path, may be empty); gray_image is the full luma used for QR
+  // in the direct hover path (may be empty); yuyv is the direct-capture source.
   void runFrameBusinessLogic(
       const cv::Mat &color_image,
+      const cv::Mat &gray_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height,
       const char *input_mode);
 
   void updateFrameAge(const sensor_msgs::msg::Image &color_msg);
@@ -339,12 +353,20 @@ private:
 
   void resetCaptureCandidateState();
 
-  void bufferPackageCaptureCandidate(const cv::Mat &color_image);
+  void bufferPackageCaptureCandidate(
+      const cv::Mat &color_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height);
 
   bool publishBestBufferedCapture();
 
+  // Selects the best centered package detection (score + center distance only,
+  // no image clone). The caller stores the frame payload.
   bool selectBestPackageInDeadzone(
-      const cv::Mat &color_image,
+      int image_width,
+      int image_height,
       CaptureFrameCandidate &candidate) const;
 
   BpuImageRect mapBpuDetectionToImageRect(
@@ -358,13 +380,21 @@ private:
       int image_width,
       int image_height) const;
 
+  // Recognizes the shelf tag text. color_image is the full BGR (may be empty);
+  // when absent, the shelf-tag ROI is converted from the YUYV source.
   void recognizeShelfTagFromDetections(
       const cv::Mat &color_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height,
       const std::vector<BpuYoloDetection> &detections,
       const char *input_mode);
 
+  // Decodes QR/barcode from BPU qrcode detections. source_image may be either
+  // a full BGR image or a full luma (single-channel) image.
   std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
-      const cv::Mat &color_image,
+      const cv::Mat &source_image,
       const std::vector<BpuYoloDetection> &detections);
 
   bool encodeFrameCaptureJpeg(
