@@ -29,19 +29,16 @@ class BarcodeCaptureSaver(Node):
             self.on_capture,
             10)
         self.get_logger().info(
-            'saving /drone/image captures to %s', output_dir)
+            f'saving /drone/image captures to {output_dir}')
 
     def on_capture(self, msg):
         self.count += 1
-        path = os.path.join(self.output_dir, 'capture_%03d.jpg' % self.count)
+        path = os.path.join(self.output_dir, f'capture_{self.count:03d}.jpg')
         with open(path, 'wb') as file:
             file.write(bytes(msg.image_data))
         self.get_logger().info(
-            '[%d] barcode=%s bytes=%d saved=%s',
-            self.count,
-            msg.barcode,
-            len(msg.image_data),
-            path)
+            f'[{self.count}] barcode={msg.barcode} '
+            f'bytes={len(msg.image_data)} saved={path}')
 
 
 def main():
