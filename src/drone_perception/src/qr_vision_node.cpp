@@ -2105,6 +2105,37 @@ void QrVisionNode::processDirectFrame(
                 bpu_letterbox_.scale,
                 bpu_letterbox_.pad_x,
                 bpu_letterbox_.pad_y);
+            // Log the mapped box of the strongest detection so letterbox
+            // reverse-transform correctness (pad_y=80, scale=1.0) can be
+            // validated headlessly against the 640x480 image coordinates.
+            if (!last_bpu_detections_.empty()) {
+              const auto best = std::max_element(
+                  last_bpu_detections_.begin(),
+                  last_bpu_detections_.end(),
+                  [](const BpuYoloDetection &a, const BpuYoloDetection &b) {
+                    return a.score < b.score;
+                  });
+              const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+                  *best,
+                  frame.width,
+                  frame.height);
+              RCLCPP_INFO_THROTTLE(
+                  get_logger(),
+                  *get_clock(),
+                  log_throttle_ms_,
+                  "NANO2D_BOX class=%s score=%.3f "
+                  "model=[%.0f,%.0f,%.0f,%.0f] image=[%.0f,%.0f,%.0f,%.0f]",
+                  BpuYoloDetector::className(best->class_id),
+                  best->score,
+                  best->x_min_px,
+                  best->y_min_px,
+                  best->x_max_px,
+                  best->y_max_px,
+                  image_rect.x_min,
+                  image_rect.y_min,
+                  image_rect.x_max,
+                  image_rect.y_max);
+            }
           } catch (const std::exception &e) {
             RCLCPP_ERROR_THROTTLE(
                 get_logger(),
