@@ -276,6 +276,10 @@ private:
 
   void displayDebugFrame(const cv::Mat &color_image);
 
+  // HighGUI (imshow/waitKey) must run on the main thread; the vision worker
+  // renders the frame and this timer callback on the executor thread shows it.
+  void updateDebugDisplay();
+
   void initializeCameraControls();
 
   void initializeCameraControlDefaults();
@@ -492,6 +496,12 @@ private:
 #endif
 
   std::atomic_bool has_camera_info_{false};
+
+  // Debug display handoff: worker renders, executor thread shows via timer.
+  std::mutex debug_frame_mutex_;
+  cv::Mat latest_debug_frame_;
+  bool debug_frame_ready_{false};
+  rclcpp::TimerBase::SharedPtr debug_display_timer_;
 
   std::mutex vision_worker_mutex_;
   std::condition_variable vision_worker_cv_;

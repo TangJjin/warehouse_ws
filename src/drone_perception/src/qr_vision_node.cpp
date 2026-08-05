@@ -315,10 +315,30 @@ QrVisionNode::QrVisionNode()
   }
 #endif
 
-  // The debug window is created lazily on the vision worker thread (in
-  // displayDebugFrame) so that cv::namedWindow / cv::imshow / cv::waitKey all
-  // run on the same thread. Creating it here on the executor thread freezes the
-  // HighGUI/GTK event loop when imshow is called from the worker thread.
+  // HighGUI windows must be created and driven from the main thread (GTK
+  // initializes there). The window is created here; the worker thread only
+  // renders frames, and a wall timer on the executor thread runs imshow/waitKey.
+  if (debug_view_)
+  {
+    try
+    {
+      cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE);
+      debug_window_created_ = true;
+    }
+    catch (const cv::Exception &e)
+    {
+      debug_view_ = false;
+      debug_window_created_ = false;
+      RCLCPP_WARN(get_logger(), "Cannot open debug window: %s", e.what());
+    }
+  }
+
+  if (debug_window_created_)
+  {
+    debug_display_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(33),
+        [this]() { updateDebugDisplay(); });
+  }
 
   initializeSubscriptions();
 
@@ -2391,23 +2411,12 @@ void QrVisionNode::processFrame(
 
 void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
 {
-  // Create the HighGUI window lazily on this (vision worker) thread so that
-  // namedWindow / imshow / waitKey all run on the same thread. Creating it on
-  // the executor thread froze the GTK event loop (window showed only the first
-  // frame).
+  // HighGUI must be driven from the main thread. This worker-thread function
+  // only renders the frame into a shared slot; updateDebugDisplay() (wall timer
+  // on the executor thread) calls imshow/waitKey.
   if (!debug_window_created_)
   {
-    try
-    {
-      cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE);
-      debug_window_created_ = true;
-    }
-    catch (const cv::Exception &e)
-    {
-      debug_view_ = false;
-      RCLCPP_WARN(get_logger(), "Cannot open debug window: %s", e.what());
-      return;
-    }
+    return;
   }
 
   cv::Mat display = color_image.clone();
@@ -2529,8 +2538,46 @@ void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
   drawQrPreprocessPreview(display);
 #endif
 
-  cv::imshow(window_name_, display);
-  cv::waitKey(1);
+  {
+    std::lock_guard<std::mutex> lock(debug_frame_mutex_);
+    latest_debug_frame_ = std::move(display);
+    debug_frame_ready_ = true;
+  }
+}
+
+void QrVisionNode::updateDebugDisplay()
+{
+  cv::Mat frame;
+
+  {
+    std::lock_guard<std::mutex> lock(debug_frame_mutex_);
+    if (!debug_frame_ready_)
+    {
+      return;
+    }
+    frame = latest_debug_frame_;
+    debug_frame_ready_ = false;
+  }
+
+  if (frame.empty())
+  {
+    return;
+  }
+
+  try
+  {
+    cv::imshow(window_name_, frame);
+    cv::waitKey(1);
+  }
+  catch (const cv::Exception &e)
+  {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "debug window display failed: %s",
+        e.what());
+  }
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
