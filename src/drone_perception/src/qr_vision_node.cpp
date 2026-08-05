@@ -315,19 +315,10 @@ QrVisionNode::QrVisionNode()
   }
 #endif
 
-  if (debug_view_)
-  {
-    try
-    {
-      cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE);
-      debug_window_created_ = true;
-    }
-    catch (const cv::Exception &e)
-    {
-      debug_view_ = false;
-      RCLCPP_WARN(get_logger(), "Cannot open debug window: %s", e.what());
-    }
-  }
+  // The debug window is created lazily on the vision worker thread (in
+  // displayDebugFrame) so that cv::namedWindow / cv::imshow / cv::waitKey all
+  // run on the same thread. Creating it here on the executor thread freezes the
+  // HighGUI/GTK event loop when imshow is called from the worker thread.
 
   initializeSubscriptions();
 
@@ -2400,6 +2391,25 @@ void QrVisionNode::processFrame(
 
 void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
 {
+  // Create the HighGUI window lazily on this (vision worker) thread so that
+  // namedWindow / imshow / waitKey all run on the same thread. Creating it on
+  // the executor thread froze the GTK event loop (window showed only the first
+  // frame).
+  if (!debug_window_created_)
+  {
+    try
+    {
+      cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE);
+      debug_window_created_ = true;
+    }
+    catch (const cv::Exception &e)
+    {
+      debug_view_ = false;
+      RCLCPP_WARN(get_logger(), "Cannot open debug window: %s", e.what());
+      return;
+    }
+  }
+
   cv::Mat display = color_image.clone();
 
   cv::Mat overlay = display.clone();
