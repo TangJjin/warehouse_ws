@@ -48,6 +48,22 @@ class CLAHE;
 #include "drone_perception/bpu_yolo_detector.hpp"
 #endif
 
+#ifndef DRONE_PERCEPTION_HAS_REALSENSE
+#define DRONE_PERCEPTION_HAS_REALSENSE 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+#include "drone_perception/d435_color_capture.hpp"
+#endif
+
+#ifndef DRONE_PERCEPTION_HAS_NANO2D
+#define DRONE_PERCEPTION_HAS_NANO2D 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+#include "drone_perception/nano2d_preprocessor.hpp"
+#endif
+
 class QrVisionNode : public rclcpp::Node
 {
 public:
@@ -136,7 +152,14 @@ private:
 
   struct CaptureFrameCandidate
   {
+    // Full-frame capture payload. In the ROS/debug path the BGR Mat is stored
+    // directly; in the direct hover path (no full BGR built) the YUYV frame is
+    // stored and converted once at publish time.
     cv::Mat image;
+    std::vector<std::uint8_t> yuyv;
+    int yuyv_stride{0};
+    int yuyv_width{0};
+    int yuyv_height{0};
     rclcpp::Time stamp{0, 0, RCL_SYSTEM_TIME};
     float package_score{0.0F};
     double center_distance_sq{0.0};
@@ -201,6 +224,16 @@ private:
 
   void visionWorkerLoop();
 
+  void runRosVisionLoop();
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  void runDirectVisionLoop();
+
+  void initializeDirectCapture();
+
+  void processDirectFrame(const drone_perception::D435ColorFrame &frame);
+#endif
+
   bool prepareBpuInput(const cv::Mat &color_image);
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
@@ -237,12 +270,29 @@ private:
       const std::chrono::steady_clock::time_point &process_t0,
       const char *input_mode);
 
+  // Shared business tail (QR/OCR/capture/debug) executed after BPU inference
+  // by both the ROS and the direct-capture frame paths. color_image is the full
+  // BGR (debug/ROS path, may be empty); gray_image is the full luma used for QR
+  // in the direct hover path (may be empty); yuyv is the direct-capture source.
+  void runFrameBusinessLogic(
+      const cv::Mat &color_image,
+      const cv::Mat &gray_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height,
+      const char *input_mode);
+
   void updateFrameAge(const sensor_msgs::msg::Image &color_msg);
 
   void handleCameraInfo(
       const sensor_msgs::msg::CameraInfo::ConstSharedPtr &camera_info_msg);
 
   void displayDebugFrame(const cv::Mat &color_image);
+
+  // HighGUI (imshow/waitKey) must run on the main thread; the vision worker
+  // renders the frame and this timer callback on the executor thread shows it.
+  void updateDebugDisplay();
 
   void initializeCameraControls();
 
@@ -303,12 +353,20 @@ private:
 
   void resetCaptureCandidateState();
 
-  void bufferPackageCaptureCandidate(const cv::Mat &color_image);
+  void bufferPackageCaptureCandidate(
+      const cv::Mat &color_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height);
 
   bool publishBestBufferedCapture();
 
+  // Selects the best centered package detection (score + center distance only,
+  // no image clone). The caller stores the frame payload.
   bool selectBestPackageInDeadzone(
-      const cv::Mat &color_image,
+      int image_width,
+      int image_height,
       CaptureFrameCandidate &candidate) const;
 
   BpuImageRect mapBpuDetectionToImageRect(
@@ -322,13 +380,21 @@ private:
       int image_width,
       int image_height) const;
 
+  // Recognizes the shelf tag text. color_image is the full BGR (may be empty);
+  // when absent, the shelf-tag ROI is converted from the YUYV source.
   void recognizeShelfTagFromDetections(
       const cv::Mat &color_image,
+      const std::uint8_t *yuyv,
+      int yuyv_stride,
+      int yuyv_width,
+      int yuyv_height,
       const std::vector<BpuYoloDetection> &detections,
       const char *input_mode);
 
+  // Decodes QR/barcode from BPU qrcode detections. source_image may be either
+  // a full BGR image or a full luma (single-channel) image.
   std::vector<DecodedVisualCode> decodeVisualCodesFromDetections(
-      const cv::Mat &color_image,
+      const cv::Mat &source_image,
       const std::vector<BpuYoloDetection> &detections);
 
   bool encodeFrameCaptureJpeg(
@@ -350,6 +416,15 @@ private:
   std::string camera_param_node_;
   std::string barcode_capture_topic_;
   std::string hover_active_topic_;
+
+  std::string camera_input_mode_;
+  std::string d435_serial_;
+  int d435_width_{640};
+  int d435_height_{480};
+  int d435_fps_{30};
+  int d435_wait_timeout_ms_{2000};
+  int d435_reconnect_delay_ms_{2000};
+  bool direct_input_debug_bgr_{true};
 
   std::string bpu_model_path_;
   std::string ocr_rec_model_path_;
@@ -441,7 +516,22 @@ private:
   cv::Ptr<cv::CLAHE> qr_clahe_;
 #endif
 
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  std::unique_ptr<drone_perception::D435ColorCapture> d435_capture_;
+#endif
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  std::unique_ptr<drone_perception::Nano2DPreprocessor> nano2d_;
+  bool nano2d_initialized_{false};
+#endif
+
   std::atomic_bool has_camera_info_{false};
+
+  // Debug display handoff: worker renders, executor thread shows via timer.
+  std::mutex debug_frame_mutex_;
+  cv::Mat latest_debug_frame_;
+  bool debug_frame_ready_{false};
+  rclcpp::TimerBase::SharedPtr debug_display_timer_;
 
   std::mutex vision_worker_mutex_;
   std::condition_variable vision_worker_cv_;

@@ -11,6 +11,7 @@
 #include <exception>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <sensor_msgs/image_encodings.hpp>
 #include <zbar.h>
 
 namespace
@@ -301,6 +303,21 @@ QrVisionNode::QrVisionNode()
   initializeBpuOcrPipeline();
   initializeVisualCodeDecoder();
 
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  if (camera_input_mode_ == "d435_direct") {
+    initializeDirectCapture();
+  }
+#else
+  if (camera_input_mode_ == "d435_direct") {
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct requires librealsense2, but this build "
+        "was compiled without it (camera_input_mode=ros only)");
+  }
+#endif
+
+  // HighGUI windows must be created and driven from the main thread (GTK
+  // initializes there). The window is created here; the worker thread only
+  // renders frames, and a wall timer on the executor thread runs imshow/waitKey.
   if (debug_view_)
   {
     try
@@ -311,8 +328,16 @@ QrVisionNode::QrVisionNode()
     catch (const cv::Exception &e)
     {
       debug_view_ = false;
+      debug_window_created_ = false;
       RCLCPP_WARN(get_logger(), "Cannot open debug window: %s", e.what());
     }
+  }
+
+  if (debug_window_created_)
+  {
+    debug_display_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(33),
+        [this]() { updateDebugDisplay(); });
   }
 
   initializeSubscriptions();
@@ -372,12 +397,33 @@ void QrVisionNode::stopVisionWorker()
   }
 
   vision_worker_cv_.notify_all();
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  // The direct-capture worker may be blocked in
+  // D435ColorCapture::waitForLatest(), which only unblocks when the capture
+  // stops (its condition variable is signaled from stop()).
+  if (d435_capture_) {
+    d435_capture_->stop();
+  }
+#endif
+
   if (vision_worker_.joinable()) {
     vision_worker_.join();
   }
 }
 
 void QrVisionNode::visionWorkerLoop()
+{
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  if (camera_input_mode_ == "d435_direct") {
+    runDirectVisionLoop();
+    return;
+  }
+#endif
+  runRosVisionLoop();
+}
+
+void QrVisionNode::runRosVisionLoop()
 {
   while (rclcpp::ok()) {
     PendingColorFrame color_frame;
@@ -503,6 +549,19 @@ void QrVisionNode::declareParameters()
   hover_active_topic_ = this->declare_parameter<std::string>(
       "hover_active_topic",
       kDefaultHoverActiveTopic);
+  camera_input_mode_ = this->declare_parameter<std::string>(
+      "camera_input_mode", "ros");
+  d435_serial_ = this->declare_parameter<std::string>(
+      "d435_serial", "327122074056");
+  d435_width_ = this->declare_parameter<int>("d435_width", 640);
+  d435_height_ = this->declare_parameter<int>("d435_height", 480);
+  d435_fps_ = this->declare_parameter<int>("d435_fps", 30);
+  d435_wait_timeout_ms_ = this->declare_parameter<int>(
+      "d435_wait_timeout_ms", 2000);
+  d435_reconnect_delay_ms_ = this->declare_parameter<int>(
+      "d435_reconnect_delay_ms", 2000);
+  direct_input_debug_bgr_ = this->declare_parameter<bool>(
+      "direct_input_debug_bgr", true);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   shelf_code_stable_frames_ = this->declare_parameter<int>(
       "shelf_code_stable_frames",
@@ -630,6 +689,31 @@ void QrVisionNode::declareParameters()
         "barcode_capture_jpeg_quality must be in [1, 100], reset to %d",
         kDefaultBarcodeCaptureJpegQuality);
     barcode_capture_jpeg_quality_ = kDefaultBarcodeCaptureJpegQuality;
+  }
+
+  if (camera_input_mode_ != "ros" && camera_input_mode_ != "d435_direct")
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_input_mode must be 'ros' or 'd435_direct', got '%s'; reset to 'ros'",
+        camera_input_mode_.c_str());
+    camera_input_mode_ = "ros";
+  }
+
+  if (d435_wait_timeout_ms_ < 100)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "d435_wait_timeout_ms must be at least 100, reset to 2000");
+    d435_wait_timeout_ms_ = 2000;
+  }
+
+  if (d435_reconnect_delay_ms_ < 100)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "d435_reconnect_delay_ms must be at least 100, reset to 2000");
+    d435_reconnect_delay_ms_ = 2000;
   }
 }
 
@@ -1082,7 +1166,7 @@ void QrVisionNode::updateVisualCodeCategoryStability(
 
 #if DRONE_PERCEPTION_HAS_BPU
 std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFromDetections(
-    const cv::Mat &color_image,
+    const cv::Mat &source_image,
     const std::vector<BpuYoloDetection> &detections)
 {
   visual_code_timing_ = {};
@@ -1090,15 +1174,15 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
   debug_qr_preprocess_preview_.release();
   debug_qr_preprocess_mode_.clear();
 
-  if (color_image.empty() || detections.empty() || !visual_code_scanner_) {
+  if (source_image.empty() || detections.empty() || !visual_code_scanner_) {
     return decoded_codes;
   }
 
   zbar::ImageScanner &scanner = *visual_code_scanner_;
 
   const cv::Point2f image_center(
-      static_cast<float>(color_image.cols) * 0.5F,
-      static_cast<float>(color_image.rows) * 0.5F);
+      static_cast<float>(source_image.cols) * 0.5F,
+      static_cast<float>(source_image.rows) * 0.5F);
 
   for (const BpuYoloDetection &detection : detections) {
     if (detection.class_id != kYoloClassQrcode) {
@@ -1107,8 +1191,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
     const BpuImageRect image_rect = mapBpuDetectionToImageRect(
         detection,
-        color_image.cols,
-        color_image.rows);
+        source_image.cols,
+        source_image.rows);
     const float x_min = image_rect.x_min;
     const float y_min = image_rect.y_min;
     const float x_max = image_rect.x_max;
@@ -1124,8 +1208,8 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
     const float pad_y = height * kVisualCodeRoiPaddingYRatio;
     const int roi_x_min = std::max(0, static_cast<int>(x_min - pad_x));
     const int roi_y_min = std::max(0, static_cast<int>(y_min - pad_y));
-    const int roi_x_max = std::min(color_image.cols, static_cast<int>(x_max + pad_x));
-    const int roi_y_max = std::min(color_image.rows, static_cast<int>(y_max + pad_y));
+    const int roi_x_max = std::min(source_image.cols, static_cast<int>(x_max + pad_x));
+    const int roi_y_max = std::min(source_image.rows, static_cast<int>(y_max + pad_y));
     const cv::Rect roi(
         roi_x_min,
         roi_y_min,
@@ -1138,8 +1222,15 @@ std::vector<QrVisionNode::DecodedVisualCode> QrVisionNode::decodeVisualCodesFrom
 
     ++visual_code_timing_.roi_count;
     const auto gray_t0 = SteadyClock::now();
+    const cv::Mat roi_mat = source_image(roi);
     cv::Mat raw_gray_roi;
-    cv::cvtColor(color_image(roi), raw_gray_roi, cv::COLOR_BGR2GRAY);
+
+    if (roi_mat.channels() == 3) {
+      cv::cvtColor(roi_mat, raw_gray_roi, cv::COLOR_BGR2GRAY);
+    } else {
+      // source is already single-channel luma (direct hover path)
+      raw_gray_roi = roi_mat;
+    }
 
     if (!raw_gray_roi.isContinuous()) {
       raw_gray_roi = raw_gray_roi.clone();
@@ -1372,19 +1463,20 @@ void QrVisionNode::resetCaptureCandidateState()
 }
 
 bool QrVisionNode::selectBestPackageInDeadzone(
-    const cv::Mat &color_image,
+    int image_width,
+    int image_height,
     CaptureFrameCandidate &candidate) const
 {
   candidate = {};
 
-  if (color_image.empty() || last_bpu_detections_.empty()) {
+  if (image_width <= 0 || image_height <= 0 || last_bpu_detections_.empty()) {
     return false;
   }
 
-  const double image_center_x = static_cast<double>(color_image.cols) * 0.5;
-  const double image_center_y = static_cast<double>(color_image.rows) * 0.5;
+  const double image_center_x = static_cast<double>(image_width) * 0.5;
+  const double image_center_y = static_cast<double>(image_height) * 0.5;
   const double deadzone_radius =
-      static_cast<double>(std::min(color_image.cols, color_image.rows)) *
+      static_cast<double>(std::min(image_width, image_height)) *
       package_capture_deadzone_ratio_;
   const double deadzone_radius_sq = deadzone_radius * deadzone_radius;
 
@@ -1396,8 +1488,8 @@ bool QrVisionNode::selectBestPackageInDeadzone(
 
     const BpuImageRect image_rect = mapBpuDetectionToImageRect(
         detection,
-        color_image.cols,
-        color_image.rows);
+        image_width,
+        image_height);
 
     if (image_rect.x_max - image_rect.x_min <= 1.0F ||
         image_rect.y_max - image_rect.y_min <= 1.0F) {
@@ -1431,19 +1523,26 @@ bool QrVisionNode::selectBestPackageInDeadzone(
     candidate.valid = true;
   }
 
-  if (!candidate.valid) {
-    return false;
-  }
-
-  candidate.image = color_image.clone();
-  return !candidate.image.empty();
+  return candidate.valid;
 }
 
-void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
+void QrVisionNode::bufferPackageCaptureCandidate(
+    const cv::Mat &color_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height)
 {
-  if (!hover_active_ ||
-      hover_capture_start_time_.nanoseconds() <= 0 ||
-      color_image.empty()) {
+  if (!hover_active_ || hover_capture_start_time_.nanoseconds() <= 0) {
+    return;
+  }
+
+  const bool has_bgr = !color_image.empty();
+  const int image_width = has_bgr ? color_image.cols : yuyv_width;
+  const int image_height = has_bgr ? color_image.rows : yuyv_height;
+
+  if (image_width <= 0 || image_height <= 0 ||
+      (!has_bgr && yuyv == nullptr)) {
     return;
   }
 
@@ -1457,15 +1556,28 @@ void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
   CaptureFrameCandidate candidate;
 
   try {
-    if (!selectBestPackageInDeadzone(color_image, candidate)) {
+    if (!selectBestPackageInDeadzone(image_width, image_height, candidate)) {
       return;
+    }
+
+    // Store the payload only for the selected frame, avoiding a per-frame full
+    // BGR clone in the direct hover path.
+    if (has_bgr) {
+      candidate.image = color_image.clone();
+    } else {
+      candidate.yuyv.assign(
+          yuyv,
+          yuyv + static_cast<std::size_t>(yuyv_stride) * yuyv_height);
+      candidate.yuyv_stride = yuyv_stride;
+      candidate.yuyv_width = yuyv_width;
+      candidate.yuyv_height = yuyv_height;
     }
   } catch (const cv::Exception &e) {
     RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "package capture candidate clone failed: %s",
+        "package capture candidate storage failed: %s",
         e.what());
     return;
   }
@@ -1499,8 +1611,7 @@ void QrVisionNode::bufferPackageCaptureCandidate(const cv::Mat &color_image)
 
 bool QrVisionNode::publishBestBufferedCapture()
 {
-  if (!best_package_capture_candidate_.valid ||
-      best_package_capture_candidate_.image.empty()) {
+  if (!best_package_capture_candidate_.valid) {
     RCLCPP_INFO(
         get_logger(),
         "no centered package capture candidate collected in first %.2fs",
@@ -1514,9 +1625,32 @@ bool QrVisionNode::publishBestBufferedCapture()
     return false;
   }
 
-  const bool published = publishFullFrameCapture(
-      barcode,
-      best_package_capture_candidate_.image);
+  // The direct hover path stored YUYV; convert to BGR once at publish time
+  // instead of building a full BGR on every hover frame.
+  cv::Mat capture_bgr;
+
+  if (!best_package_capture_candidate_.image.empty()) {
+    capture_bgr = best_package_capture_candidate_.image;
+  } else if (!best_package_capture_candidate_.yuyv.empty()) {
+    cv::Mat yuyv_mat(
+        best_package_capture_candidate_.yuyv_height,
+        best_package_capture_candidate_.yuyv_width,
+        CV_8UC2,
+        const_cast<std::uint8_t *>(best_package_capture_candidate_.yuyv.data()),
+        best_package_capture_candidate_.yuyv_stride);
+    cv::cvtColor(yuyv_mat, capture_bgr, cv::COLOR_YUV2BGR_YUY2);
+  }
+
+  if (capture_bgr.empty()) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "buffered package capture has no usable frame");
+    return false;
+  }
+
+  const bool published = publishFullFrameCapture(barcode, capture_bgr);
 
   if (!published) {
     return false;
@@ -1543,6 +1677,13 @@ void QrVisionNode::initializeSubscriptions()
           &QrVisionNode::handleHoverActive,
           this,
           std::placeholders::_1));
+
+  if (camera_input_mode_ == "d435_direct") {
+    RCLCPP_INFO(
+        get_logger(),
+        "Direct capture mode: no ROS color/camera_info subscription");
+    return;
+  }
 
   color_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
       color_topic_,
@@ -1772,6 +1913,482 @@ void QrVisionNode::handleColorFrame(
   }
 }
 
+#if DRONE_PERCEPTION_HAS_REALSENSE
+void QrVisionNode::initializeDirectCapture()
+{
+  // Stage A only accepts the validated 640x480@30 YUYV profile.
+  if (d435_width_ != 640 || d435_height_ != 480 || d435_fps_ != 30) {
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct: this stage only supports "
+        "d435_width=640, d435_height=480, d435_fps=30 (got " +
+        std::to_string(d435_width_) + "x" + std::to_string(d435_height_) +
+        "@" + std::to_string(d435_fps_) + ")");
+  }
+
+  std::string serial = d435_serial_;
+
+  if (serial.empty()) {
+    serial = drone_perception::D435ColorCapture::detectSingleDeviceSerial();
+
+    if (serial.empty()) {
+      throw std::runtime_error(
+          "camera_input_mode=d435_direct: d435_serial is empty and the number "
+          "of D435i devices is not exactly one; refuse to auto-select");
+    }
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Auto-selected the only D435i device serial=%s",
+        serial.c_str());
+  }
+
+  if (camera_controls_enabled_) {
+    camera_controls_enabled_ = false;
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_controls_enabled is ignored in d435_direct mode "
+        "(no realsense2_camera_node to drive)");
+  }
+
+  drone_perception::D435ColorCapture::Config config;
+  config.serial = serial;
+  config.width = d435_width_;
+  config.height = d435_height_;
+  config.fps = d435_fps_;
+  config.wait_timeout_ms = d435_wait_timeout_ms_;
+  config.reconnect_delay_ms = d435_reconnect_delay_ms_;
+
+  d435_capture_ = std::make_unique<drone_perception::D435ColorCapture>(config);
+
+  if (!d435_capture_->start()) {
+    const std::string error = d435_capture_->lastError();
+    d435_capture_.reset();
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct: failed to start D435i capture: " +
+        error);
+  }
+
+  RCLCPP_INFO(
+      get_logger(),
+      "D435i direct capture started. serial=%s format=YUYV width=%d height=%d "
+      "fps=%d wait_timeout_ms=%d reconnect_delay_ms=%d direct_input_debug_bgr=%s",
+      serial.c_str(),
+      config.width,
+      config.height,
+      config.fps,
+      config.wait_timeout_ms,
+      config.reconnect_delay_ms,
+      direct_input_debug_bgr_ ? "true" : "false");
+
+#if DRONE_PERCEPTION_HAS_BPU
+  if (enable_bpu_) {
+#if DRONE_PERCEPTION_HAS_NANO2D
+    // Nano2D (GC820) binds n2d_open()/n2d_blit() to the calling thread via
+    // thread-local storage, so the actual initialize() must run on the vision
+    // worker thread (runDirectVisionLoop), not here on the executor thread.
+    nano2d_ = std::make_unique<drone_perception::Nano2DPreprocessor>();
+#else
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct with enable_bpu=true requires the "
+        "Nano2D hardware preprocessor, which is not available in this build");
+#endif
+  }
+#endif
+}
+
+void QrVisionNode::runDirectVisionLoop()
+{
+  // Poll period bounds hover-event latency when the camera is idle or
+  // disconnected; while frames are flowing waitForLatest() returns as soon as
+  // a new frame is copied, so the poll adds no frame latency.
+  const std::chrono::milliseconds hover_poll_interval(50);
+  std::chrono::steady_clock::time_point last_stats_log = SteadyClock::now();
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  // GC820 Nano2D binds n2d_open()/n2d_blit() to the calling thread, so the
+  // preprocessor must be initialized here on the worker thread.
+  if (enable_bpu_ && nano2d_ && !nano2d_initialized_) {
+    if (nano2d_->initialize(
+            d435_width_,
+            d435_height_,
+            kBpuInputWidthPx,
+            kBpuInputHeightPx)) {
+      nano2d_initialized_ = true;
+      RCLCPP_INFO(
+          get_logger(),
+          "Nano2D preprocessor initialized (worker thread). source=%dx%d model=%dx%d pad_y=80",
+          d435_width_,
+          d435_height_,
+          kBpuInputWidthPx,
+          kBpuInputHeightPx);
+    } else {
+      RCLCPP_ERROR(
+          get_logger(),
+          "Nano2D preprocessor init failed: %s",
+          nano2d_->lastError().c_str());
+    }
+  }
+#endif
+
+  while (rclcpp::ok()) {
+    {
+      std::unique_lock<std::mutex> lock(vision_worker_mutex_);
+
+      if (!vision_worker_running_) {
+        break;
+      }
+
+      if (!pending_hover_events_.empty()) {
+        PendingHoverEvent hover_event = pending_hover_events_.front();
+        pending_hover_events_.pop_front();
+        lock.unlock();
+        applyHoverActive(hover_event.active);
+        continue;
+      }
+    }
+
+    drone_perception::D435ColorFrame frame;
+
+    if (d435_capture_ &&
+        d435_capture_->waitForLatest(frame, hover_poll_interval)) {
+      processDirectFrame(frame);
+      reportPerformanceBaseline();
+    }
+
+    // Surface capture-level statistics (plan 8.2) that the BPU baseline report
+    // cannot carry, so drop/timeout/reconnect trends are visible in the log.
+    const auto now = SteadyClock::now();
+
+    if (d435_capture_ &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_stats_log).count() >= 5000) {
+      last_stats_log = now;
+      RCLCPP_INFO(
+          get_logger(),
+          "D435_CAPTURE captured=%llu dropped=%llu wait_timeout=%llu reconnect=%llu",
+          static_cast<unsigned long long>(d435_capture_->capturedCount()),
+          static_cast<unsigned long long>(d435_capture_->droppedCount()),
+          static_cast<unsigned long long>(d435_capture_->timeoutCount()),
+          static_cast<unsigned long long>(d435_capture_->reconnectCount()));
+    }
+  }
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  // Tear down Nano2D on the same thread that opened it. Idempotent: the member
+  // destructor's later shutdown() sees cleared handles and does nothing.
+  if (nano2d_) {
+    nano2d_->shutdown();
+  }
+#endif
+}
+
+void QrVisionNode::processDirectFrame(
+    const drone_perception::D435ColorFrame &frame)
+{
+  const auto process_t0 = SteadyClock::now();
+
+  if (frame.yuyv.empty() || frame.width <= 0 || frame.height <= 0) {
+    ++failed_frame_count_;
+    return;
+  }
+
+  input_frame_count_.fetch_add(1U);
+
+  updateFps();
+
+  last_queue_wait_ms_ = elapsedMs(frame.received_at, process_t0);
+  queue_wait_window_.push(last_queue_wait_ms_);
+
+  const double frame_age_ms = elapsedMs(frame.received_at, SteadyClock::now());
+  if (frame_age_ms >= 0.0) {
+    last_frame_age_ms_ = frame_age_ms;
+    frame_age_window_.push(frame_age_ms);
+  }
+
+  try {
+    // Stage C (per-ROI): build a full BGR only for the debug window. When
+    // hovering without a debug window, build full luma (YUYV Y) for QR decoding
+    // instead; OCR converts only its shelf ROI and the capture converts once at
+    // publish time, so no full-frame YUYV->BGR (~20 ms on the RDK) is needed.
+    const bool need_display = debug_view_;
+    const bool need_vision = need_display || hover_active_;
+    cv::Mat bgr;
+    cv::Mat gray;
+
+    if (need_display) {
+      cv::Mat yuyv_mat(
+          frame.height,
+          frame.width,
+          CV_8UC2,
+          const_cast<std::uint8_t *>(frame.yuyv.data()),
+          frame.stride_bytes);
+      cv::cvtColor(yuyv_mat, bgr, cv::COLOR_YUV2BGR_YUY2);
+
+      if (bgr.empty()) {
+        ++failed_frame_count_;
+        return;
+      }
+    } else if (hover_active_) {
+      cv::Mat yuyv_mat(
+          frame.height,
+          frame.width,
+          CV_8UC2,
+          const_cast<std::uint8_t *>(frame.yuyv.data()),
+          frame.stride_bytes);
+      cv::cvtColor(yuyv_mat, gray, cv::COLOR_YUV2GRAY_YUY2);
+    }
+
+#if DRONE_PERCEPTION_HAS_BPU
+    bool bpu_inference_succeeded = false;
+    ocr_invoked_this_frame_ = false;
+    visual_code_timing_ = {};
+    last_bpu_detections_.clear();
+
+    if (enable_bpu_ && bpu_detector_) {
+#if DRONE_PERCEPTION_HAS_NANO2D
+      if (nano2d_ && nano2d_initialized_) {
+        const auto preprocess_t0 = SteadyClock::now();
+        drone_perception::Nv12FrameView nv12_view;
+        const bool input_ready = nano2d_->convertYuyvToLetterboxNv12(
+            frame.yuyv.data(),
+            frame.stride_bytes,
+            nv12_view);
+        const auto preprocess_t1 = SteadyClock::now();
+
+        if (input_ready) {
+          const drone_perception::Nano2DLetterboxState nano2d_letterbox =
+              nano2d_->letterboxState();
+          bpu_letterbox_.scale = nano2d_letterbox.scale;
+          bpu_letterbox_.pad_x = nano2d_letterbox.pad_x;
+          bpu_letterbox_.pad_y = nano2d_letterbox.pad_y;
+
+          try {
+            const auto infer_t0 = SteadyClock::now();
+            last_bpu_detections_ =
+                bpu_detector_->inferNv12(nv12_view.data, nv12_view.size);
+            bpu_inference_succeeded = true;
+            const auto infer_t1 = SteadyClock::now();
+
+            int qrcode_count = 0;
+            int package_count = 0;
+            int shelf_tag_count = 0;
+
+            for (const BpuYoloDetection &detection : last_bpu_detections_) {
+              if (detection.class_id == kYoloClassQrcode) {
+                ++qrcode_count;
+              } else if (detection.class_id == kYoloClassPackage) {
+                ++package_count;
+              } else if (detection.class_id == kYoloClassShelfTag) {
+                ++shelf_tag_count;
+              }
+            }
+
+            RCLCPP_DEBUG_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                log_throttle_ms_,
+                "BPU inference ok (nano2d). mode=d435_direct "
+                "nano2d_preprocess_ms=%.2f infer_ms=%.2f input_size=%zu "
+                "detections=%zu qrcode=%d package=%d shelf_tag=%d "
+                "letterbox_scale=%.4f letterbox_pad=%d,%d",
+                elapsedMs(preprocess_t0, preprocess_t1),
+                elapsedMs(infer_t0, infer_t1),
+                nv12_view.size,
+                last_bpu_detections_.size(),
+                qrcode_count,
+                package_count,
+                shelf_tag_count,
+                bpu_letterbox_.scale,
+                bpu_letterbox_.pad_x,
+                bpu_letterbox_.pad_y);
+            // Log the mapped box of the strongest detection so letterbox
+            // reverse-transform correctness (pad_y=80, scale=1.0) can be
+            // validated headlessly against the 640x480 image coordinates.
+            if (!last_bpu_detections_.empty()) {
+              const auto best = std::max_element(
+                  last_bpu_detections_.begin(),
+                  last_bpu_detections_.end(),
+                  [](const BpuYoloDetection &a, const BpuYoloDetection &b) {
+                    return a.score < b.score;
+                  });
+              const BpuImageRect image_rect = mapBpuDetectionToImageRect(
+                  *best,
+                  frame.width,
+                  frame.height);
+              RCLCPP_INFO_THROTTLE(
+                  get_logger(),
+                  *get_clock(),
+                  log_throttle_ms_,
+                  "NANO2D_BOX class=%s score=%.3f "
+                  "model=[%.0f,%.0f,%.0f,%.0f] image=[%.0f,%.0f,%.0f,%.0f]",
+                  BpuYoloDetector::className(best->class_id),
+                  best->score,
+                  best->x_min_px,
+                  best->y_min_px,
+                  best->x_max_px,
+                  best->y_max_px,
+                  image_rect.x_min,
+                  image_rect.y_min,
+                  image_rect.x_max,
+                  image_rect.y_max);
+            }
+          } catch (const std::exception &e) {
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                log_throttle_ms_,
+                "BPU inference failed: %s",
+                e.what());
+          }
+        } else {
+          RCLCPP_ERROR_THROTTLE(
+              get_logger(),
+              *get_clock(),
+              log_throttle_ms_,
+              "Nano2D conversion failed: %s",
+              nano2d_->lastError().c_str());
+        }
+      } else
+#endif
+      {
+        RCLCPP_ERROR_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "camera_input_mode=d435_direct requires the Nano2D preprocessor "
+            "for the BPU path, but it is not available in this build");
+      }
+    }
+#endif
+
+    if (need_vision) {
+      runFrameBusinessLogic(
+          bgr,
+          gray,
+          frame.yuyv.data(),
+          frame.stride_bytes,
+          frame.width,
+          frame.height,
+          "d435_direct");
+    }
+
+    const auto process_t1 = SteadyClock::now();
+    last_process_ms_ = elapsedMs(process_t0, process_t1);
+    process_window_.push(last_process_ms_);
+#if DRONE_PERCEPTION_HAS_BPU
+    if (enable_bpu_) {
+      if (bpu_inference_succeeded) {
+        ++processed_frame_count_;
+      } else {
+        ++failed_frame_count_;
+      }
+    }
+#endif
+    RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "video stream mode=d435_direct fps=%.1f size=%dx%d camera_info=%s "
+        "process_ms=%.2f queue_wait_ms=%.2f debug_view=%s",
+        smoothed_fps_,
+        frame.width,
+        frame.height,
+        has_camera_info_ ? "true" : "false",
+        last_process_ms_,
+        last_queue_wait_ms_,
+        debug_view_ ? "true" : "false");
+  } catch (const std::exception &ex) {
+    ++failed_frame_count_;
+    last_process_ms_ = elapsedMs(process_t0, SteadyClock::now());
+    process_window_.push(last_process_ms_);
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "direct capture frame processing failed: %s",
+        ex.what());
+  }
+}
+#endif
+
+void QrVisionNode::runFrameBusinessLogic(
+    const cv::Mat &color_image,
+    const cv::Mat &gray_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height,
+    const char *input_mode)
+{
+#if DRONE_PERCEPTION_HAS_BPU
+  if (hover_active_ && enable_bpu_ocr_ && bpu_ocr_pipeline_) {
+    try {
+      recognizeShelfTagFromDetections(
+          color_image,
+          yuyv,
+          yuyv_stride,
+          yuyv_width,
+          yuyv_height,
+          last_bpu_detections_,
+          input_mode);
+    } catch (const std::exception &e) {
+      last_ocr_regions_.clear();
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          log_throttle_ms_,
+          "BPU OCR failed: %s",
+          e.what());
+    }
+  } else {
+    last_ocr_regions_.clear();
+    if (hover_active_) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    }
+  }
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+  if (hover_active_) {
+    // QR decode source: full BGR (debug/ROS) or full luma (direct hover path).
+    const cv::Mat &decode_source = gray_image.empty() ? color_image : gray_image;
+    updateVisualCodeStability(
+        decodeVisualCodesFromDetections(decode_source, last_bpu_detections_));
+  } else {
+    debug_raw_symbol_.clear();
+    debug_raw_symbol_type_.clear();
+    debug_qr_preprocess_preview_.release();
+    debug_qr_preprocess_mode_.clear();
+  }
+#else
+  (void)gray_image;
+  (void)input_mode;
+  (void)yuyv;
+  (void)yuyv_stride;
+  (void)yuyv_width;
+  (void)yuyv_height;
+  updateVisualCodeStability({});
+  updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+  bufferPackageCaptureCandidate(
+      color_image,
+      yuyv,
+      yuyv_stride,
+      yuyv_width,
+      yuyv_height);
+#else
+  publishBarcodeCapture(color_image);
+#endif
+
+  if (debug_view_ && !color_image.empty()) {
+    displayDebugFrame(color_image);
+  }
+}
+
 void QrVisionNode::processFrame(
     const cv_bridge::CvImageConstPtr &color_bridge,
     const std::chrono::steady_clock::time_point &process_t0,
@@ -1848,57 +2465,16 @@ void QrVisionNode::processFrame(
       }
     }
   }
-
-  if (hover_active_ && enable_bpu_ocr_ && bpu_ocr_pipeline_) {
-    try {
-      recognizeShelfTagFromDetections(
-          color_bridge->image,
-          last_bpu_detections_,
-          input_mode);
-    } catch (const std::exception &e) {
-      last_ocr_regions_.clear();
-      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-
-      RCLCPP_ERROR_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          log_throttle_ms_,
-          "BPU OCR failed: %s",
-          e.what());
-    }
-  } else {
-    last_ocr_regions_.clear();
-    if (hover_active_) {
-      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-    }
-  }
 #endif
 
-#if DRONE_PERCEPTION_HAS_BPU
-  if (hover_active_) {
-    updateVisualCodeStability(
-        decodeVisualCodesFromDetections(color_bridge->image, last_bpu_detections_));
-  } else {
-    debug_raw_symbol_.clear();
-    debug_raw_symbol_type_.clear();
-    debug_qr_preprocess_preview_.release();
-    debug_qr_preprocess_mode_.clear();
-  }
-#else
-  updateVisualCodeStability({});
-  updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-#endif
-
-#if DRONE_PERCEPTION_HAS_BPU
-  bufferPackageCaptureCandidate(color_bridge->image);
-#else
-  publishBarcodeCapture(color_bridge->image);
-#endif
-
-  if (debug_view_)
-  {
-    displayDebugFrame(color_bridge->image);
-  }
+  runFrameBusinessLogic(
+      color_bridge->image,
+      cv::Mat{},
+      nullptr,
+      0,
+      0,
+      0,
+      input_mode);
 
   const auto process_t1 = SteadyClock::now();
   last_process_ms_ = elapsedMs(process_t0, process_t1);
@@ -1930,6 +2506,14 @@ void QrVisionNode::processFrame(
 
 void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
 {
+  // HighGUI must be driven from the main thread. This worker-thread function
+  // only renders the frame into a shared slot; updateDebugDisplay() (wall timer
+  // on the executor thread) calls imshow/waitKey.
+  if (!debug_window_created_)
+  {
+    return;
+  }
+
   cv::Mat display = color_image.clone();
 
   cv::Mat overlay = display.clone();
@@ -2049,8 +2633,46 @@ void QrVisionNode::displayDebugFrame(const cv::Mat &color_image)
   drawQrPreprocessPreview(display);
 #endif
 
-  cv::imshow(window_name_, display);
-  cv::waitKey(1);
+  {
+    std::lock_guard<std::mutex> lock(debug_frame_mutex_);
+    latest_debug_frame_ = std::move(display);
+    debug_frame_ready_ = true;
+  }
+}
+
+void QrVisionNode::updateDebugDisplay()
+{
+  cv::Mat frame;
+
+  {
+    std::lock_guard<std::mutex> lock(debug_frame_mutex_);
+    if (!debug_frame_ready_)
+    {
+      return;
+    }
+    frame = latest_debug_frame_;
+    debug_frame_ready_ = false;
+  }
+
+  if (frame.empty())
+  {
+    return;
+  }
+
+  try
+  {
+    cv::imshow(window_name_, frame);
+    cv::waitKey(1);
+  }
+  catch (const cv::Exception &e)
+  {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "debug window display failed: %s",
+        e.what());
+  }
 }
 
 #if DRONE_PERCEPTION_HAS_BPU
@@ -3230,12 +3852,25 @@ QrVisionNode::BpuImageRect QrVisionNode::expandImageRect(
 
 void QrVisionNode::recognizeShelfTagFromDetections(
     const cv::Mat &color_image,
+    const std::uint8_t *yuyv,
+    int yuyv_stride,
+    int yuyv_width,
+    int yuyv_height,
     const std::vector<BpuYoloDetection> &detections,
     const char *input_mode)
 {
   last_ocr_regions_.clear();
 
-  if (!bpu_ocr_pipeline_ || color_image.empty()) {
+  if (!bpu_ocr_pipeline_) {
+    updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    return;
+  }
+
+  const bool has_bgr = !color_image.empty();
+  const int image_width = has_bgr ? color_image.cols : yuyv_width;
+  const int image_height = has_bgr ? color_image.rows : yuyv_height;
+
+  if (image_width <= 0 || image_height <= 0 || (!has_bgr && yuyv == nullptr)) {
     updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
     return;
   }
@@ -3259,13 +3894,13 @@ void QrVisionNode::recognizeShelfTagFromDetections(
 
   const BpuImageRect image_rect = mapBpuDetectionToImageRect(
       *best_shelf_tag,
-      color_image.cols,
-      color_image.rows);
+      image_width,
+      image_height);
   const BpuImageRect padded_rect = expandImageRect(
       image_rect,
       ocr_yolo_padding_ratio_,
-      color_image.cols,
-      color_image.rows);
+      image_width,
+      image_height);
 
   if (padded_rect.x_max - padded_rect.x_min <= 1.0F ||
       padded_rect.y_max - padded_rect.y_min <= 1.0F) {
@@ -3280,7 +3915,57 @@ void QrVisionNode::recognizeShelfTagFromDetections(
       cv::Point2f(padded_rect.x_min, padded_rect.y_max)};
 
   ocr_invoked_this_frame_ = true;
-  last_ocr_regions_ = bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
+
+  if (has_bgr) {
+    last_ocr_regions_ =
+        bpu_ocr_pipeline_->recognizeTextBoxes(color_image, {shelf_tag_box});
+  } else {
+    // Direct hover path: no full BGR. Convert only the padded shelf-tag ROI
+    // from YUYV, then offset OCR regions back into image coordinates.
+    const int roi_x = std::max(0, static_cast<int>(padded_rect.x_min)) & ~1;
+    const int roi_y = std::max(0, static_cast<int>(padded_rect.y_min));
+    const int roi_x_max = std::min(image_width, static_cast<int>(padded_rect.x_max));
+    const int roi_y_max = std::min(image_height, static_cast<int>(padded_rect.y_max));
+    const cv::Rect roi(roi_x, roi_y, roi_x_max - roi_x, roi_y_max - roi_y);
+
+    if (roi.width <= 1 || roi.height <= 1) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+      return;
+    }
+
+    cv::Mat yuyv_roi(
+        roi.height,
+        roi.width,
+        CV_8UC2,
+        const_cast<std::uint8_t *>(yuyv) +
+            static_cast<std::size_t>(roi.y) * yuyv_stride +
+            static_cast<std::size_t>(roi.x) * 2,
+        yuyv_stride);
+    cv::Mat roi_bgr;
+    cv::cvtColor(yuyv_roi, roi_bgr, cv::COLOR_YUV2BGR_YUY2);
+
+    if (roi_bgr.empty()) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+      return;
+    }
+
+    const std::array<cv::Point2f, 4> roi_box = {
+        cv::Point2f(0.0F, 0.0F),
+        cv::Point2f(static_cast<float>(roi.width), 0.0F),
+        cv::Point2f(
+            static_cast<float>(roi.width),
+            static_cast<float>(roi.height)),
+        cv::Point2f(0.0F, static_cast<float>(roi.height))};
+    last_ocr_regions_ =
+        bpu_ocr_pipeline_->recognizeTextBoxes(roi_bgr, {roi_box});
+
+    for (OcrTextRegion &region : last_ocr_regions_) {
+      for (cv::Point2f &point : region.box) {
+        point.x += static_cast<float>(roi.x);
+        point.y += static_cast<float>(roi.y);
+      }
+    }
+  }
 
   std::vector<DecodedVisualCode> ocr_codes;
   std::string ocr_text = "none";
