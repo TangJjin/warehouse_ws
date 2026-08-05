@@ -2033,6 +2033,8 @@ void QrVisionNode::processDirectFrame(
 
   input_frame_count_.fetch_add(1U);
 
+  updateFps();
+
   last_queue_wait_ms_ = elapsedMs(frame.received_at, process_t0);
   queue_wait_window_.push(last_queue_wait_ms_);
 
@@ -2043,20 +2045,26 @@ void QrVisionNode::processDirectFrame(
   }
 
   try {
-    // BGR is still needed for QR/OCR/debug/save in Stage B; the BPU path uses
-    // the Nano2D NV12 directly instead of the CPU BGR preprocessing chain.
-    cv::Mat yuyv(
-        frame.height,
-        frame.width,
-        CV_8UC2,
-        const_cast<std::uint8_t *>(frame.yuyv.data()),
-        frame.stride_bytes);
+    // Stage C: only build BGR when the visual chain (QR/OCR/debug/capture) can
+    // consume it. When idle (not hovering, no debug window) the BPU runs on the
+    // Nano2D NV12 directly and no full-frame YUYV->BGR is generated (the RDK
+    // OpenCV YUY2 path is unoptimized, ~20 ms/frame).
+    const bool need_visual = debug_view_ || hover_active_;
     cv::Mat bgr;
-    cv::cvtColor(yuyv, bgr, cv::COLOR_YUV2BGR_YUY2);
 
-    if (bgr.empty()) {
-      ++failed_frame_count_;
-      return;
+    if (need_visual) {
+      cv::Mat yuyv(
+          frame.height,
+          frame.width,
+          CV_8UC2,
+          const_cast<std::uint8_t *>(frame.yuyv.data()),
+          frame.stride_bytes);
+      cv::cvtColor(yuyv, bgr, cv::COLOR_YUV2BGR_YUY2);
+
+      if (bgr.empty()) {
+        ++failed_frame_count_;
+        return;
+      }
     }
 
 #if DRONE_PERCEPTION_HAS_BPU
@@ -2182,7 +2190,9 @@ void QrVisionNode::processDirectFrame(
     }
 #endif
 
-    runFrameBusinessLogic(bgr, "d435_direct");
+    if (need_visual) {
+      runFrameBusinessLogic(bgr, "d435_direct");
+    }
 
     const auto process_t1 = SteadyClock::now();
     last_process_ms_ = elapsedMs(process_t0, process_t1);
@@ -2203,8 +2213,8 @@ void QrVisionNode::processDirectFrame(
         "video stream mode=d435_direct fps=%.1f size=%dx%d camera_info=%s "
         "process_ms=%.2f queue_wait_ms=%.2f debug_view=%s",
         smoothed_fps_,
-        bgr.cols,
-        bgr.rows,
+        frame.width,
+        frame.height,
         has_camera_info_ ? "true" : "false",
         last_process_ms_,
         last_queue_wait_ms_,
