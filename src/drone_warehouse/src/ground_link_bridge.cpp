@@ -10,6 +10,12 @@ namespace lp = drone_msgs::link_protocol;
 
 namespace
 {
+    // 这些是通信层保护上限，不是仓库业务参数。损坏帧中的长度字段
+    // 可能被解析成几万字节，如果不限制，接收端会一直等待并表现为断链。
+    constexpr int kMaxPayloadSize = 4096;
+    constexpr int kSerialWatchdogIntervalMs = 1000;
+    constexpr int kSerialInactivityTimeoutMs = 5000;
+
     // 告诉 QDataStream：多字节数字一律按低字节在前的小端顺序读写。
     // 每创建一个新的 QDataStream，都要先调用一次这个函数。
     void configureStream(QDataStream &stream)
@@ -360,12 +366,92 @@ void GroundLinkBridge::setupSerial()
     QObject::connect(&serial_, &QSerialPort::readyRead, [this]() {
         onSerialReadyRead();
     });
+    QObject::connect(
+        &serial_, &QSerialPort::errorOccurred,
+        [this](QSerialPort::SerialPortError error) {
+            onSerialError(error);
+        });
+    QObject::connect(&serial_watchdog_timer_, &QTimer::timeout, [this]() {
+        checkSerialHealth();
+    });
 
-    if (!serial_.open(QIODevice::ReadWrite)) {
-        RCLCPP_ERROR(
-            this->get_logger(), "failed to open serial port: %s",
-            serial_config_.port_name.toStdString().c_str());
+    openSerial();
+    serial_watchdog_timer_.start(kSerialWatchdogIntervalMs);
+}
+
+bool GroundLinkBridge::openSerial()
+{
+    if (serial_.isOpen()) {
+        return true;
     }
+
+    serial_.clearError();
+    if (!serial_.open(QIODevice::ReadWrite)) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "failed to open serial port %s: %s; retrying",
+            serial_config_.port_name.toStdString().c_str(),
+            serial_.errorString().toStdString().c_str());
+        return false;
+    }
+
+    rx_buffer_.clear();
+    last_valid_packet_time_ = std::chrono::steady_clock::now();
+    RCLCPP_INFO(
+        this->get_logger(), "serial port opened: %s, baud=%d",
+        serial_config_.port_name.toStdString().c_str(),
+        serial_config_.baud_rate);
+    return true;
+}
+
+void GroundLinkBridge::onSerialError(QSerialPort::SerialPortError error)
+{
+    if (error == QSerialPort::NoError ||
+        error == QSerialPort::TimeoutError ||
+        serial_reopen_in_progress_) {
+        return;
+    }
+
+    RCLCPP_WARN(
+        this->get_logger(), "serial port error %d: %s; scheduling reconnect",
+        static_cast<int>(error),
+        serial_.errorString().toStdString().c_str());
+
+    serial_reopen_in_progress_ = true;
+    if (serial_.isOpen()) {
+        serial_.close();
+    }
+    rx_buffer_.clear();
+    last_valid_packet_time_ = std::chrono::steady_clock::now();
+    serial_reopen_in_progress_ = false;
+}
+
+void GroundLinkBridge::checkSerialHealth()
+{
+    if (!serial_.isOpen()) {
+        openSerial();
+        return;
+    }
+
+    const auto silent_for_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - last_valid_packet_time_).count();
+    if (silent_for_ms < kSerialInactivityTimeoutMs) {
+        return;
+    }
+
+    // 无人机状态是周期帧。5 秒没有任何有效帧时，重开串口可以恢复
+    // USB 短暂掉线后留下的旧句柄，也可以清理已经失步的接收缓冲区。
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 30000,
+        "no valid serial frame for %lld ms; reopening %s",
+        static_cast<long long>(silent_for_ms),
+        serial_config_.port_name.toStdString().c_str());
+
+    serial_reopen_in_progress_ = true;
+    serial_.close();
+    rx_buffer_.clear();
+    serial_reopen_in_progress_ = false;
+    openSerial();
 }
 
 void GroundLinkBridge::onSerialReadyRead()
@@ -375,6 +461,7 @@ void GroundLinkBridge::onSerialReadyRead()
     //接收到数据后，进入第一层handlePacket处理函数，后续分路
     Packet packet;
     while (tryParseOnePacket(packet)) {
+        last_valid_packet_time_ = std::chrono::steady_clock::now();
         handlePacket(packet);
     }
 }
@@ -1088,6 +1175,12 @@ bool GroundLinkBridge::tryParseOnePacket(Packet &packet)
             static_cast<uint16_t>(data[7]) |
             (static_cast<uint16_t>(data[8]) << 8);
 
+        if (payload_len > kMaxPayloadSize) {
+            // 只删除一个字节再搜索帧头，避免损坏帧把后面的正常帧整段吞掉。
+            rx_buffer_.remove(0, 1);
+            continue;
+        }
+
         //协议帧格式：2字节帧头 + 1字节版本 + 1字节类型 + 1字节标志 + 2字节序列号 + 2字节载荷长度 + N字节载荷 + 2字节CRC16校验
         const int frame_len = 9 + static_cast<int>(payload_len) + 2;
         if (rx_buffer_.size() < frame_len) {
@@ -1095,11 +1188,14 @@ bool GroundLinkBridge::tryParseOnePacket(Packet &packet)
         }
 
         const QByteArray frame = rx_buffer_.left(frame_len);
-        rx_buffer_.remove(0, frame_len);
 
         if (!validateFrame(frame)) {
+            // CRC 错误时逐字节重新同步，不相信损坏帧中的长度字段。
+            rx_buffer_.remove(0, 1);
             continue;
         }
+
+        rx_buffer_.remove(0, frame_len);
 
         //从帧数据中提取消息类型、标志位、序列号和载荷数据，填充到Packet结构体中，供后续处理函数使用
         const auto *frame_data = reinterpret_cast<const uint8_t *>(frame.constData());
