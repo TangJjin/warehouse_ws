@@ -1922,27 +1922,10 @@ void QrVisionNode::initializeDirectCapture()
 #if DRONE_PERCEPTION_HAS_BPU
   if (enable_bpu_) {
 #if DRONE_PERCEPTION_HAS_NANO2D
+    // Nano2D (GC820) binds n2d_open()/n2d_blit() to the calling thread via
+    // thread-local storage, so the actual initialize() must run on the vision
+    // worker thread (runDirectVisionLoop), not here on the executor thread.
     nano2d_ = std::make_unique<drone_perception::Nano2DPreprocessor>();
-
-    if (!nano2d_->initialize(
-            d435_width_,
-            d435_height_,
-            kBpuInputWidthPx,
-            kBpuInputHeightPx)) {
-      const std::string nano2d_error = nano2d_->lastError();
-      nano2d_.reset();
-      throw std::runtime_error(
-          "camera_input_mode=d435_direct: Nano2D preprocessor init failed: " +
-          nano2d_error);
-    }
-
-    RCLCPP_INFO(
-        get_logger(),
-        "Nano2D preprocessor initialized. source=%dx%d model=%dx%d pad_y=80",
-        d435_width_,
-        d435_height_,
-        kBpuInputWidthPx,
-        kBpuInputHeightPx);
 #else
     throw std::runtime_error(
         "camera_input_mode=d435_direct with enable_bpu=true requires the "
@@ -1959,6 +1942,32 @@ void QrVisionNode::runDirectVisionLoop()
   // a new frame is copied, so the poll adds no frame latency.
   const std::chrono::milliseconds hover_poll_interval(50);
   std::chrono::steady_clock::time_point last_stats_log = SteadyClock::now();
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  // GC820 Nano2D binds n2d_open()/n2d_blit() to the calling thread, so the
+  // preprocessor must be initialized here on the worker thread.
+  if (enable_bpu_ && nano2d_ && !nano2d_initialized_) {
+    if (nano2d_->initialize(
+            d435_width_,
+            d435_height_,
+            kBpuInputWidthPx,
+            kBpuInputHeightPx)) {
+      nano2d_initialized_ = true;
+      RCLCPP_INFO(
+          get_logger(),
+          "Nano2D preprocessor initialized (worker thread). source=%dx%d model=%dx%d pad_y=80",
+          d435_width_,
+          d435_height_,
+          kBpuInputWidthPx,
+          kBpuInputHeightPx);
+    } else {
+      RCLCPP_ERROR(
+          get_logger(),
+          "Nano2D preprocessor init failed: %s",
+          nano2d_->lastError().c_str());
+    }
+  }
+#endif
 
   while (rclcpp::ok()) {
     {
@@ -2002,6 +2011,14 @@ void QrVisionNode::runDirectVisionLoop()
           static_cast<unsigned long long>(d435_capture_->reconnectCount()));
     }
   }
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  // Tear down Nano2D on the same thread that opened it. Idempotent: the member
+  // destructor's later shutdown() sees cleared handles and does nothing.
+  if (nano2d_) {
+    nano2d_->shutdown();
+  }
+#endif
 }
 
 void QrVisionNode::processDirectFrame(
@@ -2050,7 +2067,7 @@ void QrVisionNode::processDirectFrame(
 
     if (enable_bpu_ && bpu_detector_) {
 #if DRONE_PERCEPTION_HAS_NANO2D
-      if (nano2d_) {
+      if (nano2d_ && nano2d_initialized_) {
         const auto preprocess_t0 = SteadyClock::now();
         drone_perception::Nv12FrameView nv12_view;
         const bool input_ready = nano2d_->convertYuyvToLetterboxNv12(

@@ -488,6 +488,7 @@ private:
 
 #if DRONE_PERCEPTION_HAS_NANO2D
   std::unique_ptr<drone_perception::Nano2DPreprocessor> nano2d_;
+  bool nano2d_initialized_{false};
 #endif
 
   std::atomic_bool has_camera_info_{false};
