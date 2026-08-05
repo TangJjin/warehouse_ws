@@ -48,6 +48,14 @@ class CLAHE;
 #include "drone_perception/bpu_yolo_detector.hpp"
 #endif
 
+#ifndef DRONE_PERCEPTION_HAS_REALSENSE
+#define DRONE_PERCEPTION_HAS_REALSENSE 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+#include "drone_perception/d435_color_capture.hpp"
+#endif
+
 class QrVisionNode : public rclcpp::Node
 {
 public:
@@ -201,6 +209,16 @@ private:
 
   void visionWorkerLoop();
 
+  void runRosVisionLoop();
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  void runDirectVisionLoop();
+
+  void initializeDirectCapture();
+
+  void processDirectFrame(const drone_perception::D435ColorFrame &frame);
+#endif
+
   bool prepareBpuInput(const cv::Mat &color_image);
 
   void updateVisualCodeStability(const std::vector<DecodedVisualCode> &decoded_codes);
@@ -351,6 +369,15 @@ private:
   std::string barcode_capture_topic_;
   std::string hover_active_topic_;
 
+  std::string camera_input_mode_;
+  std::string d435_serial_;
+  int d435_width_{640};
+  int d435_height_{480};
+  int d435_fps_{30};
+  int d435_wait_timeout_ms_{2000};
+  int d435_reconnect_delay_ms_{2000};
+  bool direct_input_debug_bgr_{true};
+
   std::string bpu_model_path_;
   std::string ocr_rec_model_path_;
 
@@ -439,6 +466,10 @@ private:
   bool ocr_invoked_this_frame_{false};
   std::unique_ptr<zbar::ImageScanner> visual_code_scanner_;
   cv::Ptr<cv::CLAHE> qr_clahe_;
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  std::unique_ptr<drone_perception::D435ColorCapture> d435_capture_;
 #endif
 
   std::atomic_bool has_camera_info_{false};

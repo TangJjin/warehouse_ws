@@ -1,0 +1,13 @@
+qr_vision_node:
+  ros__parameters:
+    camera_input_mode: d435_direct
+    d435_serial: "327122074056"
+    d435_width: 640
+    d435_height: 480
+    d435_fps: 30
+    d435_wait_timeout_ms: 2000
+    d435_reconnect_delay_ms: 2000
+
+    enable_bpu: true
+    debug_view: false
+    camera_controls_enabled: false

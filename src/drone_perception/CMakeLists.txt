@@ -119,6 +119,56 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# ── optional D435i direct capture (librealsense2) ────────
+# Prefer the CMake package; fall back to explicit include/lib search because
+# realsense2.pc on the target has been observed pointing at the wrong arch.
+set(REALSENSE2_FOUND_ANY FALSE)
+find_package(realsense2 QUIET)
+if(realsense2_FOUND)
+  set(REALSENSE2_FOUND_ANY TRUE)
+else()
+  find_path(REALSENSE2_INCLUDE_DIR
+    NAMES librealsense2/rs.hpp
+    PATHS /opt/ros/humble/include
+  )
+  find_library(REALSENSE2_LIBRARY
+    NAMES realsense2
+    PATHS /opt/ros/humble/lib/aarch64-linux-gnu /opt/ros/humble/lib
+  )
+  if(REALSENSE2_INCLUDE_DIR AND REALSENSE2_LIBRARY)
+    set(REALSENSE2_FOUND_ANY TRUE)
+  endif()
+endif()
+
+if(REALSENSE2_FOUND_ANY)
+  target_sources(qr_vision_node
+    PRIVATE
+    src/d435_color_capture.cpp
+  )
+
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_REALSENSE=1
+  )
+
+  if(realsense2_FOUND)
+    target_link_libraries(qr_vision_node realsense2::realsense2)
+  else()
+    target_include_directories(qr_vision_node
+      PRIVATE
+      ${REALSENSE2_INCLUDE_DIR}
+    )
+    target_link_libraries(qr_vision_node ${REALSENSE2_LIBRARY})
+  endif()
+
+  message(STATUS
+    "drone_perception: librealsense2 found, d435_direct mode enabled")
+else()
+  message(STATUS
+    "drone_perception: librealsense2 NOT found, d435_direct mode disabled "
+    "(camera_input_mode=ros only)")
+endif()
+
 # ── optional RDK X5 BPU model probe ──────────────────────
 find_path(RDK_DNN_INCLUDE_DIR
   NAMES dnn/hb_dnn.h

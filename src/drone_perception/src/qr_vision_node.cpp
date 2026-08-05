@@ -11,6 +11,7 @@
 #include <exception>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <sensor_msgs/image_encodings.hpp>
 #include <zbar.h>
 
 namespace
@@ -301,6 +303,12 @@ QrVisionNode::QrVisionNode()
   initializeBpuOcrPipeline();
   initializeVisualCodeDecoder();
 
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  if (camera_input_mode_ == "d435_direct") {
+    initializeDirectCapture();
+  }
+#endif
+
   if (debug_view_)
   {
     try
@@ -372,12 +380,33 @@ void QrVisionNode::stopVisionWorker()
   }
 
   vision_worker_cv_.notify_all();
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  // The direct-capture worker may be blocked in
+  // D435ColorCapture::waitForLatest(), which only unblocks when the capture
+  // stops (its condition variable is signaled from stop()).
+  if (d435_capture_) {
+    d435_capture_->stop();
+  }
+#endif
+
   if (vision_worker_.joinable()) {
     vision_worker_.join();
   }
 }
 
 void QrVisionNode::visionWorkerLoop()
+{
+#if DRONE_PERCEPTION_HAS_REALSENSE
+  if (camera_input_mode_ == "d435_direct") {
+    runDirectVisionLoop();
+    return;
+  }
+#endif
+  runRosVisionLoop();
+}
+
+void QrVisionNode::runRosVisionLoop()
 {
   while (rclcpp::ok()) {
     PendingColorFrame color_frame;
@@ -503,6 +532,19 @@ void QrVisionNode::declareParameters()
   hover_active_topic_ = this->declare_parameter<std::string>(
       "hover_active_topic",
       kDefaultHoverActiveTopic);
+  camera_input_mode_ = this->declare_parameter<std::string>(
+      "camera_input_mode", "ros");
+  d435_serial_ = this->declare_parameter<std::string>(
+      "d435_serial", "327122074056");
+  d435_width_ = this->declare_parameter<int>("d435_width", 640);
+  d435_height_ = this->declare_parameter<int>("d435_height", 480);
+  d435_fps_ = this->declare_parameter<int>("d435_fps", 30);
+  d435_wait_timeout_ms_ = this->declare_parameter<int>(
+      "d435_wait_timeout_ms", 2000);
+  d435_reconnect_delay_ms_ = this->declare_parameter<int>(
+      "d435_reconnect_delay_ms", 2000);
+  direct_input_debug_bgr_ = this->declare_parameter<bool>(
+      "direct_input_debug_bgr", true);
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   shelf_code_stable_frames_ = this->declare_parameter<int>(
       "shelf_code_stable_frames",
@@ -630,6 +672,31 @@ void QrVisionNode::declareParameters()
         "barcode_capture_jpeg_quality must be in [1, 100], reset to %d",
         kDefaultBarcodeCaptureJpegQuality);
     barcode_capture_jpeg_quality_ = kDefaultBarcodeCaptureJpegQuality;
+  }
+
+  if (camera_input_mode_ != "ros" && camera_input_mode_ != "d435_direct")
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_input_mode must be 'ros' or 'd435_direct', got '%s'; reset to 'ros'",
+        camera_input_mode_.c_str());
+    camera_input_mode_ = "ros";
+  }
+
+  if (d435_wait_timeout_ms_ < 100)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "d435_wait_timeout_ms must be at least 100, reset to 2000");
+    d435_wait_timeout_ms_ = 2000;
+  }
+
+  if (d435_reconnect_delay_ms_ < 100)
+  {
+    RCLCPP_WARN(
+        get_logger(),
+        "d435_reconnect_delay_ms must be at least 100, reset to 2000");
+    d435_reconnect_delay_ms_ = 2000;
   }
 }
 
@@ -1544,6 +1611,13 @@ void QrVisionNode::initializeSubscriptions()
           this,
           std::placeholders::_1));
 
+  if (camera_input_mode_ == "d435_direct") {
+    RCLCPP_INFO(
+        get_logger(),
+        "Direct capture mode: no ROS color/camera_info subscription");
+    return;
+  }
+
   color_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
       color_topic_,
       rclcpp::SensorDataQoS(),
@@ -1771,6 +1845,165 @@ void QrVisionNode::handleColorFrame(
     callback_window_.push(callback_ms);
   }
 }
+
+#if DRONE_PERCEPTION_HAS_REALSENSE
+void QrVisionNode::initializeDirectCapture()
+{
+  // Stage A only accepts the validated 640x480@30 YUYV profile.
+  if (d435_width_ != 640 || d435_height_ != 480 || d435_fps_ != 30) {
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct: this stage only supports "
+        "d435_width=640, d435_height=480, d435_fps=30 (got " +
+        std::to_string(d435_width_) + "x" + std::to_string(d435_height_) +
+        "@" + std::to_string(d435_fps_) + ")");
+  }
+
+  std::string serial = d435_serial_;
+
+  if (serial.empty()) {
+    serial = drone_perception::D435ColorCapture::detectSingleDeviceSerial();
+
+    if (serial.empty()) {
+      throw std::runtime_error(
+          "camera_input_mode=d435_direct: d435_serial is empty and the number "
+          "of D435i devices is not exactly one; refuse to auto-select");
+    }
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Auto-selected the only D435i device serial=%s",
+        serial.c_str());
+  }
+
+  if (camera_controls_enabled_) {
+    camera_controls_enabled_ = false;
+    RCLCPP_WARN(
+        get_logger(),
+        "camera_controls_enabled is ignored in d435_direct mode "
+        "(no realsense2_camera_node to drive)");
+  }
+
+  drone_perception::D435ColorCapture::Config config;
+  config.serial = serial;
+  config.width = d435_width_;
+  config.height = d435_height_;
+  config.fps = d435_fps_;
+  config.wait_timeout_ms = d435_wait_timeout_ms_;
+  config.reconnect_delay_ms = d435_reconnect_delay_ms_;
+
+  d435_capture_ = std::make_unique<drone_perception::D435ColorCapture>(config);
+
+  if (!d435_capture_->start()) {
+    const std::string error = d435_capture_->lastError();
+    d435_capture_.reset();
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct: failed to start D435i capture: " +
+        error);
+  }
+
+  RCLCPP_INFO(
+      get_logger(),
+      "D435i direct capture started. serial=%s format=YUYV width=%d height=%d "
+      "fps=%d wait_timeout_ms=%d reconnect_delay_ms=%d direct_input_debug_bgr=%s",
+      serial.c_str(),
+      config.width,
+      config.height,
+      config.fps,
+      config.wait_timeout_ms,
+      config.reconnect_delay_ms,
+      direct_input_debug_bgr_ ? "true" : "false");
+}
+
+void QrVisionNode::runDirectVisionLoop()
+{
+  // Poll period bounds hover-event latency when the camera is idle or
+  // disconnected; while frames are flowing waitForLatest() returns as soon as
+  // a new frame is copied, so the poll adds no frame latency.
+  const std::chrono::milliseconds hover_poll_interval(50);
+
+  while (rclcpp::ok()) {
+    {
+      std::unique_lock<std::mutex> lock(vision_worker_mutex_);
+
+      if (!vision_worker_running_) {
+        break;
+      }
+
+      if (!pending_hover_events_.empty()) {
+        PendingHoverEvent hover_event = pending_hover_events_.front();
+        pending_hover_events_.pop_front();
+        lock.unlock();
+        applyHoverActive(hover_event.active);
+        continue;
+      }
+    }
+
+    drone_perception::D435ColorFrame frame;
+
+    if (d435_capture_ &&
+        d435_capture_->waitForLatest(frame, hover_poll_interval)) {
+      processDirectFrame(frame);
+      reportPerformanceBaseline();
+    }
+  }
+}
+
+void QrVisionNode::processDirectFrame(
+    const drone_perception::D435ColorFrame &frame)
+{
+  const auto process_t0 = SteadyClock::now();
+
+  if (frame.yuyv.empty() || frame.width <= 0 || frame.height <= 0) {
+    ++failed_frame_count_;
+    return;
+  }
+
+  input_frame_count_.fetch_add(1U);
+
+  last_queue_wait_ms_ = elapsedMs(frame.received_at, process_t0);
+  queue_wait_window_.push(last_queue_wait_ms_);
+
+  const double frame_age_ms = elapsedMs(frame.received_at, SteadyClock::now());
+  if (frame_age_ms >= 0.0) {
+    last_frame_age_ms_ = frame_age_ms;
+    frame_age_window_.push(frame_age_ms);
+  }
+
+  try {
+    // Stage A: YUYV -> BGR via OpenCV, then feed the existing processFrame()
+    // chain. The BPU CPU preprocessing path stays unchanged in this stage.
+    cv::Mat yuyv(
+        frame.height,
+        frame.width,
+        CV_8UC2,
+        const_cast<std::uint8_t *>(frame.yuyv.data()),
+        frame.stride_bytes);
+    cv::Mat bgr;
+    cv::cvtColor(yuyv, bgr, cv::COLOR_YUV2BGR_YUY2);
+
+    if (bgr.empty()) {
+      ++failed_frame_count_;
+      return;
+    }
+
+    cv_bridge::CvImagePtr bridge = std::make_shared<cv_bridge::CvImage>(
+        std_msgs::msg::Header(),
+        sensor_msgs::image_encodings::BGR8,
+        bgr);
+    processFrame(bridge, process_t0, "d435_direct");
+  } catch (const cv::Exception &ex) {
+    ++failed_frame_count_;
+    last_process_ms_ = elapsedMs(process_t0, SteadyClock::now());
+    process_window_.push(last_process_ms_);
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "direct capture YUYV->BGR conversion failed: %s",
+        ex.what());
+  }
+}
+#endif
 
 void QrVisionNode::processFrame(
     const cv_bridge::CvImageConstPtr &color_bridge,
