@@ -307,6 +307,12 @@ QrVisionNode::QrVisionNode()
   if (camera_input_mode_ == "d435_direct") {
     initializeDirectCapture();
   }
+#else
+  if (camera_input_mode_ == "d435_direct") {
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct requires librealsense2, but this build "
+        "was compiled without it (camera_input_mode=ros only)");
+  }
 #endif
 
   if (debug_view_)
@@ -1912,6 +1918,38 @@ void QrVisionNode::initializeDirectCapture()
       config.wait_timeout_ms,
       config.reconnect_delay_ms,
       direct_input_debug_bgr_ ? "true" : "false");
+
+#if DRONE_PERCEPTION_HAS_BPU
+  if (enable_bpu_) {
+#if DRONE_PERCEPTION_HAS_NANO2D
+    nano2d_ = std::make_unique<drone_perception::Nano2DPreprocessor>();
+
+    if (!nano2d_->initialize(
+            d435_width_,
+            d435_height_,
+            kBpuInputWidthPx,
+            kBpuInputHeightPx)) {
+      const std::string nano2d_error = nano2d_->lastError();
+      nano2d_.reset();
+      throw std::runtime_error(
+          "camera_input_mode=d435_direct: Nano2D preprocessor init failed: " +
+          nano2d_error);
+    }
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Nano2D preprocessor initialized. source=%dx%d model=%dx%d pad_y=80",
+        d435_width_,
+        d435_height_,
+        kBpuInputWidthPx,
+        kBpuInputHeightPx);
+#else
+    throw std::runtime_error(
+        "camera_input_mode=d435_direct with enable_bpu=true requires the "
+        "Nano2D hardware preprocessor, which is not available in this build");
+#endif
+  }
+#endif
 }
 
 void QrVisionNode::runDirectVisionLoop()
@@ -1920,6 +1958,7 @@ void QrVisionNode::runDirectVisionLoop()
   // disconnected; while frames are flowing waitForLatest() returns as soon as
   // a new frame is copied, so the poll adds no frame latency.
   const std::chrono::milliseconds hover_poll_interval(50);
+  std::chrono::steady_clock::time_point last_stats_log = SteadyClock::now();
 
   while (rclcpp::ok()) {
     {
@@ -1944,6 +1983,23 @@ void QrVisionNode::runDirectVisionLoop()
         d435_capture_->waitForLatest(frame, hover_poll_interval)) {
       processDirectFrame(frame);
       reportPerformanceBaseline();
+    }
+
+    // Surface capture-level statistics (plan 8.2) that the BPU baseline report
+    // cannot carry, so drop/timeout/reconnect trends are visible in the log.
+    const auto now = SteadyClock::now();
+
+    if (d435_capture_ &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_stats_log).count() >= 5000) {
+      last_stats_log = now;
+      RCLCPP_INFO(
+          get_logger(),
+          "D435_CAPTURE captured=%llu dropped=%llu wait_timeout=%llu reconnect=%llu",
+          static_cast<unsigned long long>(d435_capture_->capturedCount()),
+          static_cast<unsigned long long>(d435_capture_->droppedCount()),
+          static_cast<unsigned long long>(d435_capture_->timeoutCount()),
+          static_cast<unsigned long long>(d435_capture_->reconnectCount()));
     }
   }
 }
@@ -1970,8 +2026,8 @@ void QrVisionNode::processDirectFrame(
   }
 
   try {
-    // Stage A: YUYV -> BGR via OpenCV, then feed the existing processFrame()
-    // chain. The BPU CPU preprocessing path stays unchanged in this stage.
+    // BGR is still needed for QR/OCR/debug/save in Stage B; the BPU path uses
+    // the Nano2D NV12 directly instead of the CPU BGR preprocessing chain.
     cv::Mat yuyv(
         frame.height,
         frame.width,
@@ -1986,12 +2042,126 @@ void QrVisionNode::processDirectFrame(
       return;
     }
 
-    cv_bridge::CvImagePtr bridge = std::make_shared<cv_bridge::CvImage>(
-        std_msgs::msg::Header(),
-        sensor_msgs::image_encodings::BGR8,
-        bgr);
-    processFrame(bridge, process_t0, "d435_direct");
-  } catch (const cv::Exception &ex) {
+#if DRONE_PERCEPTION_HAS_BPU
+    bool bpu_inference_succeeded = false;
+    ocr_invoked_this_frame_ = false;
+    visual_code_timing_ = {};
+    last_bpu_detections_.clear();
+
+    if (enable_bpu_ && bpu_detector_) {
+#if DRONE_PERCEPTION_HAS_NANO2D
+      if (nano2d_) {
+        const auto preprocess_t0 = SteadyClock::now();
+        drone_perception::Nv12FrameView nv12_view;
+        const bool input_ready = nano2d_->convertYuyvToLetterboxNv12(
+            frame.yuyv.data(),
+            frame.stride_bytes,
+            nv12_view);
+        const auto preprocess_t1 = SteadyClock::now();
+
+        if (input_ready) {
+          const drone_perception::Nano2DLetterboxState nano2d_letterbox =
+              nano2d_->letterboxState();
+          bpu_letterbox_.scale = nano2d_letterbox.scale;
+          bpu_letterbox_.pad_x = nano2d_letterbox.pad_x;
+          bpu_letterbox_.pad_y = nano2d_letterbox.pad_y;
+
+          try {
+            const auto infer_t0 = SteadyClock::now();
+            last_bpu_detections_ =
+                bpu_detector_->inferNv12(nv12_view.data, nv12_view.size);
+            bpu_inference_succeeded = true;
+            const auto infer_t1 = SteadyClock::now();
+
+            int qrcode_count = 0;
+            int package_count = 0;
+            int shelf_tag_count = 0;
+
+            for (const BpuYoloDetection &detection : last_bpu_detections_) {
+              if (detection.class_id == kYoloClassQrcode) {
+                ++qrcode_count;
+              } else if (detection.class_id == kYoloClassPackage) {
+                ++package_count;
+              } else if (detection.class_id == kYoloClassShelfTag) {
+                ++shelf_tag_count;
+              }
+            }
+
+            RCLCPP_DEBUG_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                log_throttle_ms_,
+                "BPU inference ok (nano2d). mode=d435_direct "
+                "nano2d_preprocess_ms=%.2f infer_ms=%.2f input_size=%zu "
+                "detections=%zu qrcode=%d package=%d shelf_tag=%d "
+                "letterbox_scale=%.4f letterbox_pad=%d,%d",
+                elapsedMs(preprocess_t0, preprocess_t1),
+                elapsedMs(infer_t0, infer_t1),
+                nv12_view.size,
+                last_bpu_detections_.size(),
+                qrcode_count,
+                package_count,
+                shelf_tag_count,
+                bpu_letterbox_.scale,
+                bpu_letterbox_.pad_x,
+                bpu_letterbox_.pad_y);
+          } catch (const std::exception &e) {
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(),
+                *get_clock(),
+                log_throttle_ms_,
+                "BPU inference failed: %s",
+                e.what());
+          }
+        } else {
+          RCLCPP_ERROR_THROTTLE(
+              get_logger(),
+              *get_clock(),
+              log_throttle_ms_,
+              "Nano2D conversion failed: %s",
+              nano2d_->lastError().c_str());
+        }
+      } else
+#endif
+      {
+        RCLCPP_ERROR_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            log_throttle_ms_,
+            "camera_input_mode=d435_direct requires the Nano2D preprocessor "
+            "for the BPU path, but it is not available in this build");
+      }
+    }
+#endif
+
+    runFrameBusinessLogic(bgr, "d435_direct");
+
+    const auto process_t1 = SteadyClock::now();
+    last_process_ms_ = elapsedMs(process_t0, process_t1);
+    process_window_.push(last_process_ms_);
+#if DRONE_PERCEPTION_HAS_BPU
+    if (enable_bpu_) {
+      if (bpu_inference_succeeded) {
+        ++processed_frame_count_;
+      } else {
+        ++failed_frame_count_;
+      }
+    }
+#endif
+    RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        log_throttle_ms_,
+        "video stream mode=d435_direct fps=%.1f size=%dx%d camera_info=%s "
+        "process_ms=%.2f queue_wait_ms=%.2f debug_view=%s",
+        smoothed_fps_,
+        bgr.cols,
+        bgr.rows,
+        has_camera_info_ ? "true" : "false",
+        last_process_ms_,
+        last_queue_wait_ms_,
+        debug_view_ ? "true" : "false");
+  } catch (const std::exception &ex) {
     ++failed_frame_count_;
     last_process_ms_ = elapsedMs(process_t0, SteadyClock::now());
     process_window_.push(last_process_ms_);
@@ -1999,11 +2169,68 @@ void QrVisionNode::processDirectFrame(
         get_logger(),
         *get_clock(),
         log_throttle_ms_,
-        "direct capture YUYV->BGR conversion failed: %s",
+        "direct capture frame processing failed: %s",
         ex.what());
   }
 }
 #endif
+
+void QrVisionNode::runFrameBusinessLogic(
+    const cv::Mat &color_image,
+    const char *input_mode)
+{
+#if DRONE_PERCEPTION_HAS_BPU
+  if (hover_active_ && enable_bpu_ocr_ && bpu_ocr_pipeline_) {
+    try {
+      recognizeShelfTagFromDetections(
+          color_image,
+          last_bpu_detections_,
+          input_mode);
+    } catch (const std::exception &e) {
+      last_ocr_regions_.clear();
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          log_throttle_ms_,
+          "BPU OCR failed: %s",
+          e.what());
+    }
+  } else {
+    last_ocr_regions_.clear();
+    if (hover_active_) {
+      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+    }
+  }
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+  if (hover_active_) {
+    updateVisualCodeStability(
+        decodeVisualCodesFromDetections(color_image, last_bpu_detections_));
+  } else {
+    debug_raw_symbol_.clear();
+    debug_raw_symbol_type_.clear();
+    debug_qr_preprocess_preview_.release();
+    debug_qr_preprocess_mode_.clear();
+  }
+#else
+  (void)input_mode;
+  updateVisualCodeStability({});
+  updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
+#endif
+
+#if DRONE_PERCEPTION_HAS_BPU
+  bufferPackageCaptureCandidate(color_image);
+#else
+  publishBarcodeCapture(color_image);
+#endif
+
+  if (debug_view_) {
+    displayDebugFrame(color_image);
+  }
+}
 
 void QrVisionNode::processFrame(
     const cv_bridge::CvImageConstPtr &color_bridge,
@@ -2081,57 +2308,9 @@ void QrVisionNode::processFrame(
       }
     }
   }
-
-  if (hover_active_ && enable_bpu_ocr_ && bpu_ocr_pipeline_) {
-    try {
-      recognizeShelfTagFromDetections(
-          color_bridge->image,
-          last_bpu_detections_,
-          input_mode);
-    } catch (const std::exception &e) {
-      last_ocr_regions_.clear();
-      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-
-      RCLCPP_ERROR_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          log_throttle_ms_,
-          "BPU OCR failed: %s",
-          e.what());
-    }
-  } else {
-    last_ocr_regions_.clear();
-    if (hover_active_) {
-      updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-    }
-  }
 #endif
 
-#if DRONE_PERCEPTION_HAS_BPU
-  if (hover_active_) {
-    updateVisualCodeStability(
-        decodeVisualCodesFromDetections(color_bridge->image, last_bpu_detections_));
-  } else {
-    debug_raw_symbol_.clear();
-    debug_raw_symbol_type_.clear();
-    debug_qr_preprocess_preview_.release();
-    debug_qr_preprocess_mode_.clear();
-  }
-#else
-  updateVisualCodeStability({});
-  updateVisualCodeCategoryStability({}, "shelf", shelf_code_state_, "ocr");
-#endif
-
-#if DRONE_PERCEPTION_HAS_BPU
-  bufferPackageCaptureCandidate(color_bridge->image);
-#else
-  publishBarcodeCapture(color_bridge->image);
-#endif
-
-  if (debug_view_)
-  {
-    displayDebugFrame(color_bridge->image);
-  }
+  runFrameBusinessLogic(color_bridge->image, input_mode);
 
   const auto process_t1 = SteadyClock::now();
   last_process_ms_ = elapsedMs(process_t0, process_t1);

@@ -169,6 +169,75 @@ else()
     "(camera_input_mode=ros only)")
 endif()
 
+# ── optional RDK X5 Nano2D hardware preprocessor ────────
+# Board-only vendor system libraries (/usr/hobot/lib); no rosdep key.
+find_path(NANO2D_INCLUDE_DIR
+  NAMES GC820/nano2D.h
+  PATHS /usr/include
+)
+
+find_library(NANO2D_LIBRARY
+  NAMES Nano2D
+  PATHS /usr/hobot/lib
+)
+
+find_library(NANO2D_UTIL_LIBRARY
+  NAMES Nano2Dutil
+  PATHS /usr/hobot/lib
+)
+
+if(NANO2D_INCLUDE_DIR AND NANO2D_LIBRARY AND NANO2D_UTIL_LIBRARY)
+  target_sources(qr_vision_node
+    PRIVATE
+    src/nano2d_preprocessor.cpp
+  )
+
+  target_include_directories(qr_vision_node
+    PRIVATE
+    ${NANO2D_INCLUDE_DIR}
+  )
+
+  target_link_libraries(qr_vision_node
+    ${NANO2D_LIBRARY}
+    ${NANO2D_UTIL_LIBRARY}
+  )
+
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_NANO2D=1
+  )
+
+  add_executable(nano2d_preprocess_probe
+    src/nano2d_preprocess_probe.cpp
+    src/nano2d_preprocessor.cpp
+  )
+
+  target_compile_features(nano2d_preprocess_probe PUBLIC cxx_std_17)
+
+  target_include_directories(nano2d_preprocess_probe
+    PRIVATE
+    include
+    ${NANO2D_INCLUDE_DIR}
+  )
+
+  target_link_libraries(nano2d_preprocess_probe
+    ${NANO2D_LIBRARY}
+    ${NANO2D_UTIL_LIBRARY}
+  )
+
+  install(TARGETS
+    nano2d_preprocess_probe
+    DESTINATION lib/${PROJECT_NAME}
+  )
+
+  message(STATUS
+    "drone_perception: Nano2D found, hardware preprocess enabled")
+else()
+  message(STATUS
+    "drone_perception: Nano2D NOT found, hardware preprocess disabled "
+    "(camera_input_mode=ros only)")
+endif()
+
 # ── optional RDK X5 BPU model probe ──────────────────────
 find_path(RDK_DNN_INCLUDE_DIR
   NAMES dnn/hb_dnn.h

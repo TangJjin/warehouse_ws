@@ -56,6 +56,14 @@ class CLAHE;
 #include "drone_perception/d435_color_capture.hpp"
 #endif
 
+#ifndef DRONE_PERCEPTION_HAS_NANO2D
+#define DRONE_PERCEPTION_HAS_NANO2D 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+#include "drone_perception/nano2d_preprocessor.hpp"
+#endif
+
 class QrVisionNode : public rclcpp::Node
 {
 public:
@@ -253,6 +261,12 @@ private:
   void processFrame(
       const cv_bridge::CvImageConstPtr &color_bridge,
       const std::chrono::steady_clock::time_point &process_t0,
+      const char *input_mode);
+
+  // Shared business tail (QR/OCR/capture/debug) executed after BPU inference
+  // by both the ROS and the direct-capture frame paths.
+  void runFrameBusinessLogic(
+      const cv::Mat &color_image,
       const char *input_mode);
 
   void updateFrameAge(const sensor_msgs::msg::Image &color_msg);
@@ -470,6 +484,10 @@ private:
 
 #if DRONE_PERCEPTION_HAS_REALSENSE
   std::unique_ptr<drone_perception::D435ColorCapture> d435_capture_;
+#endif
+
+#if DRONE_PERCEPTION_HAS_NANO2D
+  std::unique_ptr<drone_perception::Nano2DPreprocessor> nano2d_;
 #endif
 
   std::atomic_bool has_camera_info_{false};

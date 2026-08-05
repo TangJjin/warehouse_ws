@@ -12,8 +12,30 @@
 namespace drone_perception
 {
 
+struct D435ColorCapture::Impl
+{
+  std::mutex mutex;
+  std::condition_variable frame_cv;
+  D435ColorFrame latest_frame;
+  bool frame_pending{false};
+  std::string last_error;
+
+  std::atomic<std::uint64_t> captured_count{0};
+  std::atomic<std::uint64_t> dropped_count{0};
+  std::atomic<std::uint64_t> timeout_count{0};
+  std::atomic<std::uint64_t> reconnect_count{0};
+  std::uint64_t next_sequence{1};
+
+  // Owned by the capture thread only; other threads must not touch it. Kept in
+  // the shared Impl so a detached capture thread can still release it safely.
+  std::unique_ptr<rs2::pipeline> pipeline;
+
+  std::atomic_bool running{false};
+  std::atomic_bool exited{false};
+};
+
 D435ColorCapture::D435ColorCapture(Config config)
-    : config_(std::move(config))
+    : config_(std::move(config)), impl_(std::make_shared<Impl>())
 {
 }
 
@@ -44,77 +66,96 @@ std::string D435ColorCapture::detectSingleDeviceSerial()
 
 bool D435ColorCapture::start()
 {
-  if (running_.exchange(true)) {
+  if (impl_->running.exchange(true)) {
     return true;
   }
 
-  setError({});
+  setError(*impl_, {});
 
-  if (!openPipeline()) {
-    running_ = false;
+  if (!openPipeline(*impl_, config_)) {
+    impl_->running = false;
     return false;
   }
 
-  capture_thread_ = std::thread(&D435ColorCapture::captureLoop, this);
+  capture_thread_ = std::thread(&D435ColorCapture::captureLoop, this, impl_);
   return true;
 }
 
 void D435ColorCapture::stop()
 {
-  if (!running_.exchange(false)) {
-    if (capture_thread_.joinable()) {
-      capture_thread_.join();
-    }
+  if (!impl_) {
     return;
   }
 
-  frame_cv_.notify_all();
+  impl_->running = false;
+  impl_->frame_cv.notify_all();
 
-  if (capture_thread_.joinable()) {
-    capture_thread_.join();
+  if (!capture_thread_.joinable()) {
+    return;
   }
 
-  closePipeline();
+  // Bounded wait for the capture thread. It may be blocked inside a blocking
+  // SDK call (pipeline start/stop) on a wedged device; detach in that case so
+  // node shutdown never hangs. The thread keeps Impl alive via its own
+  // shared_ptr copy, so a detached thread still cleans up safely.
+  const auto deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(config_.wait_timeout_ms + 1000);
+
+  while (!impl_->exited.load()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      std::fprintf(
+          stderr,
+          "[D435ColorCapture] capture thread did not exit within %d ms; "
+          "detaching (device may be wedged in an SDK call)\n",
+          config_.wait_timeout_ms + 1000);
+      capture_thread_.detach();
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  capture_thread_.join();
 }
 
 bool D435ColorCapture::running() const
 {
-  return running_.load();
+  return impl_->running.load();
 }
 
 std::string D435ColorCapture::lastError() const
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return last_error_;
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->last_error;
 }
 
 std::uint64_t D435ColorCapture::capturedCount() const
 {
-  return captured_count_.load();
+  return impl_->captured_count.load();
 }
 
 std::uint64_t D435ColorCapture::droppedCount() const
 {
-  return dropped_count_.load();
+  return impl_->dropped_count.load();
 }
 
 std::uint64_t D435ColorCapture::timeoutCount() const
 {
-  return timeout_count_.load();
+  return impl_->timeout_count.load();
 }
 
 std::uint64_t D435ColorCapture::reconnectCount() const
 {
-  return reconnect_count_.load();
+  return impl_->reconnect_count.load();
 }
 
-void D435ColorCapture::setError(const std::string &message)
+void D435ColorCapture::setError(Impl &impl, const std::string &message)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  last_error_ = message;
+  std::lock_guard<std::mutex> lock(impl.mutex);
+  impl.last_error = message;
 }
 
-bool D435ColorCapture::openPipeline()
+bool D435ColorCapture::openPipeline(Impl &impl, const Config &config)
 {
   try {
     // Fail fast on a missing device. pipeline::start() with enable_device()
@@ -125,9 +166,9 @@ bool D435ColorCapture::openPipeline()
       rs2::context context;
       const rs2::device_list devices = context.query_devices();
 
-      if (config_.serial.empty()) {
+      if (config.serial.empty()) {
         if (devices.size() == 0U) {
-          setError("open pipeline: no RealSense device present");
+          setError(impl, "open pipeline: no RealSense device present");
           return false;
         }
       } else {
@@ -137,7 +178,7 @@ bool D435ColorCapture::openPipeline()
           const char *serial =
               devices[i].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
 
-          if (serial != nullptr && config_.serial == serial) {
+          if (serial != nullptr && config.serial == serial) {
             found = true;
             break;
           }
@@ -145,95 +186,102 @@ bool D435ColorCapture::openPipeline()
 
         if (!found) {
           setError(
-              "open pipeline: device with serial " + config_.serial +
-              " is not present");
+              impl,
+              "open pipeline: device with serial " + config.serial +
+                  " is not present");
           return false;
         }
       }
     }
 
-    rs2::config config;
-    config.disable_all_streams();
+    rs2::config config_rs;
+    config_rs.disable_all_streams();
 
-    if (!config_.serial.empty()) {
-      config.enable_device(config_.serial);
+    if (!config.serial.empty()) {
+      config_rs.enable_device(config.serial);
     }
 
-    config.enable_stream(
+    config_rs.enable_stream(
         RS2_STREAM_COLOR,
-        config_.width,
-        config_.height,
+        config.width,
+        config.height,
         RS2_FORMAT_YUYV,
-        config_.fps);
+        config.fps);
 
-    pipeline_ = std::make_unique<rs2::pipeline>();
-    pipeline_->start(config);
+    impl.pipeline = std::make_unique<rs2::pipeline>();
+    impl.pipeline->start(config_rs);
 
-    setError({});
+    setError(impl, {});
     return true;
   } catch (const rs2::error &e) {
-    setError(std::string("open pipeline: ") + e.what());
-    pipeline_.reset();
+    setError(impl, std::string("open pipeline: ") + e.what());
+    impl.pipeline.reset();
     return false;
   } catch (const std::exception &e) {
-    setError(std::string("open pipeline: ") + e.what());
-    pipeline_.reset();
+    setError(impl, std::string("open pipeline: ") + e.what());
+    impl.pipeline.reset();
     return false;
   }
 }
 
-void D435ColorCapture::closePipeline()
+void D435ColorCapture::closePipeline(Impl &impl)
 {
   try {
-    if (pipeline_) {
-      pipeline_->stop();
+    if (impl.pipeline) {
+      impl.pipeline->stop();
     }
   } catch (const rs2::error &) {
     // Best-effort stop; the device may already be gone.
+  } catch (const std::exception &) {
+    // Best-effort stop; never let teardown propagate.
   }
-  pipeline_.reset();
+  impl.pipeline.reset();
 }
 
-void D435ColorCapture::captureLoop()
+void D435ColorCapture::captureLoop(std::shared_ptr<Impl> impl)
 {
-  while (running_.load()) {
-    if (!pipeline_) {
-      ++reconnect_count_;
+  // Local copies owned by this thread so a detached thread never touches the
+  // (potentially destroyed) class members.
+  const Config config = config_;
+
+  while (impl->running.load()) {
+    if (!impl->pipeline) {
+      ++impl->reconnect_count;
 
       std::this_thread::sleep_for(
-          std::chrono::milliseconds(config_.reconnect_delay_ms));
+          std::chrono::milliseconds(config.reconnect_delay_ms));
 
-      if (!running_.load()) {
+      if (!impl->running.load()) {
         break;
       }
 
-      if (!openPipeline()) {
+      if (!openPipeline(*impl, config)) {
         continue;
       }
     }
 
+    // try_wait_for_frames distinguishes a benign timeout (returns false, no
+    // exception) from a device error (throws), unlike wait_for_frames whose
+    // timeout message carries no stable marker.
     rs2::frameset frames;
+    bool got_frame = false;
 
     try {
-      frames = pipeline_->wait_for_frames(
-          static_cast<unsigned int>(config_.wait_timeout_ms));
+      got_frame = impl->pipeline->try_wait_for_frames(
+          &frames,
+          static_cast<unsigned int>(config.wait_timeout_ms));
     } catch (const rs2::error &e) {
-      const std::string message(e.what());
-      const bool is_timeout =
-          message.find("timeout") != std::string::npos ||
-          message.find("Timeout") != std::string::npos;
-
-      if (is_timeout) {
-        ++timeout_count_;
-        continue;
-      }
-
-      setError(std::string("wait_for_frames: ") + message);
-      closePipeline();
+      setError(*impl, std::string("wait_for_frames: ") + e.what());
+      closePipeline(*impl);
       continue;
     } catch (const std::exception &e) {
-      setError(std::string("wait_for_frames: ") + e.what());
-      closePipeline();
+      setError(*impl, std::string("wait_for_frames: ") + e.what());
+      closePipeline(*impl);
+      continue;
+    }
+
+    if (!got_frame) {
+      ++impl->timeout_count;
       continue;
     }
 
@@ -260,55 +308,59 @@ void D435ColorCapture::captureLoop()
         static_cast<const std::uint8_t *>(color.get_data());
 
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::lock_guard<std::mutex> lock(impl->mutex);
 
-      if (frame_pending_) {
-        ++dropped_count_;
+      if (impl->frame_pending) {
+        ++impl->dropped_count;
       }
 
       D435ColorFrame frame;
-      frame.sequence = next_sequence_++;
+      frame.sequence = impl->next_sequence++;
       frame.device_timestamp_ms = color.get_timestamp();
       frame.received_at = std::chrono::steady_clock::now();
       frame.width = width;
       frame.height = height;
       frame.stride_bytes = row_bytes;
       frame.yuyv.resize(
-          static_cast<std::size_t>(row_bytes) * static_cast<std::size_t>(height));
+          static_cast<std::size_t>(row_bytes) *
+          static_cast<std::size_t>(height));
 
       for (int row = 0; row < height; ++row) {
         std::memcpy(
-            frame.yuyv.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(row_bytes),
-            data + static_cast<std::size_t>(row) * static_cast<std::size_t>(stride),
+            frame.yuyv.data() +
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(row_bytes),
+            data +
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(stride),
             static_cast<std::size_t>(row_bytes));
       }
 
-      latest_frame_ = std::move(frame);
-      frame_pending_ = true;
-      ++captured_count_;
+      impl->latest_frame = std::move(frame);
+      impl->frame_pending = true;
+      ++impl->captured_count;
     }
 
-    frame_cv_.notify_all();
+    impl->frame_cv.notify_all();
   }
 
-  closePipeline();
+  closePipeline(*impl);
+  impl->exited = true;
 }
 
 bool D435ColorCapture::waitForLatest(
     D435ColorFrame &frame,
     std::chrono::milliseconds timeout)
 {
-  std::unique_lock<std::mutex> lock(mutex_);
-  const bool signaled = frame_cv_.wait_for(lock, timeout, [this]() {
-    return frame_pending_ || !running_.load();
+  std::unique_lock<std::mutex> lock(impl_->mutex);
+  const bool signaled = impl_->frame_cv.wait_for(lock, timeout, [this]() {
+    return impl_->frame_pending || !impl_->running.load();
   });
 
-  if (!signaled || !frame_pending_) {
+  if (!signaled || !impl_->frame_pending) {
     return false;
   }
 
-  frame = latest_frame_;
-  frame_pending_ = false;
+  frame = impl_->latest_frame;
+  impl_->frame_pending = false;
   return true;
 }
 

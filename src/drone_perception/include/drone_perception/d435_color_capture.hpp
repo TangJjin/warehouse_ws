@@ -33,6 +33,11 @@ struct D435ColorFrame
 // realsense2_camera_node. Runs its own capture thread and keeps a single
 // latest-frame slot: a new frame overwrites any unread frame, so consumers
 // always see the newest frame and never accumulate backlog.
+//
+// Shutdown contract: stop() waits a bounded time for the capture thread, then
+// detaches it if it is stuck inside a blocking SDK call (device wedge). All
+// mutable state and the rs2::pipeline live in a shared Impl that the capture
+// thread owns by shared_ptr, so a detached thread never touches freed memory.
 class D435ColorCapture
 {
 public:
@@ -69,29 +74,15 @@ public:
   std::uint64_t reconnectCount() const;
 
 private:
-  void captureLoop();
-  bool openPipeline();
-  void closePipeline();
-  void setError(const std::string &message);
+  struct Impl;
+  void captureLoop(std::shared_ptr<Impl> impl);
+  bool openPipeline(Impl &impl, const Config &config);
+  void closePipeline(Impl &impl);
+  void setError(Impl &impl, const std::string &message);
 
   Config config_;
-
-  std::atomic_bool running_{false};
+  std::shared_ptr<Impl> impl_;
   std::thread capture_thread_;
-
-  mutable std::mutex mutex_;
-  std::condition_variable frame_cv_;
-  D435ColorFrame latest_frame_;
-  bool frame_pending_{false};
-  std::string last_error_;
-
-  std::atomic<std::uint64_t> captured_count_{0};
-  std::atomic<std::uint64_t> dropped_count_{0};
-  std::atomic<std::uint64_t> timeout_count_{0};
-  std::atomic<std::uint64_t> reconnect_count_{0};
-  std::uint64_t next_sequence_{1};
-
-  std::unique_ptr<rs2::pipeline> pipeline_;
 };
 
 }  // namespace drone_perception
