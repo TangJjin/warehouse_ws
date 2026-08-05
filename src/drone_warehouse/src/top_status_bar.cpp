@@ -83,7 +83,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(time_label_);
 
     // title_button_->hide();
-    shelf_button_->hide();
+    // shelf_button_->hide();
     analysis_button_->hide();
     task_button_->hide();
     execute_button_->hide();
