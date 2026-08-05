@@ -14,14 +14,14 @@ set -e
 HOLD="${1:-20}"
 
 echo "[hover_simulate] publish hover_active=true  (hold ${HOLD}s)"
-ros2 topic pub --qos durability:transient_local -1 \
+ros2 topic pub --qos-durability transient_local -1 \
   /mission/hover_active std_msgs/msg/Bool "{data: true}"
 
 echo "[hover_simulate] holding ${HOLD}s ..."
 sleep "${HOLD}"
 
 echo "[hover_simulate] publish hover_active=false (triggers final capture)"
-ros2 topic pub --qos durability:transient_local -1 \
+ros2 topic pub --qos-durability transient_local -1 \
   /mission/hover_active std_msgs/msg/Bool "{data: false}"
 
 echo "[hover_simulate] done"
