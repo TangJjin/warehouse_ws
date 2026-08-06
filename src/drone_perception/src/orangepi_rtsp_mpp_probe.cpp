@@ -178,6 +178,17 @@ int protocolMask(const Options & options)
   return options.protocol == "tcp" ? 4 : 1;
 }
 
+// GStreamer format names are case-sensitive ("NV12", not "nv12").
+std::string uppercase(std::string value)
+{
+  for (char & c : value) {
+    if (c >= 'a' && c <= 'z') {
+      c = static_cast<char>(c - 'a' + 'A');
+    }
+  }
+  return value;
+}
+
 void onPadAdded(GstElement *, GstPad * pad, gpointer user_data)
 {
   GstElement * depay = static_cast<GstElement *>(user_data);
@@ -239,8 +250,9 @@ Pipeline buildPipeline(const Options & options, std::string & error)
   g_object_set(parse, "config-interval", -1, nullptr);
 
   if (options.format != "auto") {
+    const std::string caps_format = uppercase(options.format);
     GstCaps * caps = gst_caps_new_simple(
-      "video/x-raw", "format", G_TYPE_STRING, options.format.c_str(), nullptr);
+      "video/x-raw", "format", G_TYPE_STRING, caps_format.c_str(), nullptr);
     g_object_set(capsfilter, "caps", caps, nullptr);
     gst_caps_unref(caps);
   }
@@ -396,10 +408,12 @@ int runProbe(const Options & options)
 
       if (type == GST_MESSAGE_EOS) {
         gst_message_unref(message);
-        teardownPipeline(pipeline);
-        gst_object_unref(bus);
-        std::fprintf(stderr, "[probe] EOS received\n");
-        return kExitNormal;
+        // For a live RTSP source, EOS usually means the server closed the
+        // stream (T7 restart scenario). Treat it as a reconnect trigger so the
+        // probe stays up instead of exiting; the run is bounded by duration.
+        std::fprintf(stderr, "[probe] EOS received; will reconnect\n");
+        reconnect_pending = true;
+        continue;
       }
 
       if (type == GST_MESSAGE_ERROR) {
