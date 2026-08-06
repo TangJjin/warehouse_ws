@@ -4370,6 +4370,7 @@ void QrVisionNode::videoStreamLoop()
     }
   }
 
-  std::fclose(pipe);
+  // pclose waits for the FFmpeg child and reaps it (fclose would not).
+  pclose(pipe);
 }
 #endif
