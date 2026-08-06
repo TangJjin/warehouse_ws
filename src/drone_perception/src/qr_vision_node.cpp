@@ -1,8 +1,14 @@
 #include "drone_perception/qr_vision_node.hpp"
 
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -4307,17 +4313,52 @@ void QrVisionNode::videoStreamLoop()
   // -c:v copy RTSP push toward the MediaMTX started by start_d435.sh. The
   // worker is independent of the detection path: when the link is slow the
   // pipe write blocks here only, and detection keeps running.
-  const std::string ffmpeg_command =
-      "ffmpeg -hide_banner -loglevel warning -fflags +genpts "
-      "-f h264 -i pipe:0 -map 0:v:0 -c:v copy -an "
-      "-f rtsp -rtsp_transport tcp " +
-      video_stream_publish_url_;
+  //
+  // FFmpeg is spawned with posix_spawn + POSIX_SPAWN_CLOEXEC_DEFAULT so the
+  // node's inherited D435i camera fd does NOT leak into the child (popen would
+  // leave it open, violating "only qr_vision_node holds the camera").
+  const std::string ffmpeg_argv[] = {
+      "ffmpeg", "-hide_banner", "-loglevel", "warning", "-fflags", "+genpts",
+      "-f", "h264", "-i", "pipe:0", "-map", "0:v:0", "-c:v", "copy", "-an",
+      "-f", "rtsp", "-rtsp_transport", "tcp", video_stream_publish_url_};
+  std::vector<char *> args;
+  args.reserve(sizeof(ffmpeg_argv) / sizeof(ffmpeg_argv[0]) + 1U);
+  for (const std::string & arg : ffmpeg_argv) {
+    args.push_back(const_cast<char *>(arg.c_str()));
+  }
+  args.push_back(nullptr);
 
-  FILE * pipe = popen(ffmpeg_command.c_str(), "w");
-  if (pipe == nullptr) {
-    RCLCPP_ERROR(get_logger(), "video stream: failed to open ffmpeg pipe");
+  int pipe_fds[2] = {-1, -1};
+  if (pipe2(pipe_fds, O_CLOEXEC) != 0) {
+    RCLCPP_ERROR(
+        get_logger(), "video stream: pipe2 failed: %s", std::strerror(errno));
     return;
   }
+
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attrs;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawnattr_init(&attrs);
+  posix_spawnattr_setflags(&attrs, POSIX_SPAWN_CLOEXEC_DEFAULT);
+  posix_spawn_file_actions_adddup2(&actions, pipe_fds[0], STDIN_FILENO);
+  posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
+
+  extern char ** environ;
+  pid_t ffmpeg_pid = -1;
+  const int spawn_result =
+      posix_spawnp(&ffmpeg_pid, "ffmpeg", &actions, &attrs, args.data(), environ);
+  posix_spawn_file_actions_destroy(&actions);
+  posix_spawnattr_destroy(&attrs);
+
+  if (spawn_result != 0) {
+    RCLCPP_ERROR(
+        get_logger(), "video stream: failed to spawn ffmpeg: %s",
+        std::strerror(spawn_result));
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+    return;
+  }
+  close(pipe_fds[0]);  // parent keeps only the write end
 
   std::vector<std::uint8_t> h264_buffer;
   std::string encode_error;
@@ -4361,16 +4402,26 @@ void QrVisionNode::videoStreamLoop()
     ++video_stream_encoded_count_;
 
     if (!h264_buffer.empty()) {
-      const std::size_t written =
-          std::fwrite(h264_buffer.data(), 1, h264_buffer.size(), pipe);
-      std::fflush(pipe);
-      if (written != h264_buffer.size()) {
+      const std::uint8_t * data = h264_buffer.data();
+      std::size_t remaining = h264_buffer.size();
+      while (remaining > 0) {
+        const ssize_t written = write(pipe_fds[1], data, remaining);
+        if (written > 0) {
+          data += written;
+          remaining -= static_cast<std::size_t>(written);
+          continue;
+        }
+        if (written < 0 && errno == EINTR) {
+          continue;
+        }
         ++video_stream_write_errors_;
+        break;
       }
     }
   }
 
-  // pclose waits for the FFmpeg child and reaps it (fclose would not).
-  pclose(pipe);
+  close(pipe_fds[1]);  // EOF -> FFmpeg exits
+  int child_status = 0;
+  waitpid(ffmpeg_pid, &child_status, 0);
 }
 #endif
