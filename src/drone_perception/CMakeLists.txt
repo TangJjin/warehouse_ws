@@ -368,6 +368,8 @@ install(DIRECTORY include/
 install(PROGRAMS
   scripts/rdk_d435i_mediamtx_sender.sh
   scripts/start_rdk_d435i_sender.sh
+  scripts/rdk_rtsp_link_sender_test.sh
+  scripts/orangepi_rtsp_mpp_probe_run.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 
