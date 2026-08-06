@@ -4,8 +4,12 @@ set -Eeuo pipefail
 # Wait for the D435i to finish USB enumeration after boot before opening it.
 sleep 10
 
+# ROS 2 setup scripts may read optional variables (AMENT_TRACE_SETUP_FILES)
+# before defining them; with set -u that aborts sourcing, so relax it here.
+set +u
 source /opt/ros/humble/setup.bash
 source ~/warehouse_ws/install/setup.bash
+set -u
 
 MEDIAMTX_BIN=${MEDIAMTX_BIN:-/home/sunrise/mediamtx/mediamtx}
 RTSP_PORT=${RTSP_PORT:-8554}
@@ -66,6 +70,8 @@ if ! ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(^|:)${RTSP_PORT}$"; the
 fi
 
 echo "MediaMTX up on :${RTSP_PORT}; starting qr_vision_node (detection + video stream)"
+
+node_exit=0
 
 # Direct-capture chain (stages A-D + video stream): qr_vision_node opens the
 # D435i via librealsense (YUYV 640x480@30), preprocesses through Nano2D into
