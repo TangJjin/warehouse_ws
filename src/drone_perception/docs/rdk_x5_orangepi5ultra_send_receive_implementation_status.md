@@ -25,7 +25,7 @@
 | T6 appsink 真实拉帧 | ✅ | caps=NV12 640x480@30 memory=system；dump 帧 460800B，Y 标准差 46+（真实内容） |
 | T7 重连 3 轮 | ✅ | 三轮停 RDK 10s→重启，探针保持存活并重新获得 IDR（seq 446→1055→1548） |
 | T8 长时间基线 | ✅(3min) | 1500kbps UDP；发送端 ~30% CPU、温度 63-65°C；接收端探针 ~2% CPU、MPP 硬解、温度 43-44°C；0 drop、0 reconnect，FPS 前 ~60s 波动后稳定 ~28-30 |
-| T9 正式 service 集成 | ⏳ 待执行 | 需 T8 通过后 |
+| T9 正式 service 集成 | ✅ | D435I_start.service→start_d435.sh→MediaMTX+qr_vision_node；检测与图传消费同一 D435ColorFrame；仅 qr_vision_node 持相机；停服全部退出/8554/相机释放；重启 RTSP 自动恢复 30fps |
 
 ## 3. 网络发现（重要）
 
@@ -38,8 +38,10 @@
 ## 4. 待办
 
 - [x] **T8**：3 分钟基线（用户确认缩短），日志存 `test_logs/t8_baseline/`（gitignore）
-- [ ] **T9**：D435I_start.service 集成（qr_vision_node 内图传 worker 消费同一 D435ColorFrame）
+- [x] **T9**：D435I_start.service 集成完成。qr_vision_node 内图传 worker 消费同一 D435ColorFrame，
+  ffmpeg 用 fork+exec 且子进程关闭继承 fd（相机不被 ffmpeg 持有）；start_d435.sh 管理 MediaMTX 生命周期
 - [ ] 3000kbit/s 在更好网络下复测
+- [ ] feature 分支合并到 main（测试后板端已回 main 前先保持 feature）
 - [ ] Qt 地面站阶段（另写专项方案，本阶段不涉及）
 
 ## 5. 复现命令
