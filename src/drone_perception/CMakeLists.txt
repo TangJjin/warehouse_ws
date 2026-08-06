@@ -323,8 +323,30 @@ if(RDK_MEDIA_CODEC_INCLUDE_DIR AND RDK_MULTIMEDIA_LIBRARY AND RDK_FFMPEG_FOUND)
     PkgConfig::RDK_FFMPEG
   )
   install(TARGETS rdk_d435i_h264_sender DESTINATION lib/${PROJECT_NAME})
+
+  # qr_vision_node reuses the same hb_media_codec encoder for its video-stream
+  # worker. Input comes from the D435ColorFrame already captured by the node
+  # (single camera opener), never from a second camera open.
+  target_sources(qr_vision_node
+    PRIVATE
+    src/rdk_h264_encoder.cpp
+  )
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC=1
+  )
+  target_include_directories(qr_vision_node
+    PRIVATE
+    ${RDK_MEDIA_CODEC_INCLUDE_DIR}
+  )
+  target_link_libraries(qr_vision_node
+    ${RDK_MULTIMEDIA_LIBRARY}
+    PkgConfig::RDK_FFMPEG
+  )
+
   message(STATUS
-    "drone_perception: RDK hb_media_codec found, H.264 sender enabled")
+    "drone_perception: RDK hb_media_codec found, H.264 sender + "
+    "qr_vision_node video-stream worker enabled")
 else()
   message(STATUS
     "Skipping rdk_d435i_h264_sender: need RDK hb_media_codec/libmultimedia "
