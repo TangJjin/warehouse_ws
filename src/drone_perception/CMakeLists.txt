@@ -331,6 +331,36 @@ else()
     "and libswscale/libavutil development files.")
 endif()
 
+# ── optional OrangePi RTSP MPP probe ─────────────────────
+# Non-Qt RTSP -> mppvideodec -> appsink probe for OrangePi 5 Ultra
+# (T4-T7 receive-path validation). Built only where GStreamer dev modules are
+# present (OrangePi); skipped elsewhere so RDK/PC builds are unaffected.
+pkg_check_modules(GSTREAMER_PROBE QUIET
+  gstreamer-1.0
+  gstreamer-app-1.0
+  gstreamer-video-1.0
+)
+
+if(GSTREAMER_PROBE_FOUND)
+  add_executable(orangepi_rtsp_mpp_probe src/orangepi_rtsp_mpp_probe.cpp)
+  target_compile_features(orangepi_rtsp_mpp_probe PUBLIC cxx_std_17)
+  target_include_directories(orangepi_rtsp_mpp_probe PRIVATE
+    ${GSTREAMER_PROBE_INCLUDE_DIRS}
+  )
+  target_compile_options(orangepi_rtsp_mpp_probe PRIVATE
+    ${GSTREAMER_PROBE_CFLAGS_OTHER}
+  )
+  target_link_libraries(orangepi_rtsp_mpp_probe
+    ${GSTREAMER_PROBE_LIBRARIES}
+  )
+  install(TARGETS orangepi_rtsp_mpp_probe DESTINATION lib/${PROJECT_NAME})
+  message(STATUS
+    "drone_perception: GStreamer found, orangepi_rtsp_mpp_probe enabled")
+else()
+  message(STATUS
+    "Skipping orangepi_rtsp_mpp_probe: GStreamer dev modules not found.")
+endif()
+
 install(DIRECTORY include/
   DESTINATION include
 )
