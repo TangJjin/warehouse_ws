@@ -1,7 +1,7 @@
 #include "drone_perception/qr_vision_node.hpp"
 
+#include <dirent.h>
 #include <fcntl.h>
-#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <functional>
@@ -4335,25 +4336,35 @@ void QrVisionNode::videoStreamLoop()
     return;
   }
 
-  posix_spawn_file_actions_t actions;
-  posix_spawnattr_t attrs;
-  posix_spawn_file_actions_init(&actions);
-  posix_spawnattr_init(&attrs);
-  posix_spawnattr_setflags(&attrs, POSIX_SPAWN_CLOEXEC_DEFAULT);
-  posix_spawn_file_actions_adddup2(&actions, pipe_fds[0], STDIN_FILENO);
-  posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
+  const pid_t ffmpeg_pid = fork();
+  if (ffmpeg_pid == 0) {
+    // Child: wire the pipe read end to stdin, then close every other fd so
+    // the inherited D435i camera fd never leaks into FFmpeg.
+    dup2(pipe_fds[0], STDIN_FILENO);
+    DIR * proc_fd_dir = opendir("/proc/self/fd");
+    if (proc_fd_dir != nullptr) {
+      const int dir_fd = dirfd(proc_fd_dir);
+      struct dirent * entry = nullptr;
+      while ((entry = readdir(proc_fd_dir)) != nullptr) {
+        const int fd = std::atoi(entry->d_name);
+        if (fd >= 3 && fd != dir_fd) {
+          close(fd);
+        }
+      }
+      closedir(proc_fd_dir);
+    } else {
+      for (int fd = 3; fd < 1024; ++fd) {
+        close(fd);
+      }
+    }
+    execvp("ffmpeg", args.data());
+    _exit(127);
+  }
 
-  extern char ** environ;
-  pid_t ffmpeg_pid = -1;
-  const int spawn_result =
-      posix_spawnp(&ffmpeg_pid, "ffmpeg", &actions, &attrs, args.data(), environ);
-  posix_spawn_file_actions_destroy(&actions);
-  posix_spawnattr_destroy(&attrs);
-
-  if (spawn_result != 0) {
+  if (ffmpeg_pid < 0) {
     RCLCPP_ERROR(
-        get_logger(), "video stream: failed to spawn ffmpeg: %s",
-        std::strerror(spawn_result));
+        get_logger(), "video stream: failed to fork ffmpeg: %s",
+        std::strerror(errno));
     close(pipe_fds[0]);
     close(pipe_fds[1]);
     return;
