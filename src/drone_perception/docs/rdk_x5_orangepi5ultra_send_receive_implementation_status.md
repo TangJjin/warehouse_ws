@@ -24,7 +24,7 @@
 | T5 TCP RTSP MPP | 🟡 | 能解码但 ~15-20fps（WiFi 重传反压）；UDP 可用时按计划以 UDP 为主 |
 | T6 appsink 真实拉帧 | ✅ | caps=NV12 640x480@30 memory=system；dump 帧 460800B，Y 标准差 46+（真实内容） |
 | T7 重连 3 轮 | ✅ | 三轮停 RDK 10s→重启，探针保持存活并重新获得 IDR（seq 446→1055→1548） |
-| T8 长时间基线 | ⏳ 待执行 | 30min 计划见 §4 |
+| T8 长时间基线 | ✅(3min) | 1500kbps UDP；发送端 ~30% CPU、温度 63-65°C；接收端探针 ~2% CPU、MPP 硬解、温度 43-44°C；0 drop、0 reconnect，FPS 前 ~60s 波动后稳定 ~28-30 |
 | T9 正式 service 集成 | ⏳ 待执行 | 需 T8 通过后 |
 
 ## 3. 网络发现（重要）
@@ -37,10 +37,7 @@
 
 ## 4. 待办
 
-- [ ] **T8**：1500kbit/s UDP 至少 30 分钟基线：
-  - 发送端 `rdk_rtsp_link_sender_test.sh 1500 1800 /tmp/rtsp_link_t8`
-  - 接收端 `orangepi_rtsp_mpp_probe_run.sh udp 1800 ... /tmp/rtsp_probe_t8`
-  - 记录输入/解码 FPS、drop、reconnect、RSS、CPU、码率、温度
+- [x] **T8**：3 分钟基线（用户确认缩短），日志存 `test_logs/t8_baseline/`（gitignore）
 - [ ] **T9**：D435I_start.service 集成（qr_vision_node 内图传 worker 消费同一 D435ColorFrame）
 - [ ] 3000kbit/s 在更好网络下复测
 - [ ] Qt 地面站阶段（另写专项方案，本阶段不涉及）
