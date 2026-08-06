@@ -302,8 +302,47 @@ else()
     "Need dnn/hb_dnn.h and libdnn.so.")
 endif()
 
+# ── optional RDK X5 D435i H.264 sender ───────────────────
+# Standalone V4L2 YUYV -> hb_media_codec H.264 -> MediaMTX/RTSP sender.
+# Conditional so non-RDK workstations and the RK3588 target can still build
+# the package. The sender is only the T0-T3 link-test entry; the formal
+# deployment keeps qr_vision_node as the single D435i opener (see
+# rdk_x5_orangepi5ultra_send_receive_implementation_plan.md).
+find_path(RDK_MEDIA_CODEC_INCLUDE_DIR NAMES hb_media_codec.h PATHS /usr/include)
+find_library(RDK_MULTIMEDIA_LIBRARY NAMES multimedia PATHS /usr/hobot/lib /usr/lib)
+pkg_check_modules(RDK_FFMPEG QUIET IMPORTED_TARGET libswscale libavutil)
+
+if(RDK_MEDIA_CODEC_INCLUDE_DIR AND RDK_MULTIMEDIA_LIBRARY AND RDK_FFMPEG_FOUND)
+  add_executable(rdk_d435i_h264_sender src/rdk_d435i_h264_sender.cpp)
+  target_compile_features(rdk_d435i_h264_sender PUBLIC cxx_std_17)
+  target_include_directories(rdk_d435i_h264_sender PRIVATE
+    ${RDK_MEDIA_CODEC_INCLUDE_DIR}
+  )
+  target_link_libraries(rdk_d435i_h264_sender
+    ${RDK_MULTIMEDIA_LIBRARY}
+    PkgConfig::RDK_FFMPEG
+  )
+  install(TARGETS rdk_d435i_h264_sender DESTINATION lib/${PROJECT_NAME})
+  message(STATUS
+    "drone_perception: RDK hb_media_codec found, H.264 sender enabled")
+else()
+  message(STATUS
+    "Skipping rdk_d435i_h264_sender: need RDK hb_media_codec/libmultimedia "
+    "and libswscale/libavutil development files.")
+endif()
+
 install(DIRECTORY include/
   DESTINATION include
+)
+
+install(PROGRAMS
+  scripts/rdk_d435i_mediamtx_sender.sh
+  scripts/start_rdk_d435i_sender.sh
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
