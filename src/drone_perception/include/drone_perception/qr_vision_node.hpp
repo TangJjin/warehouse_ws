@@ -64,6 +64,14 @@ class CLAHE;
 #include "drone_perception/nano2d_preprocessor.hpp"
 #endif
 
+#ifndef DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+#define DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC 0
+#endif
+
+#if DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+#include "drone_perception/rdk_h264_encoder.hpp"
+#endif
+
 class QrVisionNode : public rclcpp::Node
 {
 public:
@@ -232,6 +240,18 @@ private:
   void initializeDirectCapture();
 
   void processDirectFrame(const drone_perception::D435ColorFrame &frame);
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+  void initializeVideoStream();
+
+  void startVideoStream();
+
+  void stopVideoStream();
+
+  void videoStreamLoop();
+
+  void submitVideoFrame(const drone_perception::D435ColorFrame &frame);
 #endif
 
   bool prepareBpuInput(const cv::Mat &color_image);
@@ -426,6 +446,16 @@ private:
   int d435_reconnect_delay_ms_{2000};
   bool direct_input_debug_bgr_{true};
 
+  // Video stream (H.264 / RTSP) parameters. The worker is active only when
+  // both the D435 direct path and the RDK hb_media_codec are available.
+  bool video_stream_enabled_{false};
+  int video_stream_width_{640};
+  int video_stream_height_{480};
+  int video_stream_fps_{30};
+  int video_stream_bitrate_kbps_{1500};
+  int video_stream_gop_{15};
+  std::string video_stream_publish_url_;
+
   std::string bpu_model_path_;
   std::string ocr_rec_model_path_;
 
@@ -518,6 +548,19 @@ private:
 
 #if DRONE_PERCEPTION_HAS_REALSENSE
   std::unique_ptr<drone_perception::D435ColorCapture> d435_capture_;
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+  std::unique_ptr<drone_perception::RdkH264Encoder> video_encoder_;
+  std::thread video_stream_thread_;
+  std::mutex video_stream_mutex_;
+  std::condition_variable video_stream_cv_;
+  drone_perception::D435ColorFrame latest_video_frame_;
+  bool video_stream_frame_pending_{false};
+  bool video_stream_running_{false};
+  std::atomic<std::uint64_t> video_stream_encoded_count_{0U};
+  std::atomic<std::uint64_t> video_stream_dropped_count_{0U};
+  std::atomic<std::uint64_t> video_stream_write_errors_{0U};
 #endif
 
 #if DRONE_PERCEPTION_HAS_NANO2D

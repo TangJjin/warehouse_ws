@@ -1,12 +1,20 @@
 #include "drone_perception/qr_vision_node.hpp"
 
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <functional>
@@ -315,6 +323,15 @@ QrVisionNode::QrVisionNode()
   }
 #endif
 
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+  // The video-stream worker consumes the same D435ColorFrame as detection and
+  // pushes H.264 toward the local MediaMTX started by start_d435.sh. It must be
+  // started after initializeDirectCapture() so the capture slot exists.
+  if (camera_input_mode_ == "d435_direct" && video_stream_enabled_) {
+    startVideoStream();
+  }
+#endif
+
   // HighGUI windows must be created and driven from the main thread (GTK
   // initializes there). The window is created here; the worker thread only
   // renders frames, and a wall timer on the executor thread runs imshow/waitKey.
@@ -360,7 +377,13 @@ QrVisionNode::~QrVisionNode()
   camera_info_sub_.reset();
   camera_controls_timer_.reset();
   camera_param_client_.reset();
+  // Stop the frame producers first (no new submits), then drain the encoder
+  // worker and close the FFmpeg/MediaMTX pipe.
   stopVisionWorker();
+
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+  stopVideoStream();
+#endif
 
   if (debug_window_created_)
   {
@@ -562,6 +585,20 @@ void QrVisionNode::declareParameters()
       "d435_reconnect_delay_ms", 2000);
   direct_input_debug_bgr_ = this->declare_parameter<bool>(
       "direct_input_debug_bgr", true);
+  video_stream_enabled_ = this->declare_parameter<bool>(
+      "video_stream_enabled", false);
+  video_stream_width_ = this->declare_parameter<int>(
+      "video_stream_width", 640);
+  video_stream_height_ = this->declare_parameter<int>(
+      "video_stream_height", 480);
+  video_stream_fps_ = this->declare_parameter<int>(
+      "video_stream_fps", 30);
+  video_stream_bitrate_kbps_ = this->declare_parameter<int>(
+      "video_stream_bitrate_kbps", 1500);
+  video_stream_gop_ = this->declare_parameter<int>(
+      "video_stream_gop", 15);
+  video_stream_publish_url_ = this->declare_parameter<std::string>(
+      "video_stream_publish_url", "rtsp://127.0.0.1:8554/d435i");
   log_throttle_ms_ = this->declare_parameter<int>("log_throttle_ms", 2000);
   shelf_code_stable_frames_ = this->declare_parameter<int>(
       "shelf_code_stable_frames",
@@ -2093,6 +2130,14 @@ void QrVisionNode::processDirectFrame(
   }
 
   input_frame_count_.fetch_add(1U);
+
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+  // Same frame is also offered to the H.264 encoder worker. Non-blocking
+  // latest-frame slot: a slow encoder drops old frames, never stalls detection.
+  if (video_stream_enabled_) {
+    submitVideoFrame(frame);
+  }
+#endif
 
   updateFps();
 
@@ -4181,5 +4226,213 @@ void QrVisionNode::drawQrPreprocessPreview(cv::Mat &display) const
       image_rect,
       cv::Scalar(120, 220, 255),
       1);
+}
+#endif
+
+#if DRONE_PERCEPTION_HAS_REALSENSE && DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC
+void QrVisionNode::startVideoStream()
+{
+  auto encoder = std::make_unique<drone_perception::RdkH264Encoder>();
+  drone_perception::RdkH264Encoder::Config encoder_config;
+  encoder_config.width = video_stream_width_;
+  encoder_config.height = video_stream_height_;
+  encoder_config.fps = video_stream_fps_;
+  encoder_config.bitrate_kbps = video_stream_bitrate_kbps_;
+  encoder_config.gop = video_stream_gop_;
+
+  std::string error;
+  if (!encoder->initialize(encoder_config, error)) {
+    RCLCPP_ERROR(
+        get_logger(),
+        "video stream encoder init failed: %s (video_stream_enabled disabled)",
+        error.c_str());
+    video_stream_enabled_ = false;
+    return;
+  }
+  video_encoder_ = std::move(encoder);
+
+  {
+    std::lock_guard<std::mutex> lock(video_stream_mutex_);
+    video_stream_running_ = true;
+  }
+
+  video_stream_thread_ = std::thread(&QrVisionNode::videoStreamLoop, this);
+
+  RCLCPP_INFO(
+      get_logger(),
+      "video stream worker started: %dx%d@%d H.264 CBR %d kbit/s GOP %d -> %s",
+      video_stream_width_,
+      video_stream_height_,
+      video_stream_fps_,
+      video_stream_bitrate_kbps_,
+      video_stream_gop_,
+      video_stream_publish_url_.c_str());
+}
+
+void QrVisionNode::stopVideoStream()
+{
+  {
+    std::lock_guard<std::mutex> lock(video_stream_mutex_);
+    video_stream_running_ = false;
+    video_stream_frame_pending_ = false;
+    latest_video_frame_ = {};
+  }
+  video_stream_cv_.notify_all();
+
+  if (video_stream_thread_.joinable()) {
+    video_stream_thread_.join();
+  }
+
+  video_encoder_.reset();
+
+  RCLCPP_INFO(
+      get_logger(),
+      "video stream worker stopped: encoded=%llu dropped=%llu write_errors=%llu",
+      static_cast<unsigned long long>(video_stream_encoded_count_.load()),
+      static_cast<unsigned long long>(video_stream_dropped_count_.load()),
+      static_cast<unsigned long long>(video_stream_write_errors_.load()));
+}
+
+void QrVisionNode::submitVideoFrame(const drone_perception::D435ColorFrame &frame)
+{
+  std::lock_guard<std::mutex> lock(video_stream_mutex_);
+  if (!video_stream_running_) {
+    return;
+  }
+  // Latest-frame slot: an unread frame is dropped, never queued unbounded.
+  if (video_stream_frame_pending_) {
+    ++video_stream_dropped_count_;
+  }
+  latest_video_frame_ = frame;
+  video_stream_frame_pending_ = true;
+  video_stream_cv_.notify_one();
+}
+
+void QrVisionNode::videoStreamLoop()
+{
+  // Encodes the newest YUYV frame into H.264 and feeds it to an FFmpeg
+  // -c:v copy RTSP push toward the MediaMTX started by start_d435.sh. The
+  // worker is independent of the detection path: when the link is slow the
+  // pipe write blocks here only, and detection keeps running.
+  //
+  // FFmpeg is spawned with posix_spawn + POSIX_SPAWN_CLOEXEC_DEFAULT so the
+  // node's inherited D435i camera fd does NOT leak into the child (popen would
+  // leave it open, violating "only qr_vision_node holds the camera").
+  const std::string ffmpeg_argv[] = {
+      "ffmpeg", "-hide_banner", "-loglevel", "warning", "-fflags", "+genpts",
+      "-f", "h264", "-i", "pipe:0", "-map", "0:v:0", "-c:v", "copy", "-an",
+      "-f", "rtsp", "-rtsp_transport", "tcp", video_stream_publish_url_};
+  std::vector<char *> args;
+  args.reserve(sizeof(ffmpeg_argv) / sizeof(ffmpeg_argv[0]) + 1U);
+  for (const std::string & arg : ffmpeg_argv) {
+    args.push_back(const_cast<char *>(arg.c_str()));
+  }
+  args.push_back(nullptr);
+
+  int pipe_fds[2] = {-1, -1};
+  if (pipe2(pipe_fds, O_CLOEXEC) != 0) {
+    RCLCPP_ERROR(
+        get_logger(), "video stream: pipe2 failed: %s", std::strerror(errno));
+    return;
+  }
+
+  const pid_t ffmpeg_pid = fork();
+  if (ffmpeg_pid == 0) {
+    // Child: wire the pipe read end to stdin, then close every other fd so
+    // the inherited D435i camera fd never leaks into FFmpeg.
+    dup2(pipe_fds[0], STDIN_FILENO);
+    DIR * proc_fd_dir = opendir("/proc/self/fd");
+    if (proc_fd_dir != nullptr) {
+      const int dir_fd = dirfd(proc_fd_dir);
+      struct dirent * entry = nullptr;
+      while ((entry = readdir(proc_fd_dir)) != nullptr) {
+        const int fd = std::atoi(entry->d_name);
+        if (fd >= 3 && fd != dir_fd) {
+          close(fd);
+        }
+      }
+      closedir(proc_fd_dir);
+    } else {
+      for (int fd = 3; fd < 1024; ++fd) {
+        close(fd);
+      }
+    }
+    execvp("ffmpeg", args.data());
+    _exit(127);
+  }
+
+  if (ffmpeg_pid < 0) {
+    RCLCPP_ERROR(
+        get_logger(), "video stream: failed to fork ffmpeg: %s",
+        std::strerror(errno));
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+    return;
+  }
+  close(pipe_fds[0]);  // parent keeps only the write end
+
+  std::vector<std::uint8_t> h264_buffer;
+  std::string encode_error;
+
+  while (true) {
+    drone_perception::D435ColorFrame frame;
+    {
+      std::unique_lock<std::mutex> lock(video_stream_mutex_);
+      video_stream_cv_.wait(lock, [this]() {
+        return !video_stream_running_ || video_stream_frame_pending_;
+      });
+      if (!video_stream_running_) {
+        break;
+      }
+      frame = std::move(latest_video_frame_);
+      video_stream_frame_pending_ = false;
+    }
+
+    if (frame.yuyv.empty()) {
+      continue;
+    }
+
+    h264_buffer.clear();
+    encode_error.clear();
+    if (!video_encoder_ ||
+        !video_encoder_->encodeFrame(
+            frame.yuyv.data(),
+            frame.stride_bytes,
+            frame.sequence,
+            h264_buffer,
+            encode_error)) {
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          5000,
+          "video stream encode failed: %s",
+          encode_error.c_str());
+      continue;
+    }
+
+    ++video_stream_encoded_count_;
+
+    if (!h264_buffer.empty()) {
+      const std::uint8_t * data = h264_buffer.data();
+      std::size_t remaining = h264_buffer.size();
+      while (remaining > 0) {
+        const ssize_t written = write(pipe_fds[1], data, remaining);
+        if (written > 0) {
+          data += written;
+          remaining -= static_cast<std::size_t>(written);
+          continue;
+        }
+        if (written < 0 && errno == EINTR) {
+          continue;
+        }
+        ++video_stream_write_errors_;
+        break;
+      }
+    }
+  }
+
+  close(pipe_fds[1]);  // EOF -> FFmpeg exits
+  int child_status = 0;
+  waitpid(ffmpeg_pid, &child_status, 0);
 }
 #endif

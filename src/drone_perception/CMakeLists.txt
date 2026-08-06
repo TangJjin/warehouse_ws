@@ -302,8 +302,101 @@ else()
     "Need dnn/hb_dnn.h and libdnn.so.")
 endif()
 
+# ── optional RDK X5 D435i H.264 sender ───────────────────
+# Standalone V4L2 YUYV -> hb_media_codec H.264 -> MediaMTX/RTSP sender.
+# Conditional so non-RDK workstations and the RK3588 target can still build
+# the package. The sender is only the T0-T3 link-test entry; the formal
+# deployment keeps qr_vision_node as the single D435i opener (see
+# rdk_x5_orangepi5ultra_send_receive_implementation_plan.md).
+find_path(RDK_MEDIA_CODEC_INCLUDE_DIR NAMES hb_media_codec.h PATHS /usr/include)
+find_library(RDK_MULTIMEDIA_LIBRARY NAMES multimedia PATHS /usr/hobot/lib /usr/lib)
+pkg_check_modules(RDK_FFMPEG QUIET IMPORTED_TARGET libswscale libavutil)
+
+if(RDK_MEDIA_CODEC_INCLUDE_DIR AND RDK_MULTIMEDIA_LIBRARY AND RDK_FFMPEG_FOUND)
+  add_executable(rdk_d435i_h264_sender src/rdk_d435i_h264_sender.cpp)
+  target_compile_features(rdk_d435i_h264_sender PUBLIC cxx_std_17)
+  target_include_directories(rdk_d435i_h264_sender PRIVATE
+    ${RDK_MEDIA_CODEC_INCLUDE_DIR}
+  )
+  target_link_libraries(rdk_d435i_h264_sender
+    ${RDK_MULTIMEDIA_LIBRARY}
+    PkgConfig::RDK_FFMPEG
+  )
+  install(TARGETS rdk_d435i_h264_sender DESTINATION lib/${PROJECT_NAME})
+
+  # qr_vision_node reuses the same hb_media_codec encoder for its video-stream
+  # worker. Input comes from the D435ColorFrame already captured by the node
+  # (single camera opener), never from a second camera open.
+  target_sources(qr_vision_node
+    PRIVATE
+    src/rdk_h264_encoder.cpp
+  )
+  target_compile_definitions(qr_vision_node
+    PRIVATE
+    DRONE_PERCEPTION_HAS_RDK_MEDIA_CODEC=1
+  )
+  target_include_directories(qr_vision_node
+    PRIVATE
+    ${RDK_MEDIA_CODEC_INCLUDE_DIR}
+  )
+  target_link_libraries(qr_vision_node
+    ${RDK_MULTIMEDIA_LIBRARY}
+    PkgConfig::RDK_FFMPEG
+  )
+
+  message(STATUS
+    "drone_perception: RDK hb_media_codec found, H.264 sender + "
+    "qr_vision_node video-stream worker enabled")
+else()
+  message(STATUS
+    "Skipping rdk_d435i_h264_sender: need RDK hb_media_codec/libmultimedia "
+    "and libswscale/libavutil development files.")
+endif()
+
+# ── optional OrangePi RTSP MPP probe ─────────────────────
+# Non-Qt RTSP -> mppvideodec -> appsink probe for OrangePi 5 Ultra
+# (T4-T7 receive-path validation). Built only where GStreamer dev modules are
+# present (OrangePi); skipped elsewhere so RDK/PC builds are unaffected.
+pkg_check_modules(GSTREAMER_PROBE QUIET
+  gstreamer-1.0
+  gstreamer-app-1.0
+  gstreamer-video-1.0
+)
+
+if(GSTREAMER_PROBE_FOUND)
+  add_executable(orangepi_rtsp_mpp_probe src/orangepi_rtsp_mpp_probe.cpp)
+  target_compile_features(orangepi_rtsp_mpp_probe PUBLIC cxx_std_17)
+  target_include_directories(orangepi_rtsp_mpp_probe PRIVATE
+    ${GSTREAMER_PROBE_INCLUDE_DIRS}
+  )
+  target_compile_options(orangepi_rtsp_mpp_probe PRIVATE
+    ${GSTREAMER_PROBE_CFLAGS_OTHER}
+  )
+  target_link_libraries(orangepi_rtsp_mpp_probe
+    ${GSTREAMER_PROBE_LIBRARIES}
+  )
+  install(TARGETS orangepi_rtsp_mpp_probe DESTINATION lib/${PROJECT_NAME})
+  message(STATUS
+    "drone_perception: GStreamer found, orangepi_rtsp_mpp_probe enabled")
+else()
+  message(STATUS
+    "Skipping orangepi_rtsp_mpp_probe: GStreamer dev modules not found.")
+endif()
+
 install(DIRECTORY include/
   DESTINATION include
+)
+
+install(PROGRAMS
+  scripts/rdk_d435i_mediamtx_sender.sh
+  scripts/start_rdk_d435i_sender.sh
+  scripts/rdk_rtsp_link_sender_test.sh
+  scripts/orangepi_rtsp_mpp_probe_run.sh
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
