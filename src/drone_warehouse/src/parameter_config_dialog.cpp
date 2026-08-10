@@ -10,6 +10,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSet>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -524,38 +525,222 @@ const QVector<ParameterDefinition> &baseParameterDefinitions()
     return definitions;
 }
 
-// 货架配置使用 QVector 保存，不能像固定结构体那样使用一组静态成员指针。
-// 下列工厂函数把货架下标捕获到读写 lambda 中，参数页因此可以按照当前配置
-// 中真实的货架、位姿区域、槽位行列数量动态生成参数。
-ParameterDefinition shelfTextParameter(
-    int shelf_index,
-    const QString &id_suffix,
-    const QString &name,
-    const QString &description,
-    QString ShelfConfig::*member)
+// SHELF 参数按当前货架数量、每个货架自己的行列数动态生成。
+void resizeCoordinateVector(QVector<double> &values, int new_size, double fallback)
+{
+    const int old_size = values.size();
+    const double fill_value = values.isEmpty() ? fallback : values.constLast();
+    values.resize(new_size);
+    for (int index = old_size; index < new_size; ++index)
+    {
+        values[index] = fill_value;
+    }
+}
+
+ParameterDefinition shelfCountParameter()
 {
     ParameterDefinition definition;
-    definition.id = QString("shelf_%1_%2").arg(shelf_index + 1).arg(id_suffix);
+    definition.id = "shelf_count";
     definition.group = ParameterGroup::Shelf;
-    definition.name = name;
-    definition.description = description;
-    definition.editor_type = ParameterEditorType::Text;
-    definition.read = [shelf_index, member](const WarehouseConfig &config) {
+    definition.name = "货架数量";
+    definition.description = "选择仓库当前使用的货架数量；增加时自动创建完整默认货架，减少时移除末尾货架。";
+    definition.editor_type = ParameterEditorType::Choice;
+    for (int count = 1; count <= 20; ++count)
+    {
+        definition.choices.push_back({QString::number(count), QString::number(count)});
+    }
+    definition.read = [](const WarehouseConfig &config) {
+        return QString::number(config.shelves.size());
+    };
+    definition.write = [](WarehouseConfig &config,
+                          const QString &raw,
+                          QString *error_message) {
+        bool ok = false;
+        const int count = raw.toInt(&ok);
+        if (!ok || count < 1 || count > 20)
+        {
+            setError(error_message, "货架数量必须在 1 到 20 之间");
+            return false;
+        }
+        if (count < config.shelves.size())
+        {
+            config.shelves.resize(count);
+            return true;
+        }
+
+        QSet<QString> used_codes;
+        for (const ShelfConfig &shelf : config.shelves)
+        {
+            used_codes.insert(shelf.code.trimmed().toUpper());
+        }
+        while (config.shelves.size() < count)
+        {
+            const int shelf_index = config.shelves.size();
+            ShelfConfig shelf = createDefaultShelfConfig(shelf_index);
+            for (int code_index = 1; code_index <= 20; ++code_index)
+            {
+                const QString candidate =
+                    QString("A%1").arg(code_index, 2, 10, QLatin1Char('0'));
+                if (!used_codes.contains(candidate))
+                {
+                    shelf.code = candidate;
+                    shelf.display_name = candidate;
+                    shelf.front_slot_prefix = candidate + "F";
+                    shelf.back_slot_prefix = candidate + "B";
+                    used_codes.insert(candidate);
+                    break;
+                }
+            }
+            config.shelves.push_back(shelf);
+        }
+        return true;
+    };
+    return definition;
+}
+
+ParameterDefinition globalYawParameter(bool front)
+{
+    ParameterDefinition definition;
+    definition.id = front ? "shelf_front_yaw_rad" : "shelf_back_yaw_rad";
+    definition.group = ParameterGroup::Shelf;
+    definition.name = front ? "正面航向" : "背面航向";
+    definition.description = front
+        ? "所有货架正面槽位生成航点时使用的无人机航向。"
+        : "所有货架背面槽位生成航点时使用的无人机航向。";
+    definition.editor_type = ParameterEditorType::Number;
+    definition.unit = "rad";
+    definition.display_decimals = 3;
+    definition.read = [front](const WarehouseConfig &config) {
+        return QString::number(front ? config.slot_grid.front_yaw_rad
+                                     : config.slot_grid.back_yaw_rad,
+                               'g', 15);
+    };
+    definition.write = [front](WarehouseConfig &config,
+                               const QString &raw,
+                               QString *error_message) {
+        bool ok = false;
+        const double value = raw.toDouble(&ok);
+        if (!ok || !std::isfinite(value))
+        {
+            setError(error_message, "请输入有效有限数值");
+            return false;
+        }
+        if (front)
+        {
+            config.slot_grid.front_yaw_rad = value;
+        }
+        else
+        {
+            config.slot_grid.back_yaw_rad = value;
+        }
+        return true;
+    };
+    return definition;
+}
+
+ParameterDefinition shelfCodeParameter(int shelf_index, const QString &prefix)
+{
+    ParameterDefinition definition;
+    definition.id = QString("shelf_%1_code").arg(shelf_index + 1);
+    definition.group = ParameterGroup::Shelf;
+    definition.name = prefix + " 货架名称";
+    definition.description = "货架名称只能从 A01 到 A20 中选择，并且不能与其他货架重复。";
+    definition.editor_type = ParameterEditorType::Choice;
+    for (int code_index = 1; code_index <= 20; ++code_index)
+    {
+        const QString code =
+            QString("A%1").arg(code_index, 2, 10, QLatin1Char('0'));
+        definition.choices.push_back({code, code});
+    }
+    definition.read = [shelf_index](const WarehouseConfig &config) {
+        return shelf_index >= 0 && shelf_index < config.shelves.size()
+            ? config.shelves.at(shelf_index).code
+            : QString();
+    };
+    definition.write = [shelf_index](WarehouseConfig &config,
+                                     const QString &raw,
+                                     QString *error_message) {
+        if (shelf_index < 0 || shelf_index >= config.shelves.size())
+        {
+            setError(error_message, "货架索引已经失效，请重新选择参数");
+            return false;
+        }
+        const QString code = raw.trimmed().toUpper();
+        bool allowed = false;
+        for (int code_index = 1; code_index <= 20; ++code_index)
+        {
+            if (code == QString("A%1").arg(
+                            code_index, 2, 10, QLatin1Char('0')))
+            {
+                allowed = true;
+                break;
+            }
+        }
+        if (!allowed)
+        {
+            setError(error_message, "货架名称必须从 A01 到 A20 中选择");
+            return false;
+        }
+        ShelfConfig &shelf = config.shelves[shelf_index];
+        shelf.code = code;
+        shelf.display_name = code;
+        shelf.front_slot_prefix = code + "F";
+        shelf.back_slot_prefix = code + "B";
+        return true;
+    };
+    return definition;
+}
+
+ParameterDefinition shelfSizeParameter(
+    int shelf_index,
+    bool rows,
+    const QString &prefix)
+{
+    ParameterDefinition definition;
+    definition.id = QString("shelf_%1_%2")
+                        .arg(shelf_index + 1)
+                        .arg(rows ? "rows" : "columns");
+    definition.group = ParameterGroup::Shelf;
+    definition.name = prefix + (rows ? " 货架行数" : " 货架列数");
+    definition.description = rows
+        ? "当前货架每一面的槽位行数；修改后同步调整该货架的 R 行高数组。"
+        : "当前货架每一面的槽位列数；修改后同步调整该货架正背面的 C 列 X 数组。";
+    definition.editor_type = ParameterEditorType::Integer;
+    definition.read = [shelf_index, rows](const WarehouseConfig &config) {
         if (shelf_index < 0 || shelf_index >= config.shelves.size())
         {
             return QString();
         }
-        return config.shelves.at(shelf_index).*member;
+        const ShelfConfig &shelf = config.shelves.at(shelf_index);
+        return QString::number(rows ? shelf.rows : shelf.columns);
     };
-    definition.write = [shelf_index, member](WarehouseConfig &config,
-                                             const QString &raw,
-                                             QString *error_message) {
-        if (shelf_index < 0 || shelf_index >= config.shelves.size())
+    definition.write = [shelf_index, rows](WarehouseConfig &config,
+                                           const QString &raw,
+                                           QString *error_message) {
+        bool ok = false;
+        const int value = raw.toInt(&ok);
+        if (!ok || value <= 0 || value > 20)
         {
-            setError(error_message, "货架索引已经失效，请重新打开参数页面");
+            setError(error_message, "货架行列数必须是 1 到 20 的整数");
             return false;
         }
-        config.shelves[shelf_index].*member = raw.trimmed();
+        if (shelf_index < 0 || shelf_index >= config.shelves.size())
+        {
+            setError(error_message, "货架索引已经失效，请重新选择参数");
+            return false;
+        }
+        ShelfConfig &shelf = config.shelves[shelf_index];
+        if (rows)
+        {
+            shelf.rows = value;
+            resizeCoordinateVector(shelf.waypoint_row_z_m, value, 0.200);
+        }
+        else
+        {
+            shelf.columns = value;
+            resizeCoordinateVector(shelf.waypoint_front_x_m, value, 0.0);
+            resizeCoordinateVector(shelf.waypoint_back_x_m, value, 0.0);
+        }
         return true;
     };
     return definition;
@@ -598,7 +783,7 @@ ParameterDefinition shelfDoubleParameter(
         }
         if (shelf_index < 0 || shelf_index >= config.shelves.size())
         {
-            setError(error_message, "货架索引已经失效，请重新打开参数页面");
+            setError(error_message, "货架索引已经失效，请重新选择参数");
             return false;
         }
         write_value(config.shelves[shelf_index], value);
@@ -607,291 +792,48 @@ ParameterDefinition shelfDoubleParameter(
     return definition;
 }
 
-ParameterDefinition shelfColorParameter(
+ParameterDefinition shelfVectorParameter(
     int shelf_index,
+    int value_index,
     const QString &id_suffix,
     const QString &name,
     const QString &description,
-    bool preserve_alpha)
+    QVector<double> ShelfConfig::*member)
 {
     ParameterDefinition definition;
     definition.id = QString("shelf_%1_%2").arg(shelf_index + 1).arg(id_suffix);
     definition.group = ParameterGroup::Shelf;
     definition.name = name;
     definition.description = description;
-    definition.editor_type = ParameterEditorType::Text;
-    definition.placeholder = preserve_alpha ? "#AARRGGBB" : "#RRGGBB";
-    definition.read = [shelf_index, preserve_alpha, id_suffix](const WarehouseConfig &config) {
-        if (shelf_index < 0 || shelf_index >= config.shelves.size())
-        {
-            return QString();
-        }
-        const ShelfConfig &shelf = config.shelves.at(shelf_index);
-        if (id_suffix == "scene_color")
-        {
-            return shelf.scene_color.name(
-                preserve_alpha ? QColor::HexArgb : QColor::HexRgb);
-        }
-        return shelf.button_status_color;
-    };
-    definition.write = [shelf_index, preserve_alpha, id_suffix](
-                           WarehouseConfig &config,
-                           const QString &raw,
-                           QString *error_message) {
-        const QColor color(raw.trimmed());
-        if (!color.isValid())
-        {
-            setError(error_message, "请输入有效颜色，例如 #B42D3E50 或 #7F8C9A");
-            return false;
-        }
-        if (shelf_index < 0 || shelf_index >= config.shelves.size())
-        {
-            setError(error_message, "货架索引已经失效，请重新打开参数页面");
-            return false;
-        }
-        ShelfConfig &shelf = config.shelves[shelf_index];
-        if (id_suffix == "scene_color")
-        {
-            shelf.scene_color = color;
-        }
-        else
-        {
-            shelf.button_status_color = color.name(
-                preserve_alpha ? QColor::HexArgb : QColor::HexRgb);
-        }
-        return true;
-    };
-    return definition;
-}
-
-ParameterDefinition poseRegionParameter(
-    int shelf_index,
-    int region_index,
-    const QString &field,
-    const QString &name,
-    const QString &description,
-    const std::function<double(const ShelfPoseRegionConfig &)> &read_value,
-    const std::function<void(ShelfPoseRegionConfig &, double)> &write_value)
-{
-    ParameterDefinition definition;
-    definition.id = QString("shelf_%1_region_%2_%3")
-                        .arg(shelf_index + 1)
-                        .arg(region_index + 1)
-                        .arg(field);
-    definition.group = ParameterGroup::Shelf;
-    definition.name = name;
-    definition.description = description;
     definition.editor_type = ParameterEditorType::Number;
-    definition.unit = field.startsWith("yaw_") ? "deg" : QString();
-    definition.display_decimals = 2;
-    definition.read = [shelf_index, region_index, read_value](
-                          const WarehouseConfig &config) {
-        if (shelf_index < 0 || shelf_index >= config.shelves.size() ||
-            region_index < 0 ||
-            region_index >= config.shelves.at(shelf_index).pose_regions.size())
-        {
-            return QString();
-        }
-        return QString::number(
-            read_value(config.shelves.at(shelf_index).pose_regions.at(region_index)),
-            'g', 15);
-    };
-    definition.write = [shelf_index, region_index, write_value](
-                           WarehouseConfig &config,
-                           const QString &raw,
-                           QString *error_message) {
-        bool ok = false;
-        const double value = raw.toDouble(&ok);
-        if (!ok || !std::isfinite(value))
-        {
-            setError(error_message, "请输入有效有限数值");
-            return false;
-        }
-        if (shelf_index < 0 || shelf_index >= config.shelves.size() ||
-            region_index < 0 ||
-            region_index >= config.shelves.at(shelf_index).pose_regions.size())
-        {
-            setError(error_message, "货架位姿区域索引已经失效，请重新打开参数页面");
-            return false;
-        }
-        write_value(config.shelves[shelf_index].pose_regions[region_index], value);
-        return true;
-    };
-    return definition;
-}
-
-ParameterDefinition poseRegionSideParameter(
-    int shelf_index,
-    int region_index,
-    const QString &name)
-{
-    ParameterDefinition definition;
-    definition.id = QString("shelf_%1_region_%2_side")
-                        .arg(shelf_index + 1)
-                        .arg(region_index + 1);
-    definition.group = ParameterGroup::Shelf;
-    definition.name = name;
-    definition.description = "该位姿识别区域对应货架正面还是背面。";
-    definition.editor_type = ParameterEditorType::Choice;
-    definition.choices = {{"正面", "front"}, {"背面", "back"}};
-    definition.read = [shelf_index, region_index](const WarehouseConfig &config) {
-        if (shelf_index < 0 || shelf_index >= config.shelves.size() ||
-            region_index < 0 ||
-            region_index >= config.shelves.at(shelf_index).pose_regions.size())
-        {
-            return QString();
-        }
-        return config.shelves.at(shelf_index).pose_regions.at(region_index).side;
-    };
-    definition.write = [shelf_index, region_index](
-                           WarehouseConfig &config,
-                           const QString &raw,
-                           QString *error_message) {
-        if (raw != "front" && raw != "back")
-        {
-            setError(error_message, "货架面选项无效");
-            return false;
-        }
-        if (shelf_index < 0 || shelf_index >= config.shelves.size() ||
-            region_index < 0 ||
-            region_index >= config.shelves.at(shelf_index).pose_regions.size())
-        {
-            setError(error_message, "货架位姿区域索引已经失效，请重新打开参数页面");
-            return false;
-        }
-        config.shelves[shelf_index].pose_regions[region_index].side = raw;
-        return true;
-    };
-    return definition;
-}
-
-void resizeCoordinateVector(QVector<double> &values, int new_size, double fallback)
-{
-    const int old_size = values.size();
-    const double fill_value = values.isEmpty() ? fallback : values.constLast();
-    values.resize(new_size);
-    for (int index = old_size; index < new_size; ++index)
-    {
-        values[index] = fill_value;
-    }
-}
-
-ParameterDefinition slotGridSizeParameter(bool rows)
-{
-    ParameterDefinition definition;
-    definition.id = rows ? "slot_rows" : "slot_columns";
-    definition.group = ParameterGroup::Shelf;
-    definition.name = rows ? "槽位行数" : "槽位列数";
-    definition.description = rows
-        ? "每个货架面显示的槽位行数；修改后同步调整每行航点高度数组。"
-        : "每个货架面显示的槽位列数；修改后同步调整正面和背面航点 X 数组。";
-    definition.editor_type = ParameterEditorType::Integer;
-    definition.read = [rows](const WarehouseConfig &config) {
-        return QString::number(rows ? config.slot_grid.rows
-                                    : config.slot_grid.columns);
-    };
-    definition.write = [rows](WarehouseConfig &config,
-                              const QString &raw,
-                              QString *error_message) {
-        bool ok = false;
-        const int value = raw.toInt(&ok);
-        if (!ok || value <= 0)
-        {
-            setError(error_message, "槽位行列数必须是大于 0 的整数");
-            return false;
-        }
-        if (rows)
-        {
-            config.slot_grid.rows = value;
-            resizeCoordinateVector(
-                config.slot_grid.waypoint_row_z_m, value, 0.0);
-        }
-        else
-        {
-            config.slot_grid.columns = value;
-            resizeCoordinateVector(
-                config.slot_grid.waypoint_front_x_m, value, 0.0);
-            resizeCoordinateVector(
-                config.slot_grid.waypoint_back_x_m, value, 0.0);
-        }
-        return true;
-    };
-    return definition;
-}
-
-ParameterDefinition slotGridDoubleParameter(
-    const QString &id,
-    const QString &name,
-    const QString &description,
-    const QString &unit,
-    double SlotGridConfig::*member,
-    int display_decimals = 3)
-{
-    ParameterDefinition definition;
-    definition.id = id;
-    definition.group = ParameterGroup::Shelf;
-    definition.name = name;
-    definition.description = description;
-    definition.editor_type = ParameterEditorType::Number;
-    definition.unit = unit;
-    definition.display_decimals = display_decimals;
-    definition.read = [member](const WarehouseConfig &config) {
-        return QString::number(config.slot_grid.*member, 'g', 15);
-    };
-    definition.write = [member](WarehouseConfig &config,
-                                const QString &raw,
-                                QString *error_message) {
-        bool ok = false;
-        const double value = raw.toDouble(&ok);
-        if (!ok || !std::isfinite(value))
-        {
-            setError(error_message, "请输入有效有限数值");
-            return false;
-        }
-        config.slot_grid.*member = value;
-        return true;
-    };
-    return definition;
-}
-
-ParameterDefinition slotGridVectorParameter(
-    const QString &id,
-    const QString &name,
-    const QString &description,
-    const QString &unit,
-    int value_index,
-    QVector<double> SlotGridConfig::*member)
-{
-    ParameterDefinition definition;
-    definition.id = id;
-    definition.group = ParameterGroup::Shelf;
-    definition.name = name;
-    definition.description = description;
-    definition.editor_type = ParameterEditorType::Number;
-    definition.unit = unit;
+    definition.unit = "m";
     definition.display_decimals = 3;
-    definition.read = [value_index, member](const WarehouseConfig &config) {
-        const QVector<double> &values = config.slot_grid.*member;
-        if (value_index < 0 || value_index >= values.size())
+    definition.read = [shelf_index, value_index, member](const WarehouseConfig &config) {
+        if (shelf_index < 0 || shelf_index >= config.shelves.size())
         {
             return QString();
         }
-        return QString::number(values.at(value_index), 'g', 15);
+        const QVector<double> &values = config.shelves.at(shelf_index).*member;
+        return value_index >= 0 && value_index < values.size()
+            ? QString::number(values.at(value_index), 'g', 15)
+            : QString();
     };
-    definition.write = [value_index, member](WarehouseConfig &config,
-                                             const QString &raw,
-                                             QString *error_message) {
+    definition.write = [shelf_index, value_index, member](
+                           WarehouseConfig &config,
+                           const QString &raw,
+                           QString *error_message) {
         bool ok = false;
         const double value = raw.toDouble(&ok);
-        if (!ok || !std::isfinite(value))
+        if (!ok || !std::isfinite(value) ||
+            shelf_index < 0 || shelf_index >= config.shelves.size())
         {
-            setError(error_message, "请输入有效有限数值");
+            setError(error_message, "货架坐标值或索引无效");
             return false;
         }
-        QVector<double> &values = config.slot_grid.*member;
+        QVector<double> &values = config.shelves[shelf_index].*member;
         if (value_index < 0 || value_index >= values.size())
         {
-            setError(error_message, "槽位坐标索引已经失效，请重新选择参数");
+            setError(error_message, "货架坐标索引已经失效，请重新选择参数");
             return false;
         }
         values[value_index] = value;
@@ -904,51 +846,10 @@ QVector<ParameterDefinition> parameterDefinitions(const WarehouseConfig &config)
 {
     QVector<ParameterDefinition> definitions;
 
-    // 共用槽位参数放在 SHELF 类别最前面，修改行列数后下方动态坐标条目会立即重建。
-    definitions.push_back(slotGridSizeParameter(true));
-    definitions.push_back(slotGridSizeParameter(false));
-    for (int row = 0; row < config.slot_grid.waypoint_row_z_m.size(); ++row)
-    {
-        definitions.push_back(slotGridVectorParameter(
-            QString("slot_row_%1_waypoint_z").arg(row + 1),
-            QString("R%1 航点高度").arg(row + 1),
-            QString("槽位第 %1 行生成飞行航点时使用的 Z 高度。").arg(row + 1),
-            "m", row, &SlotGridConfig::waypoint_row_z_m));
-    }
-    for (int col = 0; col < config.slot_grid.waypoint_front_x_m.size(); ++col)
-    {
-        definitions.push_back(slotGridVectorParameter(
-            QString("slot_front_col_%1_waypoint_x").arg(col + 1),
-            QString("正面 C%1 航点 X").arg(col + 1),
-            QString("货架正面第 %1 列生成飞行航点时使用的 X 坐标。").arg(col + 1),
-            "m", col, &SlotGridConfig::waypoint_front_x_m));
-    }
-    for (int col = 0; col < config.slot_grid.waypoint_back_x_m.size(); ++col)
-    {
-        definitions.push_back(slotGridVectorParameter(
-            QString("slot_back_col_%1_waypoint_x").arg(col + 1),
-            QString("背面 C%1 航点 X").arg(col + 1),
-            QString("货架背面第 %1 列生成飞行航点时使用的 X 坐标。").arg(col + 1),
-            "m", col, &SlotGridConfig::waypoint_back_x_m));
-    }
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_front_yaw_rad", "正面航向", "正面槽位生成航点时使用的无人机航向。", "rad",
-        &SlotGridConfig::front_yaw_rad));
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_back_yaw_rad", "背面航向", "背面槽位生成航点时使用的无人机航向。", "rad",
-        &SlotGridConfig::back_yaw_rad));
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_pose_y_min", "槽位映射 Y 最小值", "无人机位姿映射到槽位列时使用的 Y 坐标下限。", {},
-        &SlotGridConfig::pose_y_min));
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_pose_y_max", "槽位映射 Y 最大值", "无人机位姿映射到槽位列时使用的 Y 坐标上限。", {},
-        &SlotGridConfig::pose_y_max));
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_pose_z_min", "槽位映射 Z 最小值", "无人机位姿映射到槽位行时使用的 Z 坐标下限。", {},
-        &SlotGridConfig::pose_z_min));
-    definitions.push_back(slotGridDoubleParameter(
-        "slot_pose_z_max", "槽位映射 Z 最大值", "无人机位姿映射到槽位行时使用的 Z 坐标上限。", {},
-        &SlotGridConfig::pose_z_max));
+    // SHELF 全局参数严格限制为货架数量、正面航向和背面航向。
+    definitions.push_back(shelfCountParameter());
+    definitions.push_back(globalYawParameter(true));
+    definitions.push_back(globalYawParameter(false));
 
     for (int shelf_index = 0; shelf_index < config.shelves.size(); ++shelf_index)
     {
@@ -960,96 +861,81 @@ QVector<ParameterDefinition> parameterDefinitions(const WarehouseConfig &config)
             return prefix + " " + field;
         };
 
-        definitions.push_back(shelfTextParameter(
-            shelf_index, "code", shelf_name("编号"),
-            "场景内部使用的货架编号；同时显示在货架图像顶部。", &ShelfConfig::code));
-        definitions.push_back(shelfTextParameter(
-            shelf_index, "display_name", shelf_name("显示名"),
-            "货架信息弹窗顶部切换按钮和标题显示的名称。", &ShelfConfig::display_name));
-        definitions.push_back(shelfTextParameter(
-            shelf_index, "front_slot_prefix", shelf_name("正面前缀"),
-            "解析扫码位置码时用于识别该货架正面的单字符前缀。", &ShelfConfig::front_slot_prefix));
-        definitions.push_back(shelfTextParameter(
-            shelf_index, "back_slot_prefix", shelf_name("背面前缀"),
-            "解析扫码位置码时用于识别该货架背面的单字符前缀。", &ShelfConfig::back_slot_prefix));
+        definitions.push_back(shelfCodeParameter(shelf_index, prefix));
+        definitions.push_back(shelfSizeParameter(shelf_index, true, prefix));
+        definitions.push_back(shelfSizeParameter(shelf_index, false, prefix));
+
+        for (int row = 0; row < shelf.waypoint_row_z_m.size(); ++row)
+        {
+            definitions.push_back(shelfVectorParameter(
+                shelf_index, row,
+                QString("row_%1_waypoint_z").arg(row + 1),
+                shelf_name(QString("R%1 航点高度").arg(row + 1)),
+                QString("%1 货架第 %2 行槽位生成航点时使用的 Z 高度。")
+                    .arg(prefix).arg(row + 1),
+                &ShelfConfig::waypoint_row_z_m));
+        }
+        for (int col = 0; col < shelf.waypoint_front_x_m.size(); ++col)
+        {
+            definitions.push_back(shelfVectorParameter(
+                shelf_index, col,
+                QString("front_col_%1_waypoint_x").arg(col + 1),
+                shelf_name(QString("正面 C%1 航点 X").arg(col + 1)),
+                QString("%1 货架正面第 %2 列槽位生成航点时使用的 X 坐标。")
+                    .arg(prefix).arg(col + 1),
+                &ShelfConfig::waypoint_front_x_m));
+        }
+        for (int col = 0; col < shelf.waypoint_back_x_m.size(); ++col)
+        {
+            definitions.push_back(shelfVectorParameter(
+                shelf_index, col,
+                QString("back_col_%1_waypoint_x").arg(col + 1),
+                shelf_name(QString("背面 C%1 航点 X").arg(col + 1)),
+                QString("%1 货架背面第 %2 列槽位生成航点时使用的 X 坐标。")
+                    .arg(prefix).arg(col + 1),
+                &ShelfConfig::waypoint_back_x_m));
+        }
+
         definitions.push_back(shelfDoubleParameter(
-            shelf_index, "base_x", shelf_name("画板 X"),
+            shelf_index, "base_x", shelf_name("货架 X"),
             "货架底面矩形左上角在货物巡检画板中的 X 坐标。", {},
             [](const ShelfConfig &value) { return value.base_rect.x(); },
             [](ShelfConfig &value, double number) { value.base_rect.moveLeft(number); }, 2));
         definitions.push_back(shelfDoubleParameter(
-            shelf_index, "base_y", shelf_name("画板 Y"),
+            shelf_index, "base_y", shelf_name("货架 Y"),
             "货架底面矩形左上角在货物巡检画板中的 Y 坐标。", {},
             [](const ShelfConfig &value) { return value.base_rect.y(); },
             [](ShelfConfig &value, double number) { value.base_rect.moveTop(number); }, 2));
         definitions.push_back(shelfDoubleParameter(
-            shelf_index, "base_width", shelf_name("画板宽度"),
+            shelf_index, "base_width", shelf_name("货架宽度"),
             "货架底面矩形在货物巡检画板中的宽度。", {},
             [](const ShelfConfig &value) { return value.base_rect.width(); },
             [](ShelfConfig &value, double number) { value.base_rect.setWidth(number); }, 2));
         definitions.push_back(shelfDoubleParameter(
-            shelf_index, "base_length", shelf_name("画板长度"),
-            "货架底面矩形在货物巡检画板中的长度，对应 QRectF 的 height。", {},
+            shelf_index, "base_length", shelf_name("货架长度"),
+            "货架底面矩形在货物巡检画板中的长度。", {},
             [](const ShelfConfig &value) { return value.base_rect.height(); },
             [](ShelfConfig &value, double number) { value.base_rect.setHeight(number); }, 2));
         definitions.push_back(shelfDoubleParameter(
-            shelf_index, "height", shelf_name("画板高度"),
-            "画板伪三维货架的立体高度，使用画板场景坐标单位。", {},
+            shelf_index, "height", shelf_name("货架高度"),
+            "货物巡检画板中货架的立体高度。", {},
             [](const ShelfConfig &value) { return value.height; },
             [](ShelfConfig &value, double number) { value.height = number; }, 2));
-        definitions.push_back(shelfColorParameter(
-            shelf_index, "scene_color", shelf_name("画板颜色"),
-            "货物巡检画板中的货架颜色，格式为 #AARRGGBB 或 #RRGGBB。", true));
-        definitions.push_back(shelfColorParameter(
-            shelf_index, "button_status_color", shelf_name("按钮状态色"),
-            "货架信息按钮的默认状态颜色，格式为 #RRGGBB。", false));
         definitions.push_back(shelfDoubleParameter(
             shelf_index, "front_waypoint_y_m", shelf_name("正面航点 Y"),
-            "点击该货架正面槽位时生成航点所使用的 Y 坐标。", "m",
+            "点击当前货架正面槽位时生成航点所使用的 Y 坐标。", "m",
             [](const ShelfConfig &value) { return value.front_waypoint_y_m; },
             [](ShelfConfig &value, double number) { value.front_waypoint_y_m = number; }));
         definitions.push_back(shelfDoubleParameter(
             shelf_index, "back_waypoint_y_m", shelf_name("背面航点 Y"),
-            "点击该货架背面槽位时生成航点所使用的 Y 坐标。", "m",
+            "点击当前货架背面槽位时生成航点所使用的 Y 坐标。", "m",
             [](const ShelfConfig &value) { return value.back_waypoint_y_m; },
             [](ShelfConfig &value, double number) { value.back_waypoint_y_m = number; }));
-
-        for (int region_index = 0;
-             region_index < shelf.pose_regions.size();
-             ++region_index)
-        {
-            const QString region_name =
-                shelf_name(QString("区域%1").arg(region_index + 1));
-            definitions.push_back(poseRegionSideParameter(
-                shelf_index, region_index, region_name + " 货架面"));
-            definitions.push_back(poseRegionParameter(
-                shelf_index, region_index, "x_min", region_name + " X 最小值",
-                "无人机 X 位于该下限和上限之间时，认为进入此货架面区域。",
-                [](const ShelfPoseRegionConfig &value) { return value.x_min; },
-                [](ShelfPoseRegionConfig &value, double number) { value.x_min = number; }));
-            definitions.push_back(poseRegionParameter(
-                shelf_index, region_index, "x_max", region_name + " X 最大值",
-                "无人机 X 位于该下限和上限之间时，认为进入此货架面区域。",
-                [](const ShelfPoseRegionConfig &value) { return value.x_max; },
-                [](ShelfPoseRegionConfig &value, double number) { value.x_max = number; }));
-            definitions.push_back(poseRegionParameter(
-                shelf_index, region_index, "yaw_min", region_name + " 航向最小值",
-                "无人机航向角位于该下限和上限之间时，认为朝向此货架面。",
-                [](const ShelfPoseRegionConfig &value) { return value.yaw_min; },
-                [](ShelfPoseRegionConfig &value, double number) { value.yaw_min = number; }));
-            definitions.push_back(poseRegionParameter(
-                shelf_index, region_index, "yaw_max", region_name + " 航向最大值",
-                "无人机航向角位于该下限和上限之间时，认为朝向此货架面。",
-                [](const ShelfPoseRegionConfig &value) { return value.yaw_max; },
-                [](ShelfPoseRegionConfig &value, double number) { value.yaw_max = number; }));
-        }
     }
 
-    // 固定的飞行、伺服和相机参数接在动态 SHELF 参数之后。
     definitions += baseParameterDefinitions();
     return definitions;
 }
-
 // QListWidgetItem 只保存参数 ID。动态参数表每次按 working_config_ 重建，
 // 因此这里复制找到的定义，不能返回临时 QVector 内元素的悬空指针。
 bool findParameterDefinition(
@@ -1310,18 +1196,19 @@ void ParameterConfigDialog::buildNumericKeypad(QWidget *parent)
     connect(zero_button, &QPushButton::clicked, this,
             [this]() { appendNumericDigit("0"); });
 
-    auto *confirm_button = new QPushButton("确定", numeric_keypad_);
-    connect(confirm_button, &QPushButton::clicked,
-            this, &ParameterConfigDialog::commitParameterEdit);
+    auto *decimal_button = new QPushButton(".", numeric_keypad_);
+    decimal_button->setToolTip("小数点（仅浮点参数可用）");
+    connect(decimal_button, &QPushButton::clicked, this,
+            [this]() { appendNumericDigit("."); });
 
     for (QPushButton *button :
-         {backspace_button, zero_button, confirm_button})
+         {backspace_button, zero_button, decimal_button})
     {
         button->setMinimumSize(0, 48);
     }
     layout->addWidget(backspace_button, 3, 0);
     layout->addWidget(zero_button, 3, 1);
-    layout->addWidget(confirm_button, 3, 2);
+    layout->addWidget(decimal_button, 3, 2);
     setNumericKeypadEnabled(false);
 }
 
@@ -1340,6 +1227,21 @@ void ParameterConfigDialog::appendNumericDigit(const QString &digit)
         !editor_line_edit_->isEnabled())
     {
         return;
+    }
+    if (digit == ".")
+    {
+        ParameterDefinition definition;
+        if (!findParameterDefinition(
+                editing_parameter_id_, working_config_, &definition) ||
+            definition.editor_type != ParameterEditorType::Number ||
+            editor_line_edit_->text().contains('.'))
+        {
+            return;
+        }
+        if (editor_line_edit_->text().isEmpty())
+        {
+            editor_line_edit_->insert("0");
+        }
     }
     editor_line_edit_->insert(digit);
     editor_line_edit_->setFocus();
@@ -1628,6 +1530,12 @@ void ParameterConfigDialog::rebuildParameterList(bool preserve_scroll_position)
     // 代码默认值每次都重新由 createDefaultWarehouseConfig() 构造，
     // 不读取 JSON，也不使用 original_config_，因此不会被用户保存的值覆盖。
     const WarehouseConfig defaults = createDefaultWarehouseConfig();
+    WarehouseConfig extended_defaults = defaults;
+    while (extended_defaults.shelves.size() < working_config_.shelves.size())
+    {
+        extended_defaults.shelves.push_back(
+            createDefaultShelfConfig(extended_defaults.shelves.size()));
+    }
 
     // 参数顺序、名称和显示格式全部来自统一参数表。
     for (const ParameterDefinition &definition : parameterDefinitions(working_config_))
@@ -1638,9 +1546,13 @@ void ParameterConfigDialog::rebuildParameterList(bool preserve_scroll_position)
             continue;
         }
 
+        // 货架数量的永久默认值始终是 2；新增货架的字段默认值则由
+        // createDefaultShelfConfig(index) 提供，右侧仍能显示真实代码默认值。
+        const WarehouseConfig &definition_defaults =
+            definition.id == "shelf_count" ? defaults : extended_defaults;
         const bool differs_from_default =
             definition.rawValue(working_config_) !=
-            definition.rawValue(defaults);
+            definition.rawValue(definition_defaults);
 
         addParameterRow(
             definition.id,
@@ -1736,7 +1648,15 @@ void ParameterConfigDialog::showParameterEditor(QListWidgetItem *item)
     // 第二步：分别读取临时配置中的当前值和程序默认值。
     // 这里使用 rawValue，因此不会把 m、s 等显示单位写进输入框。
     const QString current_value = definition.rawValue(working_config_);
-    const WarehouseConfig defaults = createDefaultWarehouseConfig();
+    WarehouseConfig defaults = createDefaultWarehouseConfig();
+    if (definition.id != "shelf_count")
+    {
+        while (defaults.shelves.size() < working_config_.shelves.size())
+        {
+            defaults.shelves.push_back(
+                createDefaultShelfConfig(defaults.shelves.size()));
+        }
+    }
     const QString default_value = definition.displayValue(defaults);
 
     editor_title_label_->setText(definition.name);

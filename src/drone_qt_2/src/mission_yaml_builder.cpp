@@ -60,11 +60,6 @@ std::vector<MissionMoveStep> expandMissionSteps(const std::vector<AirborneWorldC
     appendMoveIfChanged(steps, current, AirborneWorldCoord{0.0, 0.0, current.z, current.yaw});
     appendMoveIfChanged(steps, current, AirborneWorldCoord{0.0, 0.0, current.z, 0.0});
 
-    if (almostEqual(current.z, 1.5)) {
-        appendMoveIfChanged(steps, current, AirborneWorldCoord{0.0, 0.0, 0.70, 0.0});
-    }
-    appendMoveIfChanged(steps, current, AirborneWorldCoord{0.0, 0.0, 0.0, 0.0});
-
     return steps;
 }
 

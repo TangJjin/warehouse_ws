@@ -29,8 +29,10 @@ void AnimalGridView::setPosition(double x, double y, double z)
     // world_body x 正方向映射到画面右侧，world_body y 正方向映射到画面上方。
     // 这里不再减起始位置，TF 原点偏移只允许在 MainWindow 中做一次。
     // 画板路线自身使用“向上为 x、向左为 y”的右下角原点坐标。
-    display_x_ = y;
-    display_y_ = -x;
+    // Current mapping matches the route and Collaboration view:
+    // x+ is up and y+ is left; do not swap or negate the input axes.
+    display_x_ = x;
+    display_y_ = y;
     altitude_ = z;
     update();
 }

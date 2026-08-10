@@ -153,8 +153,8 @@ struct SlotLocation
 {
     int shelf_index = -1;//第几个货架
     QString side;//front 或 back
-    int row = -1;//从 0 开始，最大值由 SlotGridConfig::rows 决定
-    int col = -1;//从 0 开始，最大值由 SlotGridConfig::columns 决定
+    int row = -1;//从 0 开始，最大值由 ShelfConfig::rows 决定
+    int col = -1;//从 0 开始，最大值由 ShelfConfig::columns 决定
     bool valid = false;//是否成功定位
 };
 

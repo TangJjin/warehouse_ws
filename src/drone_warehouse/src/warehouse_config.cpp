@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QStringList>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -55,60 +56,63 @@ QString validateRosConfig(const RosTopicConfig &config, const QString &owner)
 
 /**************************参数默认值**************************/
 
+ShelfConfig createDefaultShelfConfig(int shelf_index)
+{
+    const int safe_index = qBound(0, shelf_index, 19);
+    ShelfConfig shelf;
+    shelf.code = QString("A%1").arg(safe_index + 1, 2, 10, QLatin1Char('0'));
+    shelf.display_name = shelf.code;
+    shelf.front_slot_prefix = shelf.code + "F";
+    shelf.back_slot_prefix = shelf.code + "B";
+
+    // 画板默认按每行 5 个货架排列，新增货架不会覆盖已有货架。
+    // Number shelves from right to left: A01 uses the former A02 position,
+    // A02 uses the former A01 position, and later shelves continue leftward.
+    const int scene_column = safe_index % 5;
+    const int scene_row = safe_index / 5;
+    shelf.base_rect = QRectF(
+        60.0 - scene_column * 150.0,
+        -100.0 + scene_row * 220.0,
+        30.0,
+        150.0);
+    shelf.height = 160.0;
+    shelf.scene_color =
+        ColorPalette::withAlpha(ColorPalette::BlueGrayDark, 180);
+    shelf.button_status_color = "#7f8c9a";
+
+    shelf.front_waypoint_y_m = safe_index * 1.5;
+    shelf.back_waypoint_y_m = shelf.front_waypoint_y_m + 1.5;
+    shelf.rows = 4;
+    shelf.columns = 3;
+    shelf.waypoint_row_z_m = {1.380, 1.000, 0.620, 0.200};
+    shelf.waypoint_front_x_m = {0.75, 1.25, 1.75};
+    shelf.waypoint_back_x_m = {1.75, 1.25, 0.75};
+    return shelf;
+}
+
 WarehouseConfig createDefaultWarehouseConfig()
 {
     // 这里构造的是编译进程序的代码默认值，不读取 warehouse_config.json。
     // 用户保存配置只会改变 JSON；再次调用本函数仍会得到这套固定值。
-    // 参数页面可编辑的任务、视觉伺服和工业相机默认值都在下方集中赋值。
-    // 结构体成员只保留安全零值，避免出现两套彼此不一致的默认配置。
     WarehouseConfig config;
 
-    // 每个货架面的槽位数量等于 rows * columns。
-    config.slot_grid.rows = 4;
-    config.slot_grid.columns = 3;
-
-    // 航点坐标单位为米；数组顺序必须与槽位行号或列号一致。
-    config.slot_grid.waypoint_row_z_m = {1.50, 1.10, 0.70, 0.30};
-    config.slot_grid.waypoint_front_x_m = {0.75, 1.25, 1.75};
-    config.slot_grid.waypoint_back_x_m = {1.75, 1.25, 0.75};
+    // 所有货架只共用正面和背面航向，行列及坐标属于各自货架。
     config.slot_grid.front_yaw_rad = 1.57;
     config.slot_grid.back_yaw_rad = 4.71;
 
-    // 将无人机原始位姿映射到槽位行列时使用的坐标范围。
+    // 旧的位姿识别逻辑仍使用这组内部固定范围，但不再显示为可调参数。
     config.slot_grid.pose_y_min = -100.0;
     config.slot_grid.pose_y_max = 50.0;
     config.slot_grid.pose_z_min = 0.0;
     config.slot_grid.pose_z_max = 160.0;
 
-    ShelfConfig shelf1;
-    shelf1.code = "A01";                          // 场景货架编号。
-    shelf1.display_name = "A01";                  // 地面站显示名称。
-    shelf1.front_slot_prefix = "A";               // 例如 A-0-0。
-    shelf1.back_slot_prefix = "B";                // 例如 B-0-0。
-    shelf1.base_rect = QRectF(-90, -100, 30, 150);// X、Y、宽度、长度。
-    shelf1.height = 160.0;                        // 使用场景坐标单位。
-    shelf1.scene_color =
-        ColorPalette::withAlpha(ColorPalette::BlueGrayDark, 180);
-    shelf1.button_status_color = "#7f8c9a";       // 默认状态颜色。
-    shelf1.front_waypoint_y_m = 0.0;              // 正面航点 Y，单位：米。
-    shelf1.back_waypoint_y_m = 1.5;               // 背面航点 Y，单位：米。
+    ShelfConfig shelf1 = createDefaultShelfConfig(0);
     shelf1.pose_regions = {
         {"front", 110.0, 140.0, 80.0, 100.0},
         {"back", -10.0, 10.0, -100.0, -80.0}
     };
 
-    ShelfConfig shelf2;
-    shelf2.code = "A02";
-    shelf2.display_name = "A02";              
-    shelf2.front_slot_prefix = "C";
-    shelf2.back_slot_prefix = "D";
-    shelf2.base_rect = QRectF(60, -100, 30, 150);
-    shelf2.height = 160.0;
-    shelf2.scene_color =
-        ColorPalette::withAlpha(ColorPalette::BlueGrayDark, 180);
-    shelf2.button_status_color = "#7f8c9a";
-    shelf2.front_waypoint_y_m = 1.5;
-    shelf2.back_waypoint_y_m = 3.0;
+    ShelfConfig shelf2 = createDefaultShelfConfig(1);
     shelf2.pose_regions = {
         {"front", -10.0, 10.0, 80.0, 100.0},
         {"back", -140.0, -110.0, -100.0, -80.0}
@@ -243,22 +247,9 @@ WarehouseConfig createDefaultWarehouseConfig()
 
 QString validateWarehouseConfig(const WarehouseConfig &config)
 {
-    if (config.shelves.isEmpty())
+    if (config.shelves.isEmpty() || config.shelves.size() > 20)
     {
-        return "at least one shelf must be configured";
-    }
-    if (config.slot_grid.rows <= 0 || config.slot_grid.columns <= 0)
-    {
-        return "slot rows and columns must be greater than zero";
-    }
-    if (config.slot_grid.waypoint_row_z_m.size() != config.slot_grid.rows)
-    {
-        return "slot row count does not match waypoint height count";
-    }
-    if (config.slot_grid.waypoint_front_x_m.size() != config.slot_grid.columns ||
-        config.slot_grid.waypoint_back_x_m.size() != config.slot_grid.columns)
-    {
-        return "slot column count does not match waypoint X count";
+        return "shelf count must be between 1 and 20";
     }
     if (config.slot_grid.pose_y_max <= config.slot_grid.pose_y_min ||
         config.slot_grid.pose_z_max <= config.slot_grid.pose_z_min)
@@ -386,9 +377,20 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
     for (const ShelfConfig &shelf : config.shelves)
     {
         const QString shelf_code = shelf.code.trimmed().toUpper();
-        if (shelf_code.isEmpty() || shelf.display_name.trimmed().isEmpty())
+        bool allowed_code = false;
+        for (int code_index = 1; code_index <= 20; ++code_index)
         {
-            return "shelf code and display name are required";
+            const QString allowed =
+                QString("A%1").arg(code_index, 2, 10, QLatin1Char('0'));
+            if (shelf_code == allowed)
+            {
+                allowed_code = true;
+                break;
+            }
+        }
+        if (!allowed_code || shelf.display_name.trimmed().isEmpty())
+        {
+            return "shelf code must be selected from A01 to A20";
         }
         if (shelf_codes.contains(shelf_code))
         {
@@ -399,12 +401,31 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
             !QColor(shelf.button_status_color).isValid() || shelf.height <= 0.0 ||
             shelf.base_rect.width() <= 0.0 || shelf.base_rect.height() <= 0.0)
         {
-            return shelf.code + " has invalid geometry, height, or color";
+            return shelf.code + " has invalid geometry, height, or internal color";
+        }
+        if (shelf.rows <= 0 || shelf.columns <= 0 ||
+            shelf.waypoint_row_z_m.size() != shelf.rows ||
+            shelf.waypoint_front_x_m.size() != shelf.columns ||
+            shelf.waypoint_back_x_m.size() != shelf.columns)
+        {
+            return shelf.code + " has invalid rows, columns, or waypoint coordinates";
+        }
+        const auto all_finite = [](const QVector<double> &values) {
+            return std::all_of(values.cbegin(), values.cend(),
+                               [](double value) { return std::isfinite(value); });
+        };
+        if (!all_finite(shelf.waypoint_row_z_m) ||
+            !all_finite(shelf.waypoint_front_x_m) ||
+            !all_finite(shelf.waypoint_back_x_m) ||
+            !std::isfinite(shelf.front_waypoint_y_m) ||
+            !std::isfinite(shelf.back_waypoint_y_m))
+        {
+            return shelf.code + " contains a non-finite waypoint coordinate";
         }
 
         const QString front_prefix = shelf.front_slot_prefix.trimmed().toUpper();
         const QString back_prefix = shelf.back_slot_prefix.trimmed().toUpper();
-        if (front_prefix.size() != 1 || back_prefix.size() != 1 ||
+        if (front_prefix.isEmpty() || back_prefix.isEmpty() ||
             slot_prefixes.contains(front_prefix) || slot_prefixes.contains(back_prefix) ||
             front_prefix == back_prefix)
         {
@@ -423,7 +444,8 @@ QString validateWarehouseConfig(const WarehouseConfig &config)
             }
             pose_sides.insert(region.side);
         }
-        if (!pose_sides.contains("front") || !pose_sides.contains("back"))
+        if (!shelf.pose_regions.isEmpty() &&
+            (!pose_sides.contains("front") || !pose_sides.contains("back")))
         {
             return shelf.code + " requires front and back pose recognition regions";
         }
@@ -1175,18 +1197,6 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
     QJsonArray shelves;
     for (const ShelfConfig &shelf : config.shelves)
     {
-        QJsonArray pose_regions;
-        for (const ShelfPoseRegionConfig &region : shelf.pose_regions)
-        {
-            QJsonObject region_object;
-            region_object.insert("side", region.side);
-            region_object.insert("x_min", region.x_min);
-            region_object.insert("x_max", region.x_max);
-            region_object.insert("yaw_min", region.yaw_min);
-            region_object.insert("yaw_max", region.yaw_max);
-            pose_regions.append(region_object);
-        }
-
         QJsonObject rect;
         rect.insert("x", shelf.base_rect.x());
         rect.insert("y", shelf.base_rect.y());
@@ -1195,36 +1205,27 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
 
         QJsonObject shelf_object;
         shelf_object.insert("code", shelf.code);
-        shelf_object.insert("display_name", shelf.display_name);
-        shelf_object.insert("front_slot_prefix", shelf.front_slot_prefix);
-        shelf_object.insert("back_slot_prefix", shelf.back_slot_prefix);
+        shelf_object.insert("rows", shelf.rows);
+        shelf_object.insert("columns", shelf.columns);
         shelf_object.insert("base_rect", rect);
         shelf_object.insert("height", shelf.height);
-        shelf_object.insert("scene_color", shelf.scene_color.name(QColor::HexArgb));
-        shelf_object.insert("button_status_color", shelf.button_status_color);
         shelf_object.insert("front_waypoint_y_m", shelf.front_waypoint_y_m);
         shelf_object.insert("back_waypoint_y_m", shelf.back_waypoint_y_m);
-        shelf_object.insert("pose_regions", pose_regions);
+        shelf_object.insert("waypoint_row_z_m", doubleVectorToJson(shelf.waypoint_row_z_m));
+        shelf_object.insert("waypoint_front_x_m", doubleVectorToJson(shelf.waypoint_front_x_m));
+        shelf_object.insert("waypoint_back_x_m", doubleVectorToJson(shelf.waypoint_back_x_m));
         shelves.append(shelf_object);
     }
 
     QJsonObject slot_grid_object;
-    slot_grid_object.insert("rows", config.slot_grid.rows);
-    slot_grid_object.insert("columns", config.slot_grid.columns);
-    slot_grid_object.insert("waypoint_row_z_m", doubleVectorToJson(config.slot_grid.waypoint_row_z_m));
-    slot_grid_object.insert("waypoint_front_x_m", doubleVectorToJson(config.slot_grid.waypoint_front_x_m));
-    slot_grid_object.insert("waypoint_back_x_m", doubleVectorToJson(config.slot_grid.waypoint_back_x_m));
     slot_grid_object.insert("front_yaw_rad", config.slot_grid.front_yaw_rad);
     slot_grid_object.insert("back_yaw_rad", config.slot_grid.back_yaw_rad);
-    slot_grid_object.insert("pose_y_min", config.slot_grid.pose_y_min);
-    slot_grid_object.insert("pose_y_max", config.slot_grid.pose_y_max);
-    slot_grid_object.insert("pose_z_min", config.slot_grid.pose_z_min);
-    slot_grid_object.insert("pose_z_max", config.slot_grid.pose_z_max);
 
     QJsonObject root;
-    root.insert("version", 5);
+    root.insert("version", 6);
     root.insert("inspection_project",
                 inspectionProjectToString(config.inspection_project));
+    root.insert("shelf_count", config.shelves.size());
     root.insert("shelves", shelves);
     root.insert("slots", slot_grid_object);
     root.insert("ros", rosConfigToJson(config.ros));
@@ -1232,14 +1233,10 @@ QJsonObject warehouseConfigToJson(const WarehouseConfig &config)
     root.insert("connection", connectionConfigToJson(config.connection));
     root.insert("mission", missionConfigToJson(config.mission));
     root.insert("visual_servo", visualServoConfigToJson(config.visual_servo));
-    root.insert("industrial_camera", industrialCameraConfigToJson(config.industrial_camera));
+    root.insert("industrial_camera",
+                industrialCameraConfigToJson(config.industrial_camera));
     return root;
 }
-
-/************************************************************/
-
-/**************************JSON全部读*************************/
-
 bool warehouseConfigFromJson(const QJsonObject &root,
                              WarehouseConfig &config,
                              QString *error_message)
@@ -1249,8 +1246,7 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     {
         return false;
     }
-    if (version != 1 && version != 2 && version != 3 &&
-        version != 4 && version != 5)
+    if (version < 1 || version > 6)
     {
         return jsonError(
             error_message,
@@ -1279,6 +1275,15 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     {
         return false;
     }
+    if (version == 6)
+    {
+        int shelf_count = 0;
+        if (!readInt(root, "shelf_count", shelf_count, error_message) ||
+            shelf_count != shelves_array.size())
+        {
+            return jsonError(error_message, "shelf_count 与 shelves 数量不一致");
+        }
+    }
 
     if (version >= 3 &&
         !readObject(root, "visual_servo", visual_servo_object, error_message))
@@ -1290,20 +1295,16 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     {
         return false;
     }
+
     // 版本 1 只有 bridge_serial，读取时自动迁移为默认 WiFi 模式。
     ConnectionConfig connection;
     if (version == 1)
     {
         QJsonObject legacy_serial_object;
-        if (!readObject(
-                root,
-                "bridge_serial",
-                legacy_serial_object,
-                error_message) ||
-            !serialConfigFromJson(
-                legacy_serial_object,
-                connection.telemetry_serial,
-                error_message))
+        if (!readObject(root, "bridge_serial", legacy_serial_object, error_message) ||
+            !serialConfigFromJson(legacy_serial_object,
+                                  connection.telemetry_serial,
+                                  error_message))
         {
             return false;
         }
@@ -1312,10 +1313,42 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     else
     {
         QJsonObject connection_object;
-        if (!readObject(
-                root, "connection", connection_object, error_message) ||
-            !connectionConfigFromJson(
-                connection_object, connection, error_message))
+        if (!readObject(root, "connection", connection_object, error_message) ||
+            !connectionConfigFromJson(connection_object, connection, error_message))
+        {
+            return false;
+        }
+    }
+
+    WarehouseConfig loaded_config = createDefaultWarehouseConfig();
+    SlotGridConfig slot_grid = loaded_config.slot_grid;
+    if (!readDouble(slots_object, "front_yaw_rad",
+                    slot_grid.front_yaw_rad, error_message) ||
+        !readDouble(slots_object, "back_yaw_rad",
+                    slot_grid.back_yaw_rad, error_message))
+    {
+        return false;
+    }
+
+    int legacy_rows = 0;
+    int legacy_columns = 0;
+    QVector<double> legacy_row_z;
+    QVector<double> legacy_front_x;
+    QVector<double> legacy_back_x;
+    if (version <= 5)
+    {
+        if (!readInt(slots_object, "rows", legacy_rows, error_message) ||
+            !readInt(slots_object, "columns", legacy_columns, error_message) ||
+            !doubleVectorFromJson(slots_object, "waypoint_row_z_m",
+                                  legacy_row_z, error_message) ||
+            !doubleVectorFromJson(slots_object, "waypoint_front_x_m",
+                                  legacy_front_x, error_message) ||
+            !doubleVectorFromJson(slots_object, "waypoint_back_x_m",
+                                  legacy_back_x, error_message) ||
+            !readDouble(slots_object, "pose_y_min", slot_grid.pose_y_min, error_message) ||
+            !readDouble(slots_object, "pose_y_max", slot_grid.pose_y_max, error_message) ||
+            !readDouble(slots_object, "pose_z_min", slot_grid.pose_z_min, error_message) ||
+            !readDouble(slots_object, "pose_z_max", slot_grid.pose_z_max, error_message))
         {
             return false;
         }
@@ -1332,22 +1365,18 @@ bool warehouseConfigFromJson(const QJsonObject &root,
                 QString("shelves[%1] 必须是 JSON 对象").arg(shelf_index));
         }
 
+        ShelfConfig shelf = shelf_index < loaded_config.shelves.size()
+            ? loaded_config.shelves.at(shelf_index)
+            : createDefaultShelfConfig(shelf_index);
         const QJsonObject shelf_object = shelves_array.at(shelf_index).toObject();
         QJsonObject rect_object;
-        QJsonArray pose_regions_array;
-        ShelfConfig shelf;
-        QString scene_color;
         if (!readString(shelf_object, "code", shelf.code, error_message) ||
-            !readString(shelf_object, "display_name", shelf.display_name, error_message) ||
-            !readString(shelf_object, "front_slot_prefix", shelf.front_slot_prefix, error_message) ||
-            !readString(shelf_object, "back_slot_prefix", shelf.back_slot_prefix, error_message) ||
             !readObject(shelf_object, "base_rect", rect_object, error_message) ||
             !readDouble(shelf_object, "height", shelf.height, error_message) ||
-            !readString(shelf_object, "scene_color", scene_color, error_message) ||
-            !readString(shelf_object, "button_status_color", shelf.button_status_color, error_message) ||
-            !readDouble(shelf_object, "front_waypoint_y_m", shelf.front_waypoint_y_m, error_message) ||
-            !readDouble(shelf_object, "back_waypoint_y_m", shelf.back_waypoint_y_m, error_message) ||
-            !readArray(shelf_object, "pose_regions", pose_regions_array, error_message))
+            !readDouble(shelf_object, "front_waypoint_y_m",
+                        shelf.front_waypoint_y_m, error_message) ||
+            !readDouble(shelf_object, "back_waypoint_y_m",
+                        shelf.back_waypoint_y_m, error_message))
         {
             return false;
         }
@@ -1364,56 +1393,91 @@ bool warehouseConfigFromJson(const QJsonObject &root,
             return false;
         }
         shelf.base_rect = QRectF(rect_x, rect_y, rect_width, rect_length);
-        shelf.scene_color = QColor(scene_color);
 
-        for (int region_index = 0;
-             region_index < pose_regions_array.size();
-             ++region_index)
+        // Migrate only coordinates that still match the old automatic layout.
+        // Manually adjusted shelf positions must remain unchanged.
+        const int legacy_scene_column = shelf_index % 5;
+        const int legacy_scene_row = shelf_index / 5;
+        const double legacy_x = -90.0 + legacy_scene_column * 150.0;
+        const double legacy_y = -100.0 + legacy_scene_row * 220.0;
+        constexpr double coordinate_epsilon = 1e-6;
+        if (std::abs(rect_x - legacy_x) <= coordinate_epsilon &&
+            std::abs(rect_y - legacy_y) <= coordinate_epsilon &&
+            std::abs(rect_width - 30.0) <= coordinate_epsilon &&
+            std::abs(rect_length - 150.0) <= coordinate_epsilon)
         {
-            if (!pose_regions_array.at(region_index).isObject())
-            {
-                return jsonError(
-                    error_message,
-                    QString("pose_regions[%1] 必须是 JSON 对象").arg(region_index));
-            }
+            shelf.base_rect.moveLeft(
+                60.0 - legacy_scene_column * 150.0);
+        }
 
-            const QJsonObject region_object =
-                pose_regions_array.at(region_index).toObject();
-            ShelfPoseRegionConfig region;
-            if (!readString(region_object, "side", region.side, error_message) ||
-                !readDouble(region_object, "x_min", region.x_min, error_message) ||
-                !readDouble(region_object, "x_max", region.x_max, error_message) ||
-                !readDouble(region_object, "yaw_min", region.yaw_min, error_message) ||
-                !readDouble(region_object, "yaw_max", region.yaw_max, error_message))
+        if (version == 6)
+        {
+            if (!readInt(shelf_object, "rows", shelf.rows, error_message) ||
+                !readInt(shelf_object, "columns", shelf.columns, error_message) ||
+                !doubleVectorFromJson(shelf_object, "waypoint_row_z_m",
+                                      shelf.waypoint_row_z_m, error_message) ||
+                !doubleVectorFromJson(shelf_object, "waypoint_front_x_m",
+                                      shelf.waypoint_front_x_m, error_message) ||
+                !doubleVectorFromJson(shelf_object, "waypoint_back_x_m",
+                                      shelf.waypoint_back_x_m, error_message))
             {
                 return false;
             }
-            shelf.pose_regions.push_back(region);
+            shelf.display_name = shelf.code;
+            shelf.front_slot_prefix = shelf.code + "F";
+            shelf.back_slot_prefix = shelf.code + "B";
+        }
+        else
+        {
+            QJsonArray pose_regions_array;
+            QString scene_color;
+            if (!readString(shelf_object, "display_name", shelf.display_name, error_message) ||
+                !readString(shelf_object, "front_slot_prefix",
+                            shelf.front_slot_prefix, error_message) ||
+                !readString(shelf_object, "back_slot_prefix",
+                            shelf.back_slot_prefix, error_message) ||
+                !readString(shelf_object, "scene_color", scene_color, error_message) ||
+                !readString(shelf_object, "button_status_color",
+                            shelf.button_status_color, error_message) ||
+                !readArray(shelf_object, "pose_regions",
+                           pose_regions_array, error_message))
+            {
+                return false;
+            }
+            shelf.scene_color = QColor(scene_color);
+            shelf.pose_regions.clear();
+            for (int region_index = 0;
+                 region_index < pose_regions_array.size();
+                 ++region_index)
+            {
+                if (!pose_regions_array.at(region_index).isObject())
+                {
+                    return jsonError(
+                        error_message,
+                        QString("pose_regions[%1] 必须是 JSON 对象").arg(region_index));
+                }
+                const QJsonObject region_object =
+                    pose_regions_array.at(region_index).toObject();
+                ShelfPoseRegionConfig region;
+                if (!readString(region_object, "side", region.side, error_message) ||
+                    !readDouble(region_object, "x_min", region.x_min, error_message) ||
+                    !readDouble(region_object, "x_max", region.x_max, error_message) ||
+                    !readDouble(region_object, "yaw_min", region.yaw_min, error_message) ||
+                    !readDouble(region_object, "yaw_max", region.yaw_max, error_message))
+                {
+                    return false;
+                }
+                shelf.pose_regions.push_back(region);
+            }
+            shelf.rows = legacy_rows;
+            shelf.columns = legacy_columns;
+            shelf.waypoint_row_z_m = legacy_row_z;
+            shelf.waypoint_front_x_m = legacy_front_x;
+            shelf.waypoint_back_x_m = legacy_back_x;
         }
         shelves.push_back(shelf);
     }
 
-    SlotGridConfig slot_grid;
-    if (!readInt(slots_object, "rows", slot_grid.rows, error_message) ||
-        !readInt(slots_object, "columns", slot_grid.columns, error_message) ||
-        !doubleVectorFromJson(slots_object, "waypoint_row_z_m",
-                             slot_grid.waypoint_row_z_m, error_message) ||
-        !doubleVectorFromJson(slots_object, "waypoint_front_x_m",
-                             slot_grid.waypoint_front_x_m, error_message) ||
-        !doubleVectorFromJson(slots_object, "waypoint_back_x_m",
-                             slot_grid.waypoint_back_x_m, error_message) ||
-        !readDouble(slots_object, "front_yaw_rad", slot_grid.front_yaw_rad, error_message) ||
-        !readDouble(slots_object, "back_yaw_rad", slot_grid.back_yaw_rad, error_message) ||
-        !readDouble(slots_object, "pose_y_min", slot_grid.pose_y_min, error_message) ||
-        !readDouble(slots_object, "pose_y_max", slot_grid.pose_y_max, error_message) ||
-        !readDouble(slots_object, "pose_z_min", slot_grid.pose_z_min, error_message) ||
-        !readDouble(slots_object, "pose_z_max", slot_grid.pose_z_max, error_message))
-    {
-        return false;
-    }
-
-    // Start from current defaults so old JSON versions receive new settings.
-    WarehouseConfig loaded_config = createDefaultWarehouseConfig();
     loaded_config.shelves = shelves;
     loaded_config.slot_grid = slot_grid;
     loaded_config.connection = connection;
@@ -1442,7 +1506,6 @@ bool warehouseConfigFromJson(const QJsonObject &root,
     config = loaded_config;
     return true;
 }
-
 /************************************************************/
 /************************************************************/
 /************************************************************/

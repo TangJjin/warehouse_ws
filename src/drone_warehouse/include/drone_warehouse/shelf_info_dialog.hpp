@@ -22,16 +22,16 @@ class ShelfInfoDialog : public QDialog
 
 public:
     explicit ShelfInfoDialog(
-        const SlotGridConfig &slot_config,//传入槽位结构和航点映射配置
+        const QVector<ShelfConfig> &shelf_configs,//传入每个货架独立的行列和航点配置
         QWidget *parent = nullptr);
 
     // 主窗口会把“所有货架的完整弹窗数据”一次性传进来。
     // 这里不再像之前那样分散传很多 QStringList，而是直接传结构化后的 QVector<ShelfPanelData>。
     void setShelfPanelData(const QVector<ShelfPanelData> &shelf_panel_data);//将外部数据一次性传入
 
-    // 参数页修改槽位行列后，主窗口调用这里重建按钮网格。
+    // 参数页修改货架数量或某个货架行列后，主窗口调用这里更新动态网格。
     // 仅替换结构配置，不直接修改主窗口持有的货架业务数据。
-    void setSlotGridConfig(const SlotGridConfig &slot_config);
+    void setShelfConfigs(const QVector<ShelfConfig> &shelf_configs);
 
 signals:
     void slotDoubleClicked(int shelf_index, const QString &side, int row, int col);//双击某个点位时通知主窗口弹图
@@ -77,7 +77,7 @@ private:
                                         QByteArray &payload) const;
 
 private:
-    SlotGridConfig slot_config_;
+    QVector<ShelfConfig> shelf_configs_;
 
     QLabel *title_label_ = nullptr;//弹窗标题
 
