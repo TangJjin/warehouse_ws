@@ -20,6 +20,7 @@ class TopStatusBar;
 class RosManager;
 class QTimer;
 class QPlainTextEdit;
+class VideoDialog;
 
 class QDialog;
 
@@ -142,6 +143,7 @@ private:
     CollaborationGridView *collaboration_grid_view_ = nullptr;//Collaboration 只有画板，布局和状态面板由 MainWindow 管理
     TopStatusBar *top_status_bar_ = nullptr;//顶部状态栏
     ShelfInfoDialog *shelf_info_dialog_ = nullptr;//货架信息弹窗模板窗口
+    VideoDialog *video_dialog_ = nullptr;//唯一可复用的视频弹窗
 
     /*********************ros移植部分***********************/
     RosManager *ros_manager_ = nullptr;//ROS 管理器，负责订阅状态、调用服务、把 ROS 数据转成 Qt 信号

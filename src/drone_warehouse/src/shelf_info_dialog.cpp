@@ -161,10 +161,10 @@ namespace
 }
 
 ShelfInfoDialog::ShelfInfoDialog(
-    const SlotGridConfig &slot_config,
+    const QVector<ShelfConfig> &shelf_configs,
     QWidget *parent)
     : QDialog(parent),
-      slot_config_(slot_config)
+      shelf_configs_(shelf_configs)
 {
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);//去掉系统自带的白色标题栏，只保留自定义弹窗内容
     resize(300, 410);//先给一个接近正方形的初始尺寸，便于后续继续扩展布局
@@ -234,7 +234,7 @@ ShelfInfoDialog::ShelfInfoDialog(
     slot_grid_layout_->setContentsMargins(0, 0, 0, 0);
     slot_grid_layout_->setHorizontalSpacing(8);
     slot_grid_layout_->setVerticalSpacing(8);
-    buildSlotGrid();//根据 SlotGridConfig 创建全部槽位按钮
+    // 槽位按钮在收到货架数据并选定具体货架后动态创建。
 
     content_layout->addWidget(side_button_panel);
     content_layout->addWidget(grid_panel, 1);
@@ -360,50 +360,48 @@ ShelfInfoDialog::ShelfInfoDialog(
     );
 }
 
-void ShelfInfoDialog::setSlotGridConfig(const SlotGridConfig &slot_config)
+void ShelfInfoDialog::setShelfConfigs(
+    const QVector<ShelfConfig> &shelf_configs)
 {
-    // buildSlotGrid() 在构造时运行过一次。配置变化后必须先销毁旧按钮，
-    // 否则新旧按钮会同时留在 QGridLayout 中，并且旧按钮仍保存旧行列属性。
     for (QPushButton *button : slot_buttons_)
     {
         slot_grid_layout_->removeWidget(button);
         delete button;
     }
     slot_buttons_.clear();
-
-    slot_config_ = slot_config;
-    current_slot_row_ = qBound(0, current_slot_row_, slot_config_.rows - 1);
-    current_slot_col_ = qBound(0, current_slot_col_, slot_config_.columns - 1);
-    buildSlotGrid();
-
-    // 主窗口随后会通过 setShelfPanelData() 传入按新行列迁移后的数据。
-    // 如果当前副本本身已经匹配，也允许这里直接刷新，方便单独复用此接口。
-    if (!shelf_panel_data_.isEmpty() &&
-        shelf_panel_data_.constFirst().front_slots.size() ==
-            slot_config_.slotCountPerSide())
+    shelf_configs_ = shelf_configs;
+    if (shelf_configs_.isEmpty())
     {
-        updateSlotGrid();
+        current_shelf_index_ = 0;
+        current_slot_row_ = 0;
+        current_slot_col_ = 0;
+        return;
     }
+    current_shelf_index_ = qBound(
+        0, current_shelf_index_, shelf_configs_.size() - 1);
+    const ShelfConfig &shelf = shelf_configs_.at(current_shelf_index_);
+    current_slot_row_ = qBound(0, current_slot_row_, shelf.rows - 1);
+    current_slot_col_ = qBound(0, current_slot_col_, shelf.columns - 1);
 }
-
-void ShelfInfoDialog::setShelfPanelData(const QVector<ShelfPanelData> &shelf_panel_data)
+void ShelfInfoDialog::setShelfPanelData(
+    const QVector<ShelfPanelData> &shelf_panel_data)
 {
-    // 这里接收主窗口一次性传进来的所有货架数据。
-    // 每一个 ShelfPanelData 里，已经同时带了：
-    // 1. 顶部显示名称
-    // 2. 正面配置数量的点位
-    // 3. 背面配置数量的点位
-    // 弹窗这里不再自己拼假数据，只负责接收和显示。
-    if (shelf_panel_data.isEmpty())
+    if (shelf_panel_data.isEmpty() ||
+        shelf_panel_data.size() != shelf_configs_.size())
     {
         return;
     }
 
-    // 每个货架都必须严格带有对应数量点位。
-    for (const ShelfPanelData &shelf : shelf_panel_data)
+    // 每个货架都按自己的行列数校验正背面槽位数量。
+    for (int shelf_index = 0;
+         shelf_index < shelf_panel_data.size();
+         ++shelf_index)
     {
-        if (shelf.front_slots.size() != slot_config_.slotCountPerSide() ||
-            shelf.back_slots.size() != slot_config_.slotCountPerSide())
+        const int expected_slots =
+            shelf_configs_.at(shelf_index).slotCountPerSide();
+        const ShelfPanelData &shelf = shelf_panel_data.at(shelf_index);
+        if (shelf.front_slots.size() != expected_slots ||
+            shelf.back_slots.size() != expected_slots)
         {
             return;
         }
@@ -418,26 +416,35 @@ void ShelfInfoDialog::setShelfPanelData(const QVector<ShelfPanelData> &shelf_pan
 
 void ShelfInfoDialog::showShelfInfo(int index)
 {
-    // index 表示当前要切到第几个货架。
-    // 这里先做范围检查，防止顶部按钮和真实数据数量不一致时越界。
-    if (index < 0 || index >= shelf_panel_data_.size())
+    if (index < 0 || index >= shelf_panel_data_.size() ||
+        index >= shelf_configs_.size())
     {
         return;
     }
 
-    current_shelf_index_ = index;//记录当前正在显示哪一个货架
+    current_shelf_index_ = index;
+    const ShelfConfig &shelf_config = shelf_configs_.at(index);
+    current_slot_row_ = qBound(0, current_slot_row_, shelf_config.rows - 1);
+    current_slot_col_ = qBound(0, current_slot_col_, shelf_config.columns - 1);
+
+    // 不同货架可以有不同的行列数，切换货架时必须重建当前网格。
+    for (QPushButton *button : slot_buttons_)
+    {
+        slot_grid_layout_->removeWidget(button);
+        delete button;
+    }
+    slot_buttons_.clear();
+    buildSlotGrid();
+
     for (int button_index = 0; button_index < shelf_buttons_.size(); ++button_index)
     {
         shelf_buttons_[button_index]->setChecked(button_index == index);
     }
 
-    // 标题只显示当前货架名称，具体点位内容交给下面的网格和详情区刷新。
     title_label_->setText(shelf_panel_data_[index].display_name + "信息面板");
-
-    updateSlotGrid();//先刷新当前货架当前面的全部配置点位状态灯
-    handleSlotClicked(current_slot_row_, current_slot_col_);//再刷新当前选中点位的详情文字
+    updateSlotGrid();
+    handleSlotClicked(current_slot_row_, current_slot_col_);
 }
-
 void ShelfInfoDialog::switchToFront()
 {
     current_side_ = "front";//切到前面
@@ -454,11 +461,15 @@ void ShelfInfoDialog::switchToBack()
 
 void ShelfInfoDialog::buildSlotGrid()
 {
-    // 槽位网格的行列数统一由 SlotGridConfig 决定。
-    // 后续调整行列数只需要修改 warehouse_config.cpp。
-    for (int row = 0; row < slot_config_.rows; ++row)
+    if (current_shelf_index_ < 0 ||
+        current_shelf_index_ >= shelf_configs_.size())
     {
-        for (int col = 0; col < slot_config_.columns; ++col)
+        return;
+    }
+    const ShelfConfig &slot_config = shelf_configs_.at(current_shelf_index_);
+    for (int row = 0; row < slot_config.rows; ++row)
+    {
+        for (int col = 0; col < slot_config.columns; ++col)
         {
             auto *button = new QPushButton(QString("R%1C%2").arg(row + 1).arg(col + 1), this);
             button->setProperty("slotRow", QVariant(row));//创建按钮时写入属性，表示是几行几列
@@ -518,10 +529,11 @@ void ShelfInfoDialog::updateSlotGrid()
     const QVector<ShelfSlotItem> &current_slots =
         (current_side_ == "front") ? current_shelf.front_slots : current_shelf.back_slots;//再按前后面取当前这一面的全部配置点位
 
-    // 按当前正在查看的是“前面”还是“后面”，统一刷新全部配置点位按钮的状态灯和文字。
-    for (int row = 0; row < slot_config_.rows; ++row)
+    // 按当前货架自己的行列数刷新当前面的全部槽位。
+    const ShelfConfig &slot_config = shelf_configs_.at(current_shelf_index_);
+    for (int row = 0; row < slot_config.rows; ++row)
     {
-        for (int col = 0; col < slot_config_.columns; ++col)
+        for (int col = 0; col < slot_config.columns; ++col)
         {
             const int index = slotIndex(row, col);
             QPushButton *button = slot_buttons_[index];
@@ -771,7 +783,7 @@ void ShelfInfoDialog::processManualScanText(const QString &scan_text)
 
 int ShelfInfoDialog::slotIndex(int row, int col) const
 {
-    return row * slot_config_.columns + col;//把二维行列下标换算成一维数组下标
+    return row * shelf_configs_.at(current_shelf_index_).columns + col;//把当前货架二维行列下标换算成一维数组下标
 }
 
 void ShelfInfoDialog::uart_write(uint8_t deviceId, uint8_t status, const QByteArray &payload)

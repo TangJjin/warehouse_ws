@@ -21,6 +21,7 @@ find_package(drone_msgs REQUIRED)
 find_package(mavros_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(PkgConfig REQUIRED)
+pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0)
 find_package(Qt5 REQUIRED COMPONENTS Widgets SerialPort)
 pkg_check_modules(GPIOD REQUIRED libgpiod)
 
@@ -42,6 +43,8 @@ add_executable(warehouse_gcs
   src/connection_info_dialog.cpp
   src/parameter_config_dialog.cpp
   src/title_info_dialog.cpp
+  src/rtsp_overlay_worker.cpp
+  src/video_dialog.cpp
   src/warehouse_config.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
@@ -60,6 +63,8 @@ add_executable(warehouse_gcs
   include/drone_warehouse/connection_info_dialog.hpp
   include/drone_warehouse/parameter_config_dialog.hpp
   include/drone_warehouse/title_info_dialog.hpp
+  include/drone_warehouse/rtsp_overlay_worker.hpp
+  include/drone_warehouse/video_dialog.hpp
   include/drone_warehouse/warehouse_config.hpp
 )
 
@@ -80,6 +85,10 @@ target_include_directories(warehouse_gcs PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${GPIOD_INCLUDE_DIRS}
+  /usr/include/gstreamer-1.0
+  /usr/include/glib-2.0
+  /usr/lib/aarch64-linux-gnu/glib-2.0/include
+  
 )
 
 target_include_directories(ground_link_bridge PUBLIC
@@ -95,7 +104,13 @@ target_include_directories(car_link_bridge PUBLIC
 target_link_libraries(warehouse_gcs
   Qt5::Widgets
   Qt5::SerialPort
+  
+  
   ${GPIOD_LIBRARIES}
+  -lgstreamer-1.0
+  -lgstvideo-1.0
+  -lglib-2.0
+  -lgobject-2.0
 )
 
 target_link_libraries(ground_link_bridge

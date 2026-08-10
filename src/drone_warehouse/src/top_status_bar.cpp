@@ -26,9 +26,9 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     dx_indicator_label_ = new QLabel(this);
     dy_indicator_label_ = new QLabel(this);
     dyaw_indicator_label_ = new QLabel(this);
-    dx_value_label_ = new QLabel("dx:", this);
-    dy_value_label_ = new QLabel("dy:", this);
-    dyaw_value_label_ = new QLabel("dyaw:", this);
+    // dx_value_label_ = new QLabel("dx:", this);
+    // dy_value_label_ = new QLabel("dy:", this);
+    // dyaw_value_label_ = new QLabel("dyaw:", this);
     dx_indicator_label_->setFixedSize(16, 16);
     dx_indicator_label_->setStyleSheet(
         "background-color: #9e9e9e;"
@@ -49,6 +49,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     );
 
     analysis_button_ = new QPushButton("分析", this);
+    display_button_ = new QPushButton(this); display_button_->setText(QString(QChar(26174)) + QChar(31034));
     execute_button_ = new QPushButton("执行", this);
     waypoint_button_ = new QPushButton("航点飞行", this);
     scheduled_check_button_ = new QPushButton("定时巡检", this);
@@ -66,14 +67,15 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     layout->addWidget(task_button_);
     layout->addStretch();
 
-    layout->addWidget(dx_value_label_);
+    // layout->addWidget(dx_value_label_);
     layout->addWidget(dx_indicator_label_);
-    layout->addWidget(dy_value_label_);
+    // layout->addWidget(dy_value_label_);
     layout->addWidget(dy_indicator_label_);
-    layout->addWidget(dyaw_value_label_);
+    // layout->addWidget(dyaw_value_label_);
     layout->addWidget(dyaw_indicator_label_);
 
     layout->addStretch();
+    layout->addWidget(display_button_);
     layout->addWidget(analysis_button_);
     layout->addWidget(execute_button_);
     layout->addWidget(waypoint_button_);
@@ -85,6 +87,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     // title_button_->hide();
     // shelf_button_->hide();
     analysis_button_->hide();
+    display_button_->hide();
     task_button_->hide();
     execute_button_->hide();
     waypoint_button_->hide();
@@ -99,6 +102,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(title_button_, &QPushButton::clicked, this, &TopStatusBar::titleClicked);
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(analysis_button_, &QPushButton::clicked, this, &TopStatusBar::aiAnalyzeButtonClicked);
+    connect(display_button_, &QPushButton::clicked, this, &TopStatusBar::displayButtonClicked);
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(waypoint_button_, &QPushButton::clicked, this, &TopStatusBar::waypointButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
@@ -196,11 +200,11 @@ void TopStatusBar::setConnected(bool connected)
     //shelf_button_->setVisible(connected);
     task_button_->setVisible(connected);
 
-    dx_value_label_->setVisible(connected);
+    // dx_value_label_->setVisible(connected);
     dx_indicator_label_->setVisible(connected);
-    dy_value_label_->setVisible(connected);
+    // dy_value_label_->setVisible(connected);
     dy_indicator_label_->setVisible(connected);
-    dyaw_value_label_->setVisible(connected);
+    // dyaw_value_label_->setVisible(connected);
     dyaw_indicator_label_->setVisible(connected);
 
     updateOperationButtonVisibility();
@@ -218,6 +222,7 @@ void TopStatusBar::updateOperationButtonVisibility()
     // 普通项目沿用原来的四个操作按钮；空地协同只显示暂停和恢复。
     const bool show_inspection_actions = connected_ && !collaboration_mode_;
     analysis_button_->setVisible(show_inspection_actions);
+    display_button_->setVisible(show_inspection_actions);
     execute_button_->setVisible(show_inspection_actions);
     waypoint_button_->setVisible(show_inspection_actions);
     scheduled_check_button_->setVisible(show_inspection_actions);

@@ -178,7 +178,6 @@ bool ShelfPanelStorage::save(const QVector<ShelfPanelData> &shelves, QString *er
 }
 
 bool ShelfPanelStorage::load(const QString &file_path,
-                             int expected_slots_per_side,
                              QVector<ShelfPanelData> &shelves,
                              QString *error_message)
 {
@@ -248,7 +247,10 @@ bool ShelfPanelStorage::load(const QString &file_path,
         }
 
         ShelfPanelData shelf = shelves.at(shelf_index);
-        if (!fillShelfPanelFromJson(
+        const int expected_slots_per_side = shelf.front_slots.size();
+        if (expected_slots_per_side <= 0 ||
+            shelf.back_slots.size() != expected_slots_per_side ||
+            !fillShelfPanelFromJson(
                 value.toObject(), expected_slots_per_side, shelf))
         {
             if (error_message)
@@ -265,10 +267,8 @@ bool ShelfPanelStorage::load(const QString &file_path,
     return true;
 }
 
-bool ShelfPanelStorage::load(int expected_slots_per_side,
-                             QVector<ShelfPanelData> &shelves,
+bool ShelfPanelStorage::load(QVector<ShelfPanelData> &shelves,
                              QString *error_message)
 {
-    return load(
-        defaultFilePath(), expected_slots_per_side, shelves, error_message);
+    return load(defaultFilePath(), shelves, error_message);
 }

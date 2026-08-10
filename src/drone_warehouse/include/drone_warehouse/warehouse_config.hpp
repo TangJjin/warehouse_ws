@@ -32,19 +32,24 @@ struct ShelfConfig
     double front_waypoint_y_m = 0.0; // 正面航点 Y 坐标，单位：米。
     double back_waypoint_y_m = 0.0;  // 背面航点 Y 坐标，单位：米。
 
+    int rows = 0;       // 当前货架每一面的槽位行数。
+    int columns = 0;    // 当前货架每一面的槽位列数。
+    QVector<double> waypoint_row_z_m;    // 当前货架每一行航点高度，单位：米。
+    QVector<double> waypoint_front_x_m;  // 当前货架正面每一列航点 X，单位：米。
+    QVector<double> waypoint_back_x_m;   // 当前货架背面每一列航点 X，单位：米。
+
     QVector<ShelfPoseRegionConfig> pose_regions; // 该货架的位姿识别区域。
+
+    int slotCountPerSide() const
+    {
+        return rows * columns;
+    }
 };
 
-// 所有货架共用的槽位配置。
+// 所有货架共用的参数只保留正面和背面的航向。
+// 位姿映射范围暂时保留为内部兼容数据，不再显示在参数配置界面。
 struct SlotGridConfig
 {
-    int rows = 0;       // 每一面的槽位行数。
-    int columns = 0;    // 每一面的槽位列数。
-
-    QVector<double> waypoint_row_z_m;    // 每一行航点高度，单位：米。
-    QVector<double> waypoint_front_x_m;  // 正面每一列航点 X，单位：米。
-    QVector<double> waypoint_back_x_m;   // 背面每一列航点 X，单位：米。
-
     double front_yaw_rad = 0.0; // 正面航点航向，单位：弧度。
     double back_yaw_rad = 0.0;  // 背面航点航向，单位：弧度。
 
@@ -52,11 +57,6 @@ struct SlotGridConfig
     double pose_y_max = 0.0; // 位姿映射到槽位列时，Y 坐标最大值。
     double pose_z_min = 0.0; // 位姿映射到槽位行时，Z 坐标最小值。
     double pose_z_max = 0.0; // 位姿映射到槽位行时，Z 坐标最大值。
-
-    int slotCountPerSide() const
-    {
-        return rows * columns;
-    }
 };
 
 // 一组 ROS 节点、话题和服务名称，可分别用于地面站或串口桥接进程。
@@ -207,6 +207,10 @@ struct WarehouseConfig
 };
 // 返回编译进程序的固定默认值；不读取 JSON，恢复默认值和首次创建配置文件都使用它。
 WarehouseConfig createDefaultWarehouseConfig();
+
+// 根据下标创建一份完整的新货架默认值。参数页增加货架数量时也调用这里，
+// 避免默认编号、尺寸、行列和航点数组散落在界面代码中。
+ShelfConfig createDefaultShelfConfig(int shelf_index);
 
 // 校验货架、槽位、ROS、通信串口和任务参数；配置有效时返回空字符串。
 QString validateWarehouseConfig(const WarehouseConfig &config);

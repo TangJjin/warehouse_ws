@@ -41,6 +41,7 @@ signals:
     void connectionClicked();//连接状态按钮被点击
     void taskClicked();//任务状态按钮被点击
     void shelfButtonClicked();//货架按钮被点击
+    void displayButtonClicked();//显示视频按钮被点击
     void aiAnalyzeButtonClicked();//分析按钮被点击
     void executeButtonClicked();//执行按钮被点击
     void waypointButtonClicked();//航点飞行按钮被点击
@@ -68,6 +69,7 @@ private:
     QLabel *dy_value_label_{nullptr};//dy数值标签
     QLabel *dyaw_value_label_{nullptr};//dyaw数值标签
     QPushButton *analysis_button_ = nullptr;//分析按钮
+    QPushButton *display_button_ = nullptr;//显示视频按钮
     QPushButton *execute_button_ = nullptr;//执行按钮
     QPushButton *waypoint_button_ = nullptr;//航点飞行按钮
     QPushButton *scheduled_check_button_ = nullptr;//执行按钮
