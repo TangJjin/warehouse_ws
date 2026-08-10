@@ -54,7 +54,7 @@ private:
     SlotLocation resolveSlotFromPose(const Pose3D &pose) const;//槽位判断函数
     SlotLocation resolveSlotFromCode(
         const QString &slot_code,
-        const SlotLocation &pose_location) const;//根据位置码解析行列，视觉 A/B 格式用位姿确定货架
+        const SlotLocation &pose_location) const;//根据位置码解析行列，多货架时用位姿确定货架
     ShelfSlotItem *findShelfSlot(int shelf_index, const QString &side, int row, int col);//根据槽位索引找到对应的货物信息
     void showShelfSlotImage(int shelf_index, const QString &side, int row, int col);
     void applyManualStockIn(int shelf_index, const QString &side, int row, int col,
