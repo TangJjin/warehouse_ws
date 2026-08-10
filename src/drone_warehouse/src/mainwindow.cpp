@@ -1521,7 +1521,7 @@ void MainWindow::appendBarcodeRecord(
     }
 
     const SlotLocation pose_location = resolveSlotFromPose(scene_data_.drone_state.pose);
-    const SlotLocation code_location = resolveSlotFromCode(slot_code);
+    const SlotLocation code_location = resolveSlotFromCode(slot_code, pose_location);
 
     SlotLocation target_location;
     if (code_location.valid)
@@ -1680,10 +1680,14 @@ void MainWindow::applyManualStockOut(int shelf_index, const QString &side, int r
         .arg(col + 1));
 }
 
-SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
+SlotLocation MainWindow::resolveSlotFromCode(
+    const QString &slot_code,
+    const SlotLocation &pose_location) const
 {
     SlotLocation location;
-    // 同时兼容旧 A-0-0 和新 A01F-0-0 / A01B-0-0 位置码。
+    // 同时兼容视觉端 A-0-0 / B-0-0 和地面站配置的
+    // A01F-0-0 / A01B-0-0 位置码。视觉端 A/B 只表示正反面，
+    // 不包含货架编号，因此用当前位姿区域确定货架，行列仍以位置码为准。
     static const QRegularExpression pattern("^([A-Z0-9]+)-(\\d+)-(\\d+)$");
     const QRegularExpressionMatch match =
         pattern.match(slot_code.trimmed().toUpper());
@@ -1720,6 +1724,28 @@ SlotLocation MainWindow::resolveSlotFromCode(const QString &slot_code) const
         location.row = row;
         location.col = col;
         location.valid = shelf_index < shelf_panel_data_.size();
+        return location;
+    }
+
+    if ((prefix == "A" || prefix == "B") &&
+        pose_location.valid &&
+        pose_location.shelf_index >= 0 &&
+        pose_location.shelf_index < config_.shelves.size() &&
+        pose_location.shelf_index < shelf_panel_data_.size())
+    {
+        const ShelfConfig &shelf =
+            config_.shelves.at(pose_location.shelf_index);
+        if (row < 0 || row >= shelf.rows ||
+            col < 0 || col >= shelf.columns)
+        {
+            return {};
+        }
+
+        location.shelf_index = pose_location.shelf_index;
+        location.side = (prefix == "A") ? "front" : "back";
+        location.row = row;
+        location.col = col;
+        location.valid = true;
         return location;
     }
 
@@ -2869,6 +2895,5 @@ void MainWindow::runClaudeApiDiffAnalysis()
     args << script_path << prompt_path << image_meta_path << output_path;
     process->start("python3", args);
 }
-
 
 
