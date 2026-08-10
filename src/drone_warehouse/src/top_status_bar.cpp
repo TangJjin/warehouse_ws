@@ -50,6 +50,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
     analysis_button_ = new QPushButton("分析", this);
     display_button_ = new QPushButton(this); display_button_->setText(QString(QChar(26174)) + QChar(31034));
+    replay_button_ = new QPushButton(this); replay_button_->setText(QString(QChar(22238)) + QChar(25918));
     execute_button_ = new QPushButton("执行", this);
     waypoint_button_ = new QPushButton("航点飞行", this);
     scheduled_check_button_ = new QPushButton("定时巡检", this);
@@ -76,6 +77,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
 
     layout->addStretch();
     layout->addWidget(display_button_);
+    layout->addWidget(replay_button_);
     layout->addWidget(analysis_button_);
     layout->addWidget(execute_button_);
     layout->addWidget(waypoint_button_);
@@ -88,6 +90,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     // shelf_button_->hide();
     analysis_button_->hide();
     display_button_->hide();
+    replay_button_->hide();
     task_button_->hide();
     execute_button_->hide();
     waypoint_button_->hide();
@@ -103,6 +106,7 @@ TopStatusBar::TopStatusBar(QWidget *parent)
     connect(task_button_, &QPushButton::clicked, this, &TopStatusBar::taskClicked);
     connect(analysis_button_, &QPushButton::clicked, this, &TopStatusBar::aiAnalyzeButtonClicked);
     connect(display_button_, &QPushButton::clicked, this, &TopStatusBar::displayButtonClicked);
+    connect(replay_button_, &QPushButton::clicked, this, &TopStatusBar::replayButtonClicked);
     connect(execute_button_, &QPushButton::clicked, this, &TopStatusBar::executeButtonClicked);
     connect(waypoint_button_, &QPushButton::clicked, this, &TopStatusBar::waypointButtonClicked);
     connect(shelf_button_, &QPushButton::clicked, this, &TopStatusBar::shelfButtonClicked);
@@ -223,6 +227,7 @@ void TopStatusBar::updateOperationButtonVisibility()
     const bool show_inspection_actions = connected_ && !collaboration_mode_;
     analysis_button_->setVisible(show_inspection_actions);
     display_button_->setVisible(show_inspection_actions);
+    replay_button_->setVisible(show_inspection_actions);
     execute_button_->setVisible(show_inspection_actions);
     waypoint_button_->setVisible(show_inspection_actions);
     scheduled_check_button_->setVisible(show_inspection_actions);
