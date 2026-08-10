@@ -13,6 +13,7 @@
 #include "drone_warehouse/gpio_output.hpp"
 #include "drone_warehouse/ai_diff_analyzer.hpp"
 #include <drone_warehouse/video_dialog.hpp>
+#include <drone_warehouse/video_replay_controller.hpp>
 #include "drone_warehouse/shelf_panel_storage.hpp"
 #include "drone_warehouse/parameter_config_dialog.hpp"
 
@@ -205,7 +206,9 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi();
     setupFloatingWidgets();
     applyInspectionProject(config_.inspection_project);
+    video_replay_controller_ = new VideoReplayController(QString(), this, this);
     setupConnections();
+    connect(top_status_bar_, &TopStatusBar::replayButtonClicked, this, [this]() { video_replay_controller_->showReplayDialog(); });
     applyWindowStyle();
     setupDemoData();
     resetWorldBodyTransform();
@@ -1362,6 +1365,7 @@ void MainWindow::updateStatus(
     bool armed,
     const QString &task_name)
 {
+    if (video_replay_controller_) video_replay_controller_->setArmed(armed);
     switch (flight_mode)
     {
         case drone_msgs::msg::DroneStatus::MODE_MANUAL:

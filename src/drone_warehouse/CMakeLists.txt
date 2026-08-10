@@ -45,6 +45,7 @@ add_executable(warehouse_gcs
   src/title_info_dialog.cpp
   src/rtsp_overlay_worker.cpp
   src/video_dialog.cpp
+  src/video_replay_controller.cpp
   src/warehouse_config.cpp
   include/drone_warehouse/models.hpp
   include/drone_warehouse/mainwindow.hpp
@@ -65,6 +66,7 @@ add_executable(warehouse_gcs
   include/drone_warehouse/title_info_dialog.hpp
   include/drone_warehouse/rtsp_overlay_worker.hpp
   include/drone_warehouse/video_dialog.hpp
+  include/drone_warehouse/video_replay_controller.hpp
   include/drone_warehouse/warehouse_config.hpp
 )
 
